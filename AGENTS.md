@@ -27,14 +27,16 @@ Under `Footplate/`:
   client and events stream, the wire types and the refusal reading, over a
   transport seam that `URLSession` implements; `FootplateTests/FakeYard/`
   implements the same seam in the tests.
-- `Session/`: reserved for each paired yard's follower and retries.
+- `Session/`: one follower per paired yard, with `load`, the stream after
+  the head, the retries, the clock and the network watch;
+  `FootplateTests/Session/` follows the fake yard.
 - `Model/`: reserved for screen models, navigation and state rules.
 - `UI/`: SwiftUI screens, theme and resources (catalogue, Plex fonts and licence).
 - `Unlock/`: reserved for approval gates and the system unlock prompt.
 - `Notify/`: reserved for notification rules, delivery and taps.
 - `Yard/`: reserved for records, Keychain, QR reading and pairing.
 
-The `Session`, `Model`, `Unlock`, `Notify` and `Yard` folders contain no
+The `Model`, `Unlock`, `Notify` and `Yard` folders contain no
 implementation yet. `.yardr/` holds the
 flow, roles and simulator gate; `docs/design/` holds design decisions.
 A change moving or adding a target, module, package or folder updates this

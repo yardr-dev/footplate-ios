@@ -133,6 +133,12 @@ struct StreamScript: Sendable {
     var hang: Bool = false
 }
 
+/// A hanging stream the fake holds open, until `closeStreams` or its hour.
+private struct OpenStream {
+    let continuation: AsyncThrowingStream<UInt8, Error>.Continuation
+    let sleeper: Task<Void, Never>
+}
+
 final class FakeYard: HTTPTransport, @unchecked Sendable {
     let email = "jo@example.com"
     let password = "correct horse battery staple"
@@ -174,6 +180,8 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
     private var yardOverrides: [String: [FakeResponse]] = [:]
     private var alwaysHandlers: [String: () -> FakeResponse] = [:]
     private var streamScripts: [StreamScript] = []
+    private var delays: [String: [Duration]] = [:]
+    private var openStreams: [UUID: OpenStream] = [:]
     private var recorded: [RecordedRequest] = []
     private var takenIndex = 0
 
@@ -246,10 +254,52 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
         lock.unlock()
     }
 
+    /// The next request to `path` (without its query) waits `duration`
+    /// before it is answered, as a slow yard would. Queued in order.
+    func delay(_ path: String, _ duration: Duration) {
+        lock.lock()
+        delays[path, default: []].append(duration)
+        lock.unlock()
+    }
+
+    /// Takes `token` from the yard named `yardName`, as its operator
+    /// revoking the device would; `restoreToken` gives it back.
+    func revokeToken(yardName: String, token: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        yards.first { $0.name == yardName }?.tokens.remove(token)
+    }
+
+    func restoreToken(yardName: String, token: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        yards.first { $0.name == yardName }?.tokens.insert(token)
+    }
+
+    /// Closes every open stream, as their far ends going quiet would: a
+    /// collector suspended in one resumes at its end. The session tests
+    /// call it once their followers are stopped.
+    func closeStreams() {
+        lock.lock()
+        let open = openStreams
+        openStreams.removeAll()
+        lock.unlock()
+        for stream in open.values {
+            stream.sleeper.cancel()
+            stream.continuation.finish()
+        }
+    }
+
     var requestCount: Int {
         lock.lock()
         defer { lock.unlock() }
         return recorded.count
+    }
+
+    var openStreamCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return openStreams.count
     }
 
     var allRequests: [RecordedRequest] {
@@ -271,7 +321,12 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
     // MARK: - HTTPTransport
 
     func data(for request: URLRequest) async throws -> (Data, HTTPHead) {
-        let response = lockedAnswer(for: request)
+        let recorded = record(request)
+        let path = recorded.path.split(separator: "?", maxSplits: 1).first.map(String.init) ?? recorded.path
+        if let delay = popDelay(path: path) {
+            try await Task.sleep(for: delay)
+        }
+        let response = answerLocked(recorded: recorded)
         return (response.body, response.head)
     }
 
@@ -324,10 +379,6 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
         return .empty
     }
 
-    private func lockedAnswer(for request: URLRequest) -> FakeResponse {
-        answerLocked(recorded: record(request))
-    }
-
     private func record(_ request: URLRequest) -> RecordedRequest {
         let url = request.url!
         var path = url.path
@@ -371,15 +422,37 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
                 }
             }
             if script.hang {
+                let id = UUID()
                 let sleeper = Task {
                     try? await Task.sleep(for: .seconds(3600))
                     continuation.finish()
                 }
-                continuation.onTermination = { _ in sleeper.cancel() }
+                lock.lock()
+                openStreams[id] = OpenStream(continuation: continuation, sleeper: sleeper)
+                lock.unlock()
+                continuation.onTermination = { [weak self] _ in
+                    sleeper.cancel()
+                    self?.removeOpenStream(id)
+                }
             } else {
                 continuation.finish()
             }
         }
+    }
+
+    private func popDelay(path: String) -> Duration? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard var queue = delays[path], !queue.isEmpty else { return nil }
+        let delay = queue.removeFirst()
+        delays[path] = queue
+        return delay
+    }
+
+    private func removeOpenStream(_ id: UUID) {
+        lock.lock()
+        openStreams.removeValue(forKey: id)
+        lock.unlock()
     }
 
     // The helpers below run with the lock held unless they say so.
