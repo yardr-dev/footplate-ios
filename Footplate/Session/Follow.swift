@@ -545,8 +545,9 @@ private func isBusy(_ error: ApiError) -> Bool {
     return false
 }
 
-/// Why the yard is not reached, in words.
-private func words(_ error: ApiError) -> String {
+/// Why the yard is not reached, in words. The pairing and sign-in
+/// models say a refusal the same way.
+func words(_ error: ApiError) -> String {
     switch error {
     case .away:
         return "The yard is away: the edge cannot reach it."

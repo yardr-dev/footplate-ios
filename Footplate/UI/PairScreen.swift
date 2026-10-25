@@ -1,11 +1,25 @@
 import SwiftUI
 
+// Pair with a yard, design 3.2: Scan and Type the code; after a
+// scan, what was read as three rows and Pair; a refusal in the
+// error colour under the button. Type the code has no address
+// field: the edge is the build's, a line of text.
 struct PairScreen: View {
-    private let edge = Bundle.main.object(forInfoDictionaryKey: "EDGE_URL") as? String ?? "https://my.yardr.dev"
+    @Bindable var model: PairModel
+    var scannerAvailable: Bool = ScannerAvailability.isAvailable
+    var canGoBack: Bool = false
+    var onBack: (() -> Void)? = nil
+    @State private var scanning = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                if model.state.step != .choose || canGoBack, let onBack {
+                    Button("Back", action: onBack)
+                        .themeType(.label)
+                        .foregroundStyle(ThemeColor.textAccent.color)
+                        .frame(minHeight: 48, alignment: .leading)
+                }
                 HStack(spacing: 12) {
                     Image("YardrMark")
                         .resizable()
@@ -16,22 +30,15 @@ struct PairScreen: View {
                         .themeType(.title)
                         .accessibilityAddTraits(.isHeader)
                 }
-                VStack(alignment: .leading, spacing: 8) {
-                    (Text("Pair this phone with a yard. Its operator opens a code with ")
-                        + Text("yardr user device pair").font(ThemeType.code.font))
+                (Text("Pair this phone with a yard. Its operator opens a code with ")
+                    + Text("yardr user device pair").font(ThemeType.code.font))
+                    .themeType(.body)
+                    .foregroundStyle(ThemeColor.textSecondary.color)
+                content
+                if let error = model.state.error {
+                    Text(error)
                         .themeType(.body)
-                        .foregroundStyle(ThemeColor.textSecondary.color)
-                    if edge != "https://my.yardr.dev" {
-                        Text(URL(string: edge)?.host ?? edge)
-                            .themeType(.meta)
-                            .foregroundStyle(ThemeColor.textSecondary.color)
-                    }
-                }
-                VStack(spacing: 12) {
-                    Button("Scan") {}
-                        .buttonStyle(PairButtonStyle(primary: true))
-                    Button("Type the code") {}
-                        .buttonStyle(PairButtonStyle(primary: false))
+                        .foregroundStyle(ThemeColor.textError.color)
                 }
             }
             .frame(maxWidth: 480, alignment: .leading)
@@ -40,32 +47,92 @@ struct PairScreen: View {
         }
         .foregroundStyle(ThemeColor.textPrimary.color)
         .background(ThemeColor.surfaceApp.color.ignoresSafeArea())
-    }
-}
-
-private struct PairButtonStyle: ButtonStyle {
-    let primary: Bool
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .themeType(.label)
-            .frame(maxWidth: .infinity, minHeight: 48)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 4)
-            .foregroundStyle(primary ? ThemeColor.textOnAccent.color : ThemeColor.textPrimary.color)
-            .background(
-                primary
-                    ? (configuration.isPressed ? ThemeColor.buttonPrimaryPressed.color : ThemeColor.buttonPrimary.color)
-                    : (configuration.isPressed ? ThemeColor.surfacePressed.color : ThemeColor.surfaceApp.color),
-                in: RoundedRectangle(cornerRadius: 6)
-            )
-            .overlay {
-                if !primary {
-                    RoundedRectangle(cornerRadius: 6).strokeBorder(ThemeColor.borderStrong.color, lineWidth: 1)
+        .fullScreenCover(isPresented: $scanning) {
+            ZStack(alignment: .topTrailing) {
+                ScannerView { text in
+                    scanning = false
+                    model.scanned(text)
                 }
+                .ignoresSafeArea()
+                Button("Close") {
+                    scanning = false
+                    model.scanFailed(nil)
+                }
+                .buttonStyle(FootplateButtonStyle(primary: false))
+                .frame(width: 120)
+                .padding(16)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch model.state.step {
+        case .choose:
+            VStack(spacing: 12) {
+                if !scannerAvailable {
+                    Text(ScannerAvailability.unavailableLine)
+                        .themeType(.body)
+                        .foregroundStyle(ThemeColor.textSecondary.color)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                Button("Scan") {
+                    if scannerAvailable {
+                        scanning = true
+                    } else {
+                        model.scanFailed(ScannerAvailability.unavailableLine)
+                    }
+                }
+                .buttonStyle(FootplateButtonStyle(primary: true))
+                Button("Type the code") { model.typeCode() }
+                    .buttonStyle(FootplateButtonStyle(primary: false))
+            }
+        case .typing(let yard, let code):
+            VStack(alignment: .leading, spacing: 12) {
+                FieldRow(label: "address", value: model.edge)
+                TextField("yard", text: Binding(
+                    get: { yard },
+                    set: { model.typed(yard: $0, code: code) }
+                ))
+                .textContentType(.none)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .themeType(.body)
+                .padding(.horizontal, 12)
+                .frame(minHeight: 48)
+                .background(ThemeColor.surfaceRaised.color, in: RoundedRectangle(cornerRadius: 6))
+                .overlay { RoundedRectangle(cornerRadius: 6).strokeBorder(ThemeColor.borderStrong.color, lineWidth: 1) }
+                Text("Empty for the account's own yard")
+                    .themeType(.meta)
+                    .foregroundStyle(ThemeColor.textSecondary.color)
+                TextField("code", text: Binding(
+                    get: { code },
+                    set: { model.typed(yard: yard, code: $0) }
+                ))
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.characters)
+                .themeType(.code)
+                .padding(.horizontal, 12)
+                .frame(minHeight: 48)
+                .background(ThemeColor.surfaceRaised.color, in: RoundedRectangle(cornerRadius: 6))
+                .overlay { RoundedRectangle(cornerRadius: 6).strokeBorder(ThemeColor.borderStrong.color, lineWidth: 1) }
+                .onSubmit { model.readTyped() }
+                Button("Read") { model.readTyped() }
+                    .buttonStyle(FootplateButtonStyle(primary: true))
+                    .disabled(code.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        case .read(let code):
+            VStack(alignment: .leading, spacing: 0) {
+                FieldRow(label: "address", value: model.edge)
+                FieldRow(label: "yard", value: code.yard.isEmpty ? "the account's own" : code.yard)
+                FieldRow(label: "code", value: code.code, mono: true)
+                Button(model.state.busy ? "Pairing…" : "Pair") {
+                    Task { await model.pair() }
+                }
+                .buttonStyle(FootplateButtonStyle(primary: true))
+                .disabled(model.state.busy)
+                .padding(.top, 20)
+            }
+        }
     }
 }
-
-#Preview("Dark") { PairScreen().preferredColorScheme(.dark) }
-#Preview("Light") { PairScreen().preferredColorScheme(.light) }

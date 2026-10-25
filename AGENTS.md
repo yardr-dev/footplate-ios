@@ -30,14 +30,17 @@ Under `Footplate/`:
 - `Session/`: one follower per paired yard, with `load`, the stream after
   the head, the retries, the clock and the network watch;
   `FootplateTests/Session/` follows the fake yard.
-- `Model/`: reserved for screen models, navigation and state rules.
-- `UI/`: SwiftUI screens, theme and resources (catalogue, Plex fonts and licence).
+- `Model/`: screen models and navigation (`Nav`, `PairModel`,
+  `SignInModel`).
+- `UI/`: SwiftUI screens (Pair, Sign in, the empty crew place), the
+  scanner, theme and resources (catalogue, Plex fonts and licence).
 - `Unlock/`: reserved for approval gates and the system unlock prompt.
 - `Notify/`: reserved for notification rules, delivery and taps.
-- `Yard/`: reserved for records, Keychain, QR reading and pairing.
+- `Yard/`: the account and per-yard records in the Keychain, the QR
+  read, and the pairer (sign-in, pairing, forgetting).
 
-The `Model`, `Unlock`, `Notify` and `Yard` folders contain no
-implementation yet. `.yardr/` holds the
+The `Unlock` and `Notify` folders contain no implementation yet.
+`.yardr/` holds the
 flow, roles and simulator gate; `docs/design/` holds design decisions.
 A change moving or adding a target, module, package or folder updates this
 section in the same commit.
