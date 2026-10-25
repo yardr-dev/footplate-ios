@@ -1,2 +1,9 @@
 footplate-ios
 Copyright 2026 Christopher Scott
+
+IBM Plex Sans and IBM Plex Mono are copyright © 2017 IBM Corp., licensed
+under the SIL Open Font License 1.1. Bundled with the licence in
+Footplate/UI/Resources/Fonts/OFL.txt, copied from footplate-android.
+
+Theme tokens and the yardr mark and footplate icon are copied from
+yardr-design (yardr-dev/yardr-design).

@@ -17,3 +17,47 @@ with SwiftUI on the same protocol.
 Tracked in the yard as the `footplate-ios` depot. `.yardr/` holds its flow,
 roles and merge gate. Every change is reviewed twice before it lands:
 against its bead, then for security alone.
+
+## Build and test
+
+Open `Footplate.xcodeproj` in Xcode 26.3 and run the shared `Footplate`
+scheme. The app supports iOS 18 and later on iPhone and iPad. The Pair
+screen is static for now; Scan and Type the code have no action yet.
+The project uses platform frameworks only and needs no generator or package
+installation. For a physical device, select your signing team in Xcode.
+
+Run the depot gate from the worktree:
+
+```sh
+sh .yardr/test
+```
+
+It builds the app and runs `FootplateTests` on iPhone 17 Pro simulator
+`7EC91353-EDF5-4E93-B644-46A44BA6CFCB`. A missing simulator fails the gate.
+The theme test compares the catalogue's dark and light appearances and the
+phone type roles with vendored yardr-design tokens, and checks the bundled
+fonts are registered. `FootplateUITests` runs separately by hand, for example:
+
+```sh
+xcodebuild test -project Footplate.xcodeproj -scheme Footplate \
+  -destination 'platform=iOS Simulator,id=77724F1C-CB67-476C-AF33-074587FD90A7' \
+  -only-testing:FootplateUITests
+```
+
+The build settings live in `Config/`. The default edge is
+`https://my.yardr.dev`; overriding `EDGE_URL` automatically changes the app's
+bundle identifier to `dev.yardr.footplate.edge`, so a test build installs
+beside the production app. Its Pair screen shows the test edge's host.
+The display name stays **yardr footplate**. For example:
+
+```sh
+xcodebuild build -project Footplate.xcodeproj -scheme Footplate \
+  -destination 'generic/platform=iOS Simulator' \
+  EDGE_URL=https://test.yardr.dev
+```
+
+The exact default URL maps to `dev.yardr.footplate`; every other value gets
+`.edge`. In an xcconfig URL use `https:/$()/host` to avoid its `//` comment
+syntax. Tokens in `FootplateTests/Tokens/` and the theme assets are copied
+from yardr-design; update both together when that design changes. The Plex
+font licence ships with the app in `Footplate/UI/Resources/Fonts/OFL.txt`.

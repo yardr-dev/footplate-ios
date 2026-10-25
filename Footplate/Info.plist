@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+    <key>UIAppFonts</key><array>
+        <string>ibm_plex_sans_regular.ttf</string>
+        <string>ibm_plex_sans_medium.ttf</string>
+        <string>ibm_plex_sans_semibold.ttf</string>
+        <string>ibm_plex_mono_regular.ttf</string>
+    </array>
+    <key>NSCameraUsageDescription</key><string>Scan a yard's pairing code</string>
+    <key>EDGE_URL</key><string>$(EDGE_URL)</string>
+</dict></plist>

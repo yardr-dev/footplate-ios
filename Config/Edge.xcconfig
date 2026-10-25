@@ -1,0 +1,6 @@
+// xcconfig treats // as a comment; the empty expansion preserves the URL.
+EDGE_URL = https:/$()/my.yardr.dev
+// Any override of EDGE_URL gets its own installation and Keychain namespace.
+EDGE_ID_https___my_yardr_dev = dev.yardr.footplate
+PRODUCT_BUNDLE_IDENTIFIER = $(EDGE_ID_$(EDGE_URL:identifier):default=dev.yardr.footplate.edge)
+INFOPLIST_KEY_EDGE_URL = $(EDGE_URL)

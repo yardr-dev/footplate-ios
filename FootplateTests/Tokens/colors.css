@@ -1,0 +1,33 @@
+:root{
+/* Primary button fill — one step deeper than the accent so white text passes 4.5:1 */
+--button-primary:#B54E22;--button-primary-hover:#C0552A;--button-primary-pressed:#8F3C19;
+/* Dusk — neutral graphite base palette */
+--dusk-950:#101112;--dusk-900:#161718;--dusk-850:#1C1D1F;--dusk-800:#232426;--dusk-750:#2A2B2E;--dusk-700:#333538;--dusk-600:#46484C;--dusk-500:#5F6266;
+/* Ink — text on dusk */
+--ink-50:#F5F5F5;--ink-100:#E9E9EA;--ink-300:#ABADB0;--ink-500:#808286;
+/* Yard line — the one accent (rust) */
+--yard-300:#EBA17E;--yard-400:#E2794A;--yard-500:#D3602F;--yard-600:#B54E22;--yard-700:#8F3C19;
+/* Brass — illustration only, never UI */
+--brass-400:#D9A94A;
+/* Signals */
+--signal-green:#4CC38A;--signal-red:#E5675A;
+
+/* Semantic — Dusk (the only theme) */
+--surface-app:var(--dusk-900);--surface-sunken:var(--dusk-950);--surface-raised:var(--dusk-850);--surface-hover:var(--dusk-800);--surface-pressed:var(--dusk-750);--surface-popover:var(--dusk-800);
+--border-subtle:#27282B;--border-strong:var(--dusk-700);--border-hover:var(--dusk-600);
+--text-primary:var(--ink-100);--text-secondary:var(--ink-300);--text-disabled:var(--ink-500);--text-on-accent:#FFFFFF;--text-accent:var(--yard-400);--text-error:var(--signal-red);
+--accent:var(--yard-500);--accent-hover:var(--yard-400);--accent-pressed:var(--yard-600);--focus-ring:var(--yard-400);
+--switch-off:var(--dusk-600);--switch-off-hover:var(--dusk-500);--switch-thumb:var(--ink-50);
+--status-running:var(--signal-green);--status-stopped:var(--ink-500);--status-error:var(--signal-red);
+}
+
+/* Light theme — opt-in via data-theme="light" on any container */
+[data-theme="light"]{
+--surface-app:#F7F7F6;--surface-sunken:#EDEDEB;--surface-raised:#FFFFFF;--surface-hover:#EDEDEB;--surface-pressed:#E2E2DF;--surface-popover:#FFFFFF;
+--border-subtle:#E2E2DF;--border-strong:#CFCFCB;--border-hover:#B3B3AE;
+--text-primary:#161718;--text-secondary:#5B5E64;--text-disabled:#8E9196;--text-on-accent:#FFFFFF;--text-accent:var(--yard-600);--text-error:#B3382C;
+--accent:var(--yard-500);--accent-hover:var(--yard-400);--accent-pressed:var(--yard-600);--focus-ring:var(--yard-600);
+--switch-off:#CFCFCB;--switch-off-hover:#B3B3AE;--switch-thumb:#FFFFFF;
+--status-running:#1F9A60;--status-stopped:#8E9196;--status-error:#B3382C;
+--shadow-popover:0 6px 20px rgba(20,20,20,.12),0 0 0 1px var(--border-strong);
+}

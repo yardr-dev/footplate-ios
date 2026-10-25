@@ -1,0 +1,383 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+		000000000000000000000001 /* project */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 2630;
+				TargetAttributes = {
+					00000000000000000000000B = {
+						CreatedOnToolsVersion = 26.3;
+					};
+					00000000000000000000000C = {
+						CreatedOnToolsVersion = 26.3;
+						TestTargetID = 00000000000000000000000B;
+					};
+					00000000000000000000000D = {
+						CreatedOnToolsVersion = 26.3;
+						TestTargetID = 00000000000000000000000B;
+					};
+				};
+			};
+			buildConfigurationList = 000000000000000000000014;
+			compatibilityVersion = "Xcode 16.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (en, Base);
+			mainGroup = 000000000000000000000002;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 000000000000000000000003;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (00000000000000000000000B, 00000000000000000000000C, 00000000000000000000000D);
+		};
+		000000000000000000000002 /* main */ = {
+			isa = PBXGroup;
+			children = (000000000000000000000004, 000000000000000000000005, 000000000000000000000006, 000000000000000000000007, 000000000000000000000003);
+			sourceTree = "<group>";
+		};
+		000000000000000000000003 /* products */ = {
+			isa = PBXGroup;
+			children = (00000000000000000000000E, 00000000000000000000000F, 000000000000000000000010);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		000000000000000000000004 /* appgroup */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (00000000000000000000002A);
+			explicitFileTypes = {
+			};
+			explicitFolders = ();
+			path = Footplate;
+			sourceTree = "<group>";
+		};
+		000000000000000000000005 /* testgroup */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			explicitFileTypes = {
+			};
+			explicitFolders = ();
+			path = FootplateTests;
+			sourceTree = "<group>";
+		};
+		000000000000000000000006 /* uigroup */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			explicitFileTypes = {
+			};
+			explicitFolders = ();
+			path = FootplateUITests;
+			sourceTree = "<group>";
+		};
+		00000000000000000000002A /* appexceptions */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (Info.plist, API/.gitkeep, Session/.gitkeep, Model/.gitkeep, Unlock/.gitkeep, Notify/.gitkeep, Yard/.gitkeep);
+			target = 00000000000000000000000B;
+		};
+		000000000000000000000007 /* configgroup */ = {
+			isa = PBXGroup;
+			children = (000000000000000000000008, 000000000000000000000009, 00000000000000000000000A);
+			path = Config;
+			sourceTree = "<group>";
+		};
+		000000000000000000000008 /* debugfile */ = {
+			isa = PBXFileReference;
+			lastKnownFileType = text.xcconfig;
+			path = Debug.xcconfig;
+			sourceTree = "<group>";
+		};
+		000000000000000000000009 /* releasefile */ = {
+			isa = PBXFileReference;
+			lastKnownFileType = text.xcconfig;
+			path = Release.xcconfig;
+			sourceTree = "<group>";
+		};
+		00000000000000000000000A /* edgefile */ = {
+			isa = PBXFileReference;
+			lastKnownFileType = text.xcconfig;
+			path = Edge.xcconfig;
+			sourceTree = "<group>";
+		};
+		00000000000000000000000E /* appproduct */ = {
+			isa = PBXFileReference;
+			explicitFileType = wrapper.application;
+			includeInIndex = 0;
+			path = Footplate.app;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		00000000000000000000000F /* testproduct */ = {
+			isa = PBXFileReference;
+			explicitFileType = wrapper.cfbundle;
+			includeInIndex = 0;
+			path = FootplateTests.xctest;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		000000000000000000000010 /* uiproduct */ = {
+			isa = PBXFileReference;
+			explicitFileType = wrapper.cfbundle;
+			includeInIndex = 0;
+			path = FootplateUITests.xctest;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		00000000000000000000000B /* app */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 000000000000000000000011;
+			buildPhases = (00000000000000000000001D, 00000000000000000000001E, 00000000000000000000001F);
+			buildRules = ();
+			dependencies = ();
+			fileSystemSynchronizedGroups = (000000000000000000000004);
+			name = Footplate;
+			packageProductDependencies = ();
+			productName = Footplate;
+			productReference = 00000000000000000000000E;
+			productType = "com.apple.product-type.application";
+		};
+		00000000000000000000001D /* appsources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		00000000000000000000001E /* appframeworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		00000000000000000000001F /* appresources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		00000000000000000000000C /* tests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 000000000000000000000012;
+			buildPhases = (000000000000000000000020, 000000000000000000000021, 000000000000000000000022);
+			buildRules = ();
+			dependencies = (000000000000000000000026);
+			fileSystemSynchronizedGroups = (000000000000000000000005);
+			name = FootplateTests;
+			packageProductDependencies = ();
+			productName = FootplateTests;
+			productReference = 00000000000000000000000F;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		000000000000000000000020 /* testsources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		000000000000000000000021 /* testframeworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		000000000000000000000022 /* testresources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		00000000000000000000000D /* uitests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 000000000000000000000013;
+			buildPhases = (000000000000000000000023, 000000000000000000000024, 000000000000000000000025);
+			buildRules = ();
+			dependencies = (000000000000000000000027);
+			fileSystemSynchronizedGroups = (000000000000000000000006);
+			name = FootplateUITests;
+			packageProductDependencies = ();
+			productName = FootplateUITests;
+			productReference = 000000000000000000000010;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		000000000000000000000023 /* uisources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		000000000000000000000024 /* uiframeworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		000000000000000000000025 /* uiresources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		000000000000000000000028 /* testproxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 000000000000000000000001;
+			proxyType = 1;
+			remoteGlobalIDString = 00000000000000000000000B;
+			remoteInfo = Footplate;
+		};
+		000000000000000000000026 /* testdep */ = {
+			isa = PBXTargetDependency;
+			target = 00000000000000000000000B;
+			targetProxy = 000000000000000000000028;
+		};
+		000000000000000000000029 /* uiproxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 000000000000000000000001;
+			proxyType = 1;
+			remoteGlobalIDString = 00000000000000000000000B;
+			remoteInfo = Footplate;
+		};
+		000000000000000000000027 /* uidep */ = {
+			isa = PBXTargetDependency;
+			target = 00000000000000000000000B;
+			targetProxy = 000000000000000000000029;
+		};
+		000000000000000000000011 /* applist */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (000000000000000000000015, 000000000000000000000016);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		000000000000000000000015 /* appdebug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Footplate/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "yardr footplate";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks" );
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+			};
+			name = Debug;
+		};
+		000000000000000000000016 /* apprelease */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Footplate/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "yardr footplate";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks" );
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+			};
+			name = Release;
+		};
+		000000000000000000000012 /* testlist */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (000000000000000000000017, 000000000000000000000018);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		000000000000000000000017 /* testdebug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.yardr.footplate.$(TARGET_NAME)";
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Footplate.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Footplate";
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks" , "@loader_path/Frameworks" );
+			};
+			name = Debug;
+		};
+		000000000000000000000018 /* testrelease */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.yardr.footplate.$(TARGET_NAME)";
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Footplate.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Footplate";
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks" , "@loader_path/Frameworks" );
+			};
+			name = Release;
+		};
+		000000000000000000000013 /* uilist */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (000000000000000000000019, 00000000000000000000001A);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		000000000000000000000019 /* uidebug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.yardr.footplate.$(TARGET_NAME)";
+				TEST_TARGET_NAME = Footplate;
+			};
+			name = Debug;
+		};
+		00000000000000000000001A /* uirelease */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.yardr.footplate.$(TARGET_NAME)";
+				TEST_TARGET_NAME = Footplate;
+			};
+			name = Release;
+		};
+		000000000000000000000014 /* projectlist */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (00000000000000000000001B, 00000000000000000000001C);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		00000000000000000000001B /* projectdebug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 000000000000000000000008;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				SDKROOT = iphoneos;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+			};
+			name = Debug;
+		};
+		00000000000000000000001C /* projectrelease */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 000000000000000000000009;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				SDKROOT = iphoneos;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+			};
+			name = Release;
+		};
+	};
+	rootObject = 000000000000000000000001 /* Project object */;
+}
