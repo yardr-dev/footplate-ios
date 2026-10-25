@@ -1,0 +1,16 @@
+# Xcode and SwiftPM build output
+build/
+DerivedData/
+.build/
+.swiftpm/
+*.xcresult
+*.ipa
+*.dSYM.zip
+*.dSYM
+xcuserdata/
+*.xcuserstate
+.DS_Store
+# signing material never lands here
+*.p12
+*.mobileprovision
+*.cer

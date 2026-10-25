@@ -1,0 +1,16 @@
+#!/bin/sh
+# footplate-ios's tests: the depot's test command. A builder and a reviewer
+# run it in their worktree before they hand on, and a bead lands only when it
+# exits 0 on what lands. It needs no device: the build and the unit tests run
+# on the iOS simulator with xcodebuild.
+set -e
+if ! ls -d *.xcodeproj *.xcworkspace Package.swift >/dev/null 2>&1; then
+    # Before the skeleton lands there is nothing to build: documents land
+    # on this check alone. The skeleton bead's done-when replaces this script
+    # with the build and the unit tests, so a skeleton the gate skips is
+    # caught there.
+    echo "test: .yardr/test: pass (no Xcode project: nothing to build yet)"
+    exit 0
+fi
+echo "test: .yardr/test: an Xcode project exists but this gate does not build it yet" >&2
+exit 1
