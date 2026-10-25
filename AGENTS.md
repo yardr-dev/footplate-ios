@@ -23,7 +23,10 @@ simulator run is by hand.
 Under `Footplate/`:
 
 - `App/`: app entry point and shared scene composition.
-- `API/`: reserved for the edge, yard client and wire types.
+- `API/`: the edge (Kratos sign-in and logout, pairing), one paired yard's
+  client and events stream, the wire types and the refusal reading, over a
+  transport seam that `URLSession` implements; `FootplateTests/FakeYard/`
+  implements the same seam in the tests.
 - `Session/`: reserved for each paired yard's follower and retries.
 - `Model/`: reserved for screen models, navigation and state rules.
 - `UI/`: SwiftUI screens, theme and resources (catalogue, Plex fonts and licence).
@@ -31,7 +34,8 @@ Under `Footplate/`:
 - `Notify/`: reserved for notification rules, delivery and taps.
 - `Yard/`: reserved for records, Keychain, QR reading and pairing.
 
-The reserved folders contain no implementation yet. `.yardr/` holds the
+The `Session`, `Model`, `Unlock`, `Notify` and `Yard` folders contain no
+implementation yet. `.yardr/` holds the
 flow, roles and simulator gate; `docs/design/` holds design decisions.
 A change moving or adding a target, module, package or folder updates this
 section in the same commit.
