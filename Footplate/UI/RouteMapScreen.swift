@@ -117,26 +117,14 @@ private struct StationView: View {
     }
 
     /// A backlog shut: its name, its count, who waits in it, and the
-    /// chevron that opens it.
+    /// chevron that opens it. The count follows the name where it fits,
+    /// and stands under it where larger text leaves no room, so no word
+    /// breaks.
     private var shutBacklog: some View {
         Button(action: toggle) {
-            HStack(spacing: 0) {
-                Text(station.name)
-                    .themeType(.section)
-                    .foregroundStyle(ThemeColor.textPrimary.color)
-                Text("\(station.beads.count) in backlog")
-                    .themeType(.meta)
-                    .foregroundStyle(ThemeColor.textSecondary.color)
-                    .padding(.leading, 8)
-                if station.waits > 0 {
-                    Text(" · \(station.waits) wait on you")
-                        .themeType(.meta)
-                        .foregroundStyle(ThemeColor.textAccent.color)
-                }
-                Spacer(minLength: 8)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(ThemeColor.textSecondary.color)
+            ViewThatFits(in: .horizontal) {
+                shutRow(HStack(spacing: 8) { backlogName; backlogWords })
+                shutRow(VStack(alignment: .leading, spacing: 0) { backlogName; backlogWords })
             }
             .frame(minHeight: 48)
             .contentShape(Rectangle())
@@ -144,6 +132,33 @@ private struct StationView: View {
         .buttonStyle(.plain)
         .accessibilityHint("Opens the backlog")
         .accessibilityIdentifier("station/\(station.name)")
+    }
+
+    private func shutRow(_ words: some View) -> some View {
+        HStack(spacing: 0) {
+            words
+            Spacer(minLength: 8)
+            Image(systemName: "chevron.down")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(ThemeColor.textSecondary.color)
+        }
+    }
+
+    private var backlogName: some View {
+        Text(station.name)
+            .themeType(.section)
+            .foregroundStyle(ThemeColor.textPrimary.color)
+    }
+
+    /// `12 in backlog · 3 wait on you`, the waits in the accent: one
+    /// text, so it wraps at its spaces.
+    private var backlogWords: some View {
+        let count = Text("\(station.beads.count) in backlog")
+            .foregroundStyle(ThemeColor.textSecondary.color)
+        let waits = Text(station.waits > 0 ? " · \(station.waits) wait on you" : "")
+            .foregroundStyle(ThemeColor.textAccent.color)
+        return Text("\(count)\(waits)")
+            .themeType(.meta)
     }
 }
 

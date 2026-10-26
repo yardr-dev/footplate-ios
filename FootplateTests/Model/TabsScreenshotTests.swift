@@ -101,6 +101,16 @@ final class TabsScreenshotTests: XCTestCase {
         )
         try await render(tabs(), scene: scene, size: phone, to: dir.appendingPathComponent("route-iphone.png"))
         try await render(tabs(), scene: scene, size: pad, to: dir.appendingPathComponent("route-ipad.png"))
+        // The shut backlog at the largest text size and at an accessibility
+        // one: its words under its name where they no longer fit beside it.
+        try await render(
+            tabs().environment(\.dynamicTypeSize, .xxxLarge),
+            scene: scene, size: phone, to: dir.appendingPathComponent("route-xxxl-iphone.png")
+        )
+        try await render(
+            tabs().environment(\.dynamicTypeSize, .accessibility3),
+            scene: scene, size: phone, to: dir.appendingPathComponent("route-ax-iphone.png")
+        )
         line.toggleBacklog(depot: "yard", flow: "default", stage: "backlog")
         try await render(tabs(), scene: scene, size: phone, to: dir.appendingPathComponent("route-open-iphone.png"))
         line.toggleBacklog(depot: "yard", flow: "default", stage: "backlog")
