@@ -44,3 +44,16 @@ The `Unlock` and `Notify` folders contain no implementation yet.
 flow, roles and simulator gate; `docs/design/` holds design decisions.
 A change moving or adding a target, module, package or folder updates this
 section in the same commit.
+
+## TestFlight
+
+`scripts/testflight` archives the Release configuration and uploads the
+build to App Store Connect, for mckean's iPhone and iPad. A per-build run
+is the yardmaster's or mckean's, never a builder's: on a clean checkout of
+`main`, with the API key's IDs in the environment,
+`ASC_KEY_ID=<key id> ASC_ISSUER_ID=<issuer id> scripts/testflight`. The
+build number is `main`'s commit count, set by the script and never
+committed. `scripts/testflight --no-upload` archives and exports locally
+without uploading. The `.p8` stays in
+`~/.appstoreconnect/private_keys/` and is never copied, committed,
+printed or noted.

@@ -1,0 +1,102 @@
+#!/bin/sh
+# Archive Release and upload the build to TestFlight.
+#
+# A per-build run is the yardmaster's or mckean's, never a builder's, on a
+# clean checkout of main with the App Store Connect API key's IDs in the
+# environment:
+#
+#   ASC_KEY_ID=<key id> ASC_ISSUER_ID=<issuer id> scripts/testflight
+#
+# The build number is main's commit count, passed to xcodebuild and never
+# committed. The .p8 stays where it was put, ~/.appstoreconnect/private_keys/,
+# and is read in place, never copied or printed. --no-upload archives and
+# exports locally instead, proving the archive and the signing without
+# uploading.
+set -e
+
+PROG=scripts/testflight
+TEAM_ID=BEV9284CFF
+
+fail() {
+    echo "$PROG: $1" >&2
+    exit 1
+}
+
+usage() {
+    echo "usage: $PROG [--no-upload]" >&2
+    exit 1
+}
+
+upload=yes
+if [ "${1:-}" = "--no-upload" ]; then
+    upload=no
+    shift
+fi
+[ $# -eq 0 ] || usage
+
+[ -n "${ASC_KEY_ID:-}" ] || fail "ASC_KEY_ID is not set"
+[ -n "${ASC_ISSUER_ID:-}" ] || fail "ASC_ISSUER_ID is not set"
+key_path="$HOME/.appstoreconnect/private_keys/AuthKey_$ASC_KEY_ID.p8"
+[ -f "$key_path" ] || fail "no API key at $key_path"
+
+cd "$(dirname "$0")/.." || fail "cannot find the repository root"
+[ -z "$(git status --porcelain)" ] || fail "the worktree is not clean; run on a clean checkout of main"
+if [ "$upload" = "yes" ]; then
+    branch="$(git symbolic-ref --short HEAD 2>/dev/null || echo detached)"
+    [ "$branch" = "main" ] || fail "not on main; uploads run from a clean checkout of main"
+fi
+build="$(git rev-list --count main)" || fail "cannot count main's commits"
+
+out="$(mktemp -d)"
+if [ "$upload" = "yes" ]; then
+    # Upload runs only need this directory while xcodebuild is working.
+    trap 'rm -rf "$out" 2>/dev/null || true' EXIT
+fi
+archive="$out/Footplate.xcarchive"
+plist="$out/ExportOptions.plist"
+if [ "$upload" = "yes" ]; then
+    destination="upload"
+else
+    destination="export"
+fi
+cat >"$plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>method</key>
+    <string>app-store-connect</string>
+    <key>destination</key>
+    <string>$destination</string>
+    <key>teamID</key>
+    <string>$TEAM_ID</string>
+</dict>
+</plist>
+EOF
+
+xcodebuild archive \
+    -project Footplate.xcodeproj \
+    -scheme Footplate \
+    -configuration Release \
+    -destination 'generic/platform=iOS' \
+    -archivePath "$archive" \
+    CURRENT_PROJECT_VERSION="$build" \
+    -allowProvisioningUpdates \
+    -authenticationKeyPath "$key_path" \
+    -authenticationKeyID "$ASC_KEY_ID" \
+    -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+
+xcodebuild -exportArchive \
+    -archivePath "$archive" \
+    -exportPath "$out/export" \
+    -exportOptionsPlist "$plist" \
+    -allowProvisioningUpdates \
+    -authenticationKeyPath "$key_path" \
+    -authenticationKeyID "$ASC_KEY_ID" \
+    -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+
+if [ "$upload" = "yes" ]; then
+    echo "$PROG: build $build uploaded"
+else
+    echo "$PROG: build $build exported to $out/export (not uploaded)"
+fi
