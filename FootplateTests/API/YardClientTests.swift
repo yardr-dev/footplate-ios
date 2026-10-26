@@ -143,6 +143,26 @@ final class YardClientTests: XCTestCase {
                 XCTAssertEqual(ask.about.map(\.title), ["Release train"])
                 XCTAssertEqual(ask.about.map(\.stage), ["new"])
             }),
+            // The marks of a secret ask: the login a code goes to, the
+            // harness an API key is for, the user whose own login it is.
+            ("Bead", #"{"bead":"yd-login"}"#, {
+                let secret = try await laptop.bead("yd-login").asks[0].secret
+                XCTAssertEqual(secret?.env, ["INPUT"])
+                XCTAssertEqual(secret?.login, "claude-ab12")
+                XCTAssertEqual(secret?.harness, "")
+                XCTAssertEqual(secret?.as, "")
+            }),
+            ("Bead", #"{"bead":"yd-key"}"#, {
+                let secret = try await laptop.bead("yd-key").asks[0].secret
+                XCTAssertEqual(secret?.harness, "claude")
+                XCTAssertEqual(secret?.crew, "yardmaster")
+                XCTAssertEqual(secret?.login, "")
+            }),
+            ("Bead", #"{"bead":"yd-own"}"#, {
+                let secret = try await laptop.bead("yd-own").asks[0].secret
+                XCTAssertEqual(secret?.login, "claude-ab13")
+                XCTAssertEqual(secret?.as, "hal")
+            }),
             ("AnswerAsk", #"{"bead":"yd-links","ask":3,"option":1,"words":"move them tonight","actor":"jo"}"#, {
                 try await laptop.answerAsk(bead: "yd-links", ask: 3, option: 1, words: "move them tonight", actor: "jo")
             }),
@@ -161,6 +181,14 @@ final class YardClientTests: XCTestCase {
             }),
             ("ApproveSetup", #"{"bead":"yd-courier","ask":44,"option":1,"actor":"jo","weighed":true}"#, {
                 try await laptop.approveSetup(bead: "yd-courier", ask: 44, option: 1, actor: "jo", weighed: true)
+            }),
+            // The one value the phone sends: a login's one-time code under
+            // the name the ask asks for, with weighed where it is true.
+            ("GiveSecret", #"{"bead":"yd-login","ask":34,"values":{"INPUT":"the-code"},"actor":"jo","weighed":true}"#, {
+                try await laptop.giveSecret(bead: "yd-login", ask: 34, values: ["INPUT": "the-code"], actor: "jo", weighed: true)
+            }),
+            ("GiveSecret", #"{"bead":"yd-login","ask":34,"values":{"INPUT":"the-code"},"actor":"jo"}"#, {
+                try await laptop.giveSecret(bead: "yd-login", ask: 34, values: ["INPUT": "the-code"], actor: "jo")
             }),
             ("DeferAsk", #"{"bead":"yd-links","ask":4,"actor":"jo"}"#, {
                 try await laptop.deferAsk(bead: "yd-links", ask: 4, actor: "jo")

@@ -5,8 +5,9 @@ import XCTest
 
 // The decision screens rendered in the simulator against
 // fake-followed state (design 3.5, the bead's screenshots): the
-// decisions list, a routine card and a weighty card. Hand-run for the
-// bead note; the gate runs it too, and it only asserts that each
+// decisions list, a routine card, a weighty card, a harness login's
+// code card with its sign-in link, and an API key's card. Hand-run for
+// the bead note; the gate runs it too, and it only asserts that each
 // screen renders non-empty at phone size. PNGs land in
 // `DECISION_SHOTS_DIR`, or the temporary directory's `decision-shots`
 // where that names none.
@@ -64,6 +65,18 @@ final class DecisionScreenshotTests: XCTestCase {
             scene: scene, to: dir.appendingPathComponent("weighty.png")
         )
         decision.leave()
+        try await render(
+            DecisionScreen(model: decision, yard: "", bead: "yd-login", ask: 34),
+            scene: scene, to: dir.appendingPathComponent("login.png")
+        )
+        XCTAssertTrue(decision.state.givesCode)
+        decision.leave()
+        try await render(
+            DecisionScreen(model: decision, yard: "", bead: "yd-key", ask: 22),
+            scene: scene, to: dir.appendingPathComponent("key.png")
+        )
+        XCTAssertFalse(decision.state.givesCode)
+        decision.leave()
     }
 
     private func render(_ view: some View, scene: UIWindowScene, to file: URL) async throws {
@@ -120,6 +133,30 @@ final class DecisionScreenshotTests: XCTestCase {
                         AskOption(label: "You decide", consequence: "leave it to yardmaster"),
                     ],
                     recommend: 1, why: "the test passed", about: [AboutBead(id: "yd-train", title: "Release train", stage: "new")]
+                ),
+            ]),
+            "yd-login": Bead(id: "yd-login", asks: [
+                BeadAsk(
+                    ask: 34, question: "Paste what Claude Code's sign-in page gave you",
+                    context: [
+                        "Sign in on this page: https://claude.ai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code&scope=user%3Ainference&state=Xk3v",
+                        "Claude Code's login waits for what the page gives you (Paste code here if prompted >).",
+                        "What you type goes to the login in the yard's memory and is kept nowhere.",
+                    ],
+                    secret: Secret(env: ["INPUT"], line: "a secret: INPUT, for the waiting login claude-ab12", login: "claude-ab12"),
+                    weight: [AskWeight(kind: "credential", line: "INPUT, for the waiting login claude-ab12")]
+                ),
+            ]),
+            "yd-key": Bead(id: "yd-key", asks: [
+                BeadAsk(
+                    ask: 22, question: "What is the API key Claude Code runs with?",
+                    context: ["yardmaster is at Claude Code's login screen."],
+                    secret: Secret(
+                        env: ["ANTHROPIC_API_KEY"],
+                        line: "a secret: ANTHROPIC_API_KEY, the API key Claude Code runs with, asked for crew member yardmaster; it is read by every Claude Code session that burns the operator's login, from its next start",
+                        harness: "claude", crew: "yardmaster"
+                    ),
+                    weight: [AskWeight(kind: "credential", line: "ANTHROPIC_API_KEY, the API key Claude Code runs with, asked for crew member yardmaster")]
                 ),
             ]),
             "yd-map": Bead(id: "yd-map", asks: [

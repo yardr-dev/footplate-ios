@@ -232,12 +232,30 @@ struct AskWeight: Equatable, Sendable {
     var line: String = ""
 }
 
-/// What a secret ask asks for. The phone never gives one.
+/// What a secret ask asks for. The phone gives one only where the card is
+/// a harness login's one-time code (`givesLoginCode`); every other is
+/// answered on the yard's machine.
 struct Secret: Equatable, Sendable {
     var source: String = ""
     var env: [String] = []
     /// What is asked for, in the yard's words: shown as it is.
     var line: String = ""
+    /// The waiting harness login the value goes to: what its sign-in page
+    /// gave. Empty on any other secret.
+    var login: String = ""
+    /// The harness kind whose API key is asked for. Empty on any other
+    /// secret.
+    var harness: String = ""
+    /// The hook whose signing secret is asked for.
+    var hook: String = ""
+    /// The user whose own address in the source is asked for.
+    var user: String = ""
+    /// The crew member whose own credential, or at whose login screen the
+    /// harness key, is asked for.
+    var crew: String = ""
+    /// The user whose own credential is asked for; with `login`, the user
+    /// whose own login that is.
+    var `as`: String = ""
 }
 
 /// The command a run ask proposes: what a card says of it. The phone
@@ -652,12 +670,18 @@ extension AskWeight: Codable {
 }
 
 extension Secret: Codable {
-    enum CodingKeys: String, CodingKey { case source, env, line }
+    enum CodingKeys: String, CodingKey { case source, env, line, login, harness, hook, user, crew, `as` }
     init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         source = box.string(.source)
         env = box.list(.env, of: String.self)
         line = box.string(.line)
+        login = box.string(.login)
+        harness = box.string(.harness)
+        hook = box.string(.hook)
+        user = box.string(.user)
+        crew = box.string(.crew)
+        `as` = box.string(.as)
     }
 }
 

@@ -9,7 +9,11 @@ import UIKit
 // recommended one, the words, and Pick, Later and Decline. A run or
 // setup ask is approved with Approve behind the unlock. A card the edge
 // cannot approve shows what it proposes and the command that answers
-// it on the yard's machine, with Copy, in place of Pick or Approve.
+// it on the yard's machine, with Copy, in place of Pick or Approve. The
+// one secret it can, a harness login's one-time code, takes the code in
+// a field that does not echo and Give behind the unlock; the web
+// addresses in a card's question and context, the sign-in page among
+// them, are links.
 
 /// The decisions list, in the place's own stack.
 struct DecisionsScreen: View {
@@ -116,6 +120,7 @@ struct DecisionScreen: View {
     @State private var wordsField: String = ""
     @State private var typedField: String = ""
     @State private var declineField: String = ""
+    @State private var codeField: String = ""
 
     var body: some View {
         let state = model.state
@@ -141,6 +146,10 @@ struct DecisionScreen: View {
         .toolbar(.hidden, for: .tabBar)
         .onAppear { model.open(yard: yard, bead: bead, ask: ask) }
         .onDisappear { model.leave() }
+        // A code the yard refused is not kept in the field.
+        .onChange(of: state.givesCode) { _, gives in
+            if !gives { codeField = "" }
+        }
     }
 
     @ViewBuilder
@@ -150,11 +159,11 @@ struct DecisionScreen: View {
                 .themeType(.label)
                 .foregroundStyle(ThemeColor.textPrimary.color)
         }
-        Text(state.question)
+        linkedText(state.question)
             .themeType(.title)
             .foregroundStyle(ThemeColor.textPrimary.color)
         ForEach(Array(state.context.enumerated()), id: \.offset) { _, line in
-            Text(line)
+            linkedText(line)
                 .themeType(.body)
                 .foregroundStyle(ThemeColor.textPrimary.color)
         }
@@ -163,7 +172,7 @@ struct DecisionScreen: View {
                 .themeType(.meta)
                 .foregroundStyle(ThemeColor.textSecondary.color)
         }
-        let picking = state.elsewhere == nil && !state.approvable && state.done == nil
+        let picking = state.elsewhere == nil && !state.approvable && !state.givesCode && state.done == nil
         let approving = state.approvable && state.done == nil
         let canChoose = state.unlocking == nil && !state.sending
         if state.approvable {
@@ -185,6 +194,18 @@ struct DecisionScreen: View {
         } else {
             if let command = state.elsewhere {
                 elsewhere(command, state: state)
+            }
+            if state.givesCode {
+                secretField("The code the page gave you", text: $codeField)
+                if state.typeBack {
+                    field("No screen lock: type \(state.ask) back to give", text: $typedField, mono: true) { model.typed($0) }
+                }
+                // Give is a tap alone: the field's return goes to nothing.
+                Button("Give") {
+                    Task { await model.give(code: codeField) }
+                }
+                .buttonStyle(FootplateButtonStyle(primary: true))
+                .disabled(codeField.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || state.sending || state.unlocking != nil)
             }
             if picking {
                 let wordsOnly = state.options.isEmpty
@@ -235,7 +256,7 @@ struct DecisionScreen: View {
                     .foregroundStyle(ThemeColor.textPrimary.color)
                     .padding(.top, 8)
             } else if let refusal = state.refusal {
-                Text("Not approved: \(refusal)")
+                Text("\(state.secret ? "Not given" : "Not approved"): \(refusal)")
                     .themeType(.body)
                     .foregroundStyle(ThemeColor.textError.color)
                     .padding(.top, 8)
@@ -306,10 +327,29 @@ struct DecisionScreen: View {
         TextField(label, text: text, axis: .vertical)
             .lineLimit(1...5)
             .themeType(mono ? .code : .body)
-            .padding(.horizontal, 12)
-            .frame(minHeight: 48)
-            .background(ThemeColor.surfaceRaised.color, in: RoundedRectangle(cornerRadius: 6))
-            .overlay { RoundedRectangle(cornerRadius: 6).strokeBorder(ThemeColor.borderStrong.color, lineWidth: 1) }
+            .fieldBox()
             .onChange(of: text.wrappedValue) { _, value in onChange(value) }
+    }
+
+    /// A field that does not echo: what is typed in it is a secret, and
+    /// goes to the model only as the call's argument.
+    private func secretField(_ label: String, text: Binding<String>) -> some View {
+        SecureField(label, text: text)
+            .autocorrectionDisabled()
+            .textInputAutocapitalization(.never)
+            .themeType(.body)
+            .fieldBox()
+    }
+
+    /// A line of the asker's words, the web addresses in it links that
+    /// the system opens: underlined, in the accent, and so no colour
+    /// alone says what is a link.
+    private func linkedText(_ line: String) -> Text {
+        var words = linked(line)
+        for run in words.runs where run.link != nil {
+            words[run.range].swiftUI.underlineStyle = .single
+            words[run.range].swiftUI.foregroundColor = ThemeColor.textAccent.color
+        }
+        return Text(words)
     }
 }

@@ -61,6 +61,11 @@ protocol Followed: AnyObject {
     /// `weighed` after a passed gate.
     func approveSetup(bead: String, ask: Int64, option: Int64, weighed: Bool) async throws
 
+    /// Gives a harness login's one-time code, the one secret the edge
+    /// carries: each name of the ask's `secret.env` to what was typed,
+    /// with `weighed` after a passed gate.
+    func give(bead: String, ask: Int64, values: [String: String], weighed: Bool) async throws
+
     /// Later: the ask is put aside.
     func later(bead: String, ask: Int64) async throws
 

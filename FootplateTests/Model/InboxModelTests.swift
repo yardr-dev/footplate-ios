@@ -652,6 +652,7 @@ final class FakeFollowed: Followed {
     var answers: [(String, Int64, Int64, String, Bool)] = []
     var approvals: [(String, Int64, Bool)] = []
     var setupApprovals: [(String, Int64, Int64, Bool)] = []
+    var gives: [(String, Int64, [String: String], Bool)] = []
     var defers: [(String, Int64)] = []
     var declines: [(String, Int64, String)] = []
     var asksAgain: Asks = Asks()
@@ -797,6 +798,11 @@ final class FakeFollowed: Followed {
     func approveSetup(bead: String, ask: Int64, option: Int64, weighed: Bool) async throws {
         if let answerRefuse { throw answerRefuse }
         setupApprovals.append((bead, ask, option, weighed))
+    }
+
+    func give(bead: String, ask: Int64, values: [String: String], weighed: Bool) async throws {
+        if let answerRefuse { throw answerRefuse }
+        gives.append((bead, ask, values, weighed))
     }
 
     func later(bead: String, ask: Int64) async throws {

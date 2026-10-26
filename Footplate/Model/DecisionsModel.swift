@@ -132,15 +132,40 @@ func became(_ ask: DecidedAsk, now: Date, zone: TimeZone) -> String {
     }
 }
 
-/// Whether the card is one the edge cannot approve: a secret ask is
-/// answered on the yard's machine alone. A run or setup ask is approved
-/// on the phone, behind the unlock.
+/// The one name a login's input is asked for (`loginInputName` in yardr).
+let loginInputName = "INPUT"
+
+/// Whether the card is the daemon's ask for the one-time code a harness's
+/// sign-in page gave: the one secret the yard takes down the edge link
+/// (`AskSecret.OperatorLoginInput` in yardr), a `login` asked for the one
+/// name `INPUT` with no source, hook, harness, user, crew member or `as`
+/// beside it. An API key (`harness`), a source's credential, a hook's
+/// secret, a user's own address or credential and the code of a user's
+/// own login (`as`) are not it: the yard refuses each of them down the
+/// link, after the edge has seen the value, so the phone asks for none.
+func givesLoginCode(_ secret: Secret?) -> Bool {
+    guard let secret else { return false }
+    return !secret.login.isEmpty
+        && secret.env == [loginInputName]
+        && secret.source.isEmpty
+        && secret.hook.isEmpty
+        && secret.harness.isEmpty
+        && secret.user.isEmpty
+        && secret.crew.isEmpty
+        && secret.as.isEmpty
+}
+
+/// Whether the card is one the edge cannot answer: a secret ask is
+/// answered on the yard's machine alone, but for a harness login's
+/// one-time code, which is given on the phone behind the unlock. A run or
+/// setup ask is approved on the phone, behind the unlock.
 func answeredElsewhere(_ secret: Secret?) -> Bool {
-    secret != nil
+    secret != nil && !givesLoginCode(secret)
 }
 
 /// The command that answers a secret card on the yard's machine: a
-/// secret never crosses the edge, and is never typed on the phone.
+/// secret never crosses the edge but a login's one-time code, and is
+/// never typed on the phone otherwise.
 func secretCommand(bead: String, ask: Int64) -> String {
     "yardr bead answer \(bead) \(ask) --secret"
 }
@@ -175,16 +200,19 @@ func pickCommand(bead: String, ask: Int64, option: Int64) -> String {
 }
 
 /// The command that answers a card on the yard's machine, in place of
-/// Pick or Approve: a secret ask's, or one the yard refused — a run
-/// approval's, a setup approval's with its preset, or a pick's with
-/// its option. Nil on a card the phone answers on. The bare
-/// `yardr bead answer <bead> <ask>` is never shown: the CLI refuses it
-/// without a mode.
+/// Pick, Approve or Give: a secret ask's, or one the yard refused — a
+/// run approval's, a setup approval's with its preset, a pick's with
+/// its option, or a login code's giving. Nil on a card the phone answers
+/// on. The bare `yardr bead answer <bead> <ask>` is never shown: the CLI
+/// refuses it without a mode.
 func elsewhereCommand(bead: String, ask: BeadAsk, chosen: Int64, refused: Bool) -> String? {
     if answeredElsewhere(ask.secret) {
         return secretCommand(bead: bead, ask: ask.ask)
     }
     guard refused else { return nil }
+    if ask.secret != nil {
+        return secretCommand(bead: bead, ask: ask.ask)
+    }
     if ask.run != nil {
         return approveCommand(bead: bead, ask: ask.ask, run: ask.run)
     }

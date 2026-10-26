@@ -15,8 +15,12 @@ private func refusalWords(_ error: ApiError) -> String { words(error) }
 // Pick. A run or setup ask is approved with Approve, always behind the
 // gate, with `weighed`; an approval the yard refuses shows the yard's
 // sentence with the per-type command instead, and is not made again.
-// What was sent leaves the card; the list moves it to Decided when the
-// yard's `noted` event comes.
+// A secret card shows that command too, but for the one secret the edge
+// carries, a harness login's one-time code: that card takes the code in
+// a field that does not echo and gives it with Give, always behind the
+// gate, with `weighed`, and a giving the yard refuses is shown as an
+// approval it refused. What was sent leaves the card; the list moves it
+// to Decided when the yard's `noted` event comes.
 
 /// One option of a card, numbered from 1, `you decide` last.
 struct Choice: Equatable, Sendable {
@@ -51,14 +55,22 @@ struct DecisionState: Equatable, Sendable {
     /// run or setup ask the yard has not refused.
     var approvable: Bool = false
     /// The command that answers it on the yard's machine, in place of
-    /// Pick or Approve: a secret ask, or an answer the yard refused.
-    /// Nil on a card the phone answers on.
+    /// Pick, Approve or Give: a secret ask, or an answer the yard
+    /// refused. Nil on a card the phone answers on.
     var elsewhere: String? = nil
-    /// The yard's sentence when it refused an approval or a pick.
+    /// The yard's sentence when it refused an approval, a pick or a
+    /// giving.
     var refusal: String? = nil
-    /// Only a secret card carries the line that a secret never crosses
-    /// the edge.
+    /// The card asks for a secret: it is given or answered on the yard's
+    /// machine, and never picked or answered in words.
+    var secret: Bool = false
+    /// Only a secret card the edge cannot carry has the line that a
+    /// secret never crosses the edge.
     var secretElsewhere: Bool = false
+    /// The card is the ask for a harness login's one-time code, the one
+    /// secret the phone gives: a field that does not echo and Give, in
+    /// place of Pick, until the yard refuses the giving.
+    var givesCode: Bool = false
     /// The ask's number is to be typed back before the pick: the phone
     /// has no screen lock and the chosen pick passes the gate.
     var typeBack: Bool = false
@@ -139,11 +151,13 @@ final class DecisionModel {
                     : nil
             }
         let approvable = approvable(ask)
+        let givesCode = givesCode(ask)
         // An approval always passes the gate: a run wants nothing
-        // picked, a setup its preset.
+        // picked, a setup its preset. So does the giving of a login's
+        // code.
         let gated = approvable
             ? ask.run != nil || chosen > 0
-            : chosen > 0 && needsGate(weight: weight, identity: ask.identity, options: ask.options, option: chosen)
+            : givesCode || (chosen > 0 && needsGate(weight: weight, identity: ask.identity, options: ask.options, option: chosen))
         return DecisionState(
             read: true,
             ask: openedAsk,
@@ -161,7 +175,9 @@ final class DecisionModel {
             approvable: approvable,
             elsewhere: elsewhereCommand(bead: bead, ask: ask, chosen: chosen, refused: refused),
             refusal: refusal,
+            secret: ask.secret != nil,
             secretElsewhere: answeredElsewhere(ask.secret),
+            givesCode: givesCode,
             typeBack: gated && unlock.gate() == .typeBack,
             typed: typedText,
             unlocking: unlocking,
@@ -243,6 +259,11 @@ final class DecisionModel {
         // A run or setup ask is approved, not picked, even where the
         // yard refused the approval and the card shows the command.
         if ask.run != nil || ask.setup != nil { return }
+        // A secret ask is given, never picked or answered in words: the
+        // yard refuses both, and the words field is no place for a code.
+        // A login's code is given on the phone (`give`), every other
+        // secret on the yard's machine.
+        if ask.secret != nil { return }
         // An ask with no options is answered as option 0 with words:
         // an answer, not a pick, so it needs words but no weight gate.
         if ask.options.isEmpty {
@@ -257,28 +278,8 @@ final class DecisionModel {
             await send(target: screen, weighed: false)
             return
         }
-        let activation = self.activation
-        let readKey = lastReadKey
-        switch unlock.gate() {
-        case .prompt:
-            let label = ask.options.indices.contains(Int(chosen - 1)) ? ask.options[Int(chosen - 1)].label : ""
-            let reason = pickReason(option: label, yard: title(screen.yard))
-            unlocking = reason
-            let passed = await unlock.prompt(reason: reason)
-            guard self.activation == activation else { return }
-            unlocking = nil
-            guard passed, active, self.screen() == screen else { return }
-            guard lastReadKey == readKey, readAsk == ask else {
-                errorText = "The card changed while the unlock was open. Review it before answering."
-                return
-            }
-            await send(target: screen, weighed: true)
-        case .typeBack:
-            guard typedBack(typedText, screen.ask) else {
-                errorText = "ask \(screen.ask)'s number was not typed back, so nothing was done"
-                return
-            }
-            typedText = ""
+        let label = ask.options.indices.contains(Int(chosen - 1)) ? ask.options[Int(chosen - 1)].label : ""
+        await passingTheGate(screen, ask: ask, reason: pickReason(option: label, yard: title(screen.yard))) {
             await send(target: screen, weighed: true)
         }
     }
@@ -291,28 +292,25 @@ final class DecisionModel {
         guard let screen = screen(), let ask = readAsk else { return }
         if sending || unlocking != nil || !approvable(ask) { return }
         if ask.setup != nil, chosen == 0 { return }
-        let activation = self.activation
-        let readKey = lastReadKey
-        switch unlock.gate() {
-        case .prompt:
-            let reason = approveReason(what: approvalOf(ask), yard: title(screen.yard))
-            unlocking = reason
-            let passed = await unlock.prompt(reason: reason)
-            guard self.activation == activation else { return }
-            unlocking = nil
-            guard passed, active, self.screen() == screen else { return }
-            guard lastReadKey == readKey, readAsk == ask else {
-                errorText = "The card changed while the unlock was open. Review it before answering."
-                return
-            }
+        await passingTheGate(screen, ask: ask, reason: approveReason(what: approvalOf(ask), yard: title(screen.yard))) {
             await sendApproval(target: screen, ask: ask)
-        case .typeBack:
-            guard typedBack(typedText, screen.ask) else {
-                errorText = "ask \(screen.ask)'s number was not typed back, so nothing was done"
-                return
-            }
-            typedText = ""
-            await sendApproval(target: screen, ask: ask)
+        }
+    }
+
+    /// Give: the one-time code a harness's sign-in page gave, as the
+    /// person typed it, to the login that waits for it. Only on the
+    /// card that asks for it (`givesLoginCode`): any other secret is
+    /// answered on the yard's machine, so no path leads here from a key
+    /// ask. Always behind the gate, with `weighed`; where the phone has
+    /// no screen lock the ask's number typed back stands for the unlock.
+    /// The code is held nowhere but in the call: the field is the view's.
+    func give(code: String) async {
+        guard let screen = screen(), let ask = readAsk else { return }
+        if sending || unlocking != nil || !givesCode(ask) { return }
+        let code = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        if code.isEmpty { return }
+        await passingTheGate(screen, ask: ask, reason: giveReason(yard: title(screen.yard))) {
+            await sendCode(target: screen, code: code)
         }
     }
 
@@ -349,6 +347,37 @@ final class DecisionModel {
         return ScreenRef(yard: yard, bead: bead, ask: openedAsk)
     }
 
+    /// Passes the gate in front of a weighty call, and only then goes on:
+    /// the system's prompt with `reason`, or the ask's number typed back
+    /// where the phone has no screen lock. A prompt that is cancelled, a
+    /// card that left the screen and a number not typed back send
+    /// nothing, and a card that changed while the prompt was open is to
+    /// be reviewed again first.
+    private func passingTheGate(_ screen: ScreenRef, ask: BeadAsk, reason: String, then proceed: () async -> Void) async {
+        let activation = self.activation
+        let readKey = lastReadKey
+        switch unlock.gate() {
+        case .prompt:
+            unlocking = reason
+            let passed = await unlock.prompt(reason: reason)
+            guard self.activation == activation else { return }
+            unlocking = nil
+            guard passed, active, self.screen() == screen else { return }
+            guard lastReadKey == readKey, readAsk == ask else {
+                errorText = "The card changed while the unlock was open. Review it before answering."
+                return
+            }
+            await proceed()
+        case .typeBack:
+            guard typedBack(typedText, screen.ask) else {
+                errorText = "ask \(screen.ask)'s number was not typed back, so nothing was done"
+                return
+            }
+            typedText = ""
+            await proceed()
+        }
+    }
+
     private func send(target: ScreenRef, weighed: Bool) async {
         let option = chosen
         let words = wordsText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -367,6 +396,15 @@ final class DecisionModel {
             await answerCall(target: target, failed: "Not approved", isApproval: true) { followed in
                 try await followed.approveSetup(bead: target.bead, ask: target.ask, option: option, weighed: true)
             }
+        }
+    }
+
+    /// Gives the code under the one name the ask asks for. A call that
+    /// ends with no word from the yard may have been taken, so a failure
+    /// says it was not confirmed, never that it was not given.
+    private func sendCode(target: ScreenRef, code: String) async {
+        await answerCall(target: target, failed: "Not confirmed", isApproval: true) { followed in
+            try await followed.give(bead: target.bead, ask: target.ask, values: [loginInputName: code], weighed: true)
         }
     }
 
@@ -473,6 +511,12 @@ final class DecisionModel {
 
     private func approvable(_ ask: BeadAsk) -> Bool {
         (ask.run != nil || ask.setup != nil) && !refused
+    }
+
+    /// The card takes the code of a harness login's sign-in page: it is
+    /// that ask, and the yard has not refused a giving of it.
+    private func givesCode(_ ask: BeadAsk) -> Bool {
+        givesLoginCode(ask.secret) && !refused
     }
 
     /// What the prompt names for the approval: the run's command whole,

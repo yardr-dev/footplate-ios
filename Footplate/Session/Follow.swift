@@ -562,6 +562,10 @@ extension Follower: Followed {
         try await client.approveSetup(bead: bead, ask: ask, option: option, actor: me(), weighed: weighed)
     }
 
+    func give(bead: String, ask: Int64, values: [String: String], weighed: Bool) async throws {
+        try await client.giveSecret(bead: bead, ask: ask, values: values, actor: me(), weighed: weighed)
+    }
+
     func later(bead: String, ask: Int64) async throws {
         try await client.deferAsk(bead: bead, ask: ask, actor: me())
     }

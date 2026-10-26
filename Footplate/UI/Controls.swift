@@ -27,6 +27,17 @@ struct FootplateButtonStyle: ButtonStyle {
     }
 }
 
+extension View {
+    /// The box of a text field: 48 points high, a raised surface and a
+    /// strong hairline, radius 6.
+    func fieldBox() -> some View {
+        padding(.horizontal, 12)
+            .frame(minHeight: 48)
+            .background(ThemeColor.surfaceRaised.color, in: RoundedRectangle(cornerRadius: 6))
+            .overlay { RoundedRectangle(cornerRadius: 6).strokeBorder(ThemeColor.borderStrong.color, lineWidth: 1) }
+    }
+}
+
 /// A label and its value, one row of what was read.
 struct FieldRow: View {
     let label: String

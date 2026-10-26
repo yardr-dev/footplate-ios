@@ -6,8 +6,10 @@ import XCTest
 // after the unlock passed or the number was typed back, and nothing
 // after a cancelled one; nobody and you decide go without the gate; a
 // run ask is approved behind the unlock and a setup with its preset
-// pick, a secret ask shows its command and sends nothing, and a
-// refused answer shows the yard's sentence with the per-type command;
+// pick, a secret ask shows its command and sends nothing but a login's
+// one-time code, which is given behind the unlock and under no other
+// secret, and a refused answer shows the yard's sentence with the
+// per-type command;
 // Later and Decline move the card to Decided when the yard's `noted`
 // event comes, and not before.
 @MainActor
@@ -180,6 +182,20 @@ final class DecisionModelTests: XCTestCase {
         XCTAssertEqual(calls("AnswerAsk")[0]["option"] as? Int, 2)
         XCTAssertEqual(calls("AnswerAsk")[0]["words"] as? String, "hal")
         XCTAssertEqual(calls("AnswerAsk")[0]["weighed"] as? Bool, true)
+
+        // A login's code is always behind the gate, so the number is
+        // wanted at once.
+        card.leave()
+        let login = await opened("yd-login", 34)
+        XCTAssertTrue(login.state.typeBack)
+        login.typed("35")
+        await login.give(code: "the-code")
+        XCTAssertEqual(login.state.error, "ask 34's number was not typed back, so nothing was done")
+        XCTAssertTrue(calls("GiveSecret").isEmpty)
+        login.typed("34")
+        await login.give(code: "the-code")
+        XCTAssertEqual(calls("GiveSecret").count, 1)
+        XCTAssertEqual(calls("GiveSecret")[0]["weighed"] as? Bool, true)
     }
 
     func testNobodyAndYouDecideGoWithoutTheGate() async {
@@ -302,6 +318,102 @@ final class DecisionModelTests: XCTestCase {
         XCTAssertEqual(calls("AnswerAsk").count, 1)
     }
 
+    func testALoginCodeCardGivesItsCodeBehindTheUnlock() async throws {
+        let card = await opened("yd-login", 34)
+        let state = card.state
+        XCTAssertTrue(state.givesCode)
+        XCTAssertTrue(state.secret)
+        XCTAssertFalse(state.secretElsewhere)
+        XCTAssertNil(state.elsewhere, "the phone gives it: no command in its place")
+        XCTAssertFalse(state.approvable)
+        XCTAssertFalse(state.typeBack, "the prompt stands for the unlock")
+        XCTAssertEqual(state.weighty, ["WEIGHTY · credential: INPUT, for the waiting login claude-ab12"])
+        XCTAssertEqual(state.question, "Paste what Claude Code's sign-in page gave you")
+
+        // The sign-in line is a context line of the card, and a link to
+        // the page it names: the browser opens on it.
+        let page = "https://claude.ai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code&scope=user%3Ainference&state=Xk3v"
+        XCTAssertEqual(state.context.first, "Sign in on this page: \(page)")
+        XCTAssertEqual(linked(try XCTUnwrap(state.context.first)).runs.compactMap { $0.link }, [try XCTUnwrap(URL(string: page))])
+
+        // A secret is given, never picked or answered in words: what is
+        // typed in the words field is no code, and Approve is for a run.
+        card.words("123456")
+        await card.pick()
+        await card.approve()
+        XCTAssertTrue(calls("AnswerAsk").isEmpty)
+        XCTAssertTrue(calls("ApproveAsk").isEmpty)
+        XCTAssertTrue(unlock.reasons.isEmpty)
+
+        // No code, no giving, and no prompt.
+        await card.give(code: " \n")
+        XCTAssertTrue(calls("GiveSecret").isEmpty)
+        XCTAssertTrue(unlock.reasons.isEmpty)
+
+        // A cancelled unlock sends nothing, and the card stays.
+        unlock.promptResults = [false]
+        await card.give(code: "the-code")
+        XCTAssertEqual(unlock.reasons, ["give the sign-in code in laptop"])
+        XCTAssertTrue(calls("GiveSecret").isEmpty)
+        XCTAssertTrue(card.state.givesCode)
+        XCTAssertNil(card.state.unlocking)
+        XCTAssertEqual(nav.decidePath, [DecisionRoute(yard: "laptop", bead: "yd-login", ask: 34)])
+
+        // A card that changed while the unlock was open is read again
+        // before anything goes.
+        unlock.holdNextPrompt = true
+        let held = Task { @MainActor in await card.give(code: "the-code") }
+        await unlock.waitForPrompt()
+        XCTAssertNotNil(card.state.unlocking)
+        await card.give(code: "the-code")
+        XCTAssertEqual(unlock.reasons.count, 2, "a second prompt cannot start")
+        await noted(152, "yd-login", Self.asks(open: [Self.links, Self.map, Self.tidy, Self.login], decided: [Self.greetDeclined]))
+        await unlock.resumePrompt(true)
+        await held.value
+        XCTAssertTrue(calls("GiveSecret").isEmpty, "a card changed while its unlock was open")
+        XCTAssertEqual(card.state.error, "The card changed while the unlock was open. Review it before answering.")
+
+        // Passed: the code, trimmed, goes under the name the ask asks
+        // for, with weighed, and the card is left.
+        unlock.promptResults = [true]
+        await card.give(code: " the-code\n")
+        XCTAssertEqual(calls("GiveSecret").count, 1)
+        let body = calls("GiveSecret")[0]
+        XCTAssertEqual(body["bead"] as? String, "yd-login")
+        XCTAssertEqual(body["ask"] as? Int, 34)
+        XCTAssertEqual(body["values"] as? [String: String], ["INPUT": "the-code"])
+        XCTAssertEqual(body["actor"] as? String, "jo")
+        XCTAssertEqual(body["weighed"] as? Bool, true)
+        XCTAssertEqual(nav.decidePath, [])
+        // The code is in the call alone: nowhere the card is described.
+        XCTAssertFalse(String(describing: card.state).contains("the-code"))
+    }
+
+    func testAGivingTheYardRefusesShowsItsSentenceAndTheSecretCommand() async {
+        // Not confirmed is not refused: the field stays for another try.
+        fake.nextFor(yard: "laptop", path: "/user/call/GiveSecret", FakeResponse.slow())
+        let card = await opened("yd-login", 34)
+        unlock.promptResults = [true, true]
+        await card.give(code: "the-code")
+        XCTAssertEqual(card.state.error, "Not confirmed: The yard took too long to answer.")
+        XCTAssertTrue(card.state.givesCode)
+        XCTAssertNil(card.state.elsewhere)
+
+        // Refused: the yard's sentence, and the command that answers it
+        // on the yard's machine, in place of the field, not made again.
+        fake.nextFor(yard: "laptop", path: "/user/call/GiveSecret", FakeResponse.json(200, #"{"error": {"code": "error", "message": "a secret never crosses the edge: give it at the yard's own machine"}}"#))
+        await card.give(code: "the-code")
+        let refused = await waitFor("the giving refused", state: { card.state }) { $0.elsewhere != nil }
+        XCTAssertEqual(refused.elsewhere, "yardr bead answer yd-login 34 --secret")
+        XCTAssertEqual(refused.refusal, "a secret never crosses the edge: give it at the yard's own machine")
+        XCTAssertTrue(refused.secret)
+        XCTAssertFalse(refused.givesCode, "no field after a refusal")
+        XCTAssertNil(refused.error)
+        XCTAssertEqual(calls("GiveSecret").count, 2)
+        await card.give(code: "the-code")
+        XCTAssertEqual(calls("GiveSecret").count, 2, "the refused giving is not made again")
+    }
+
     func testASecretCardSendsNothingAndShowsItsCommand() async {
         let secret = await opened("yd-token", 18)
         let state = secret.state
@@ -319,6 +431,32 @@ final class DecisionModelTests: XCTestCase {
         await secret.later()
         XCTAssertEqual(calls("DeferAsk").count, 1)
         secret.leave()
+
+        // An API key asked for at a crew member's login screen: no
+        // field, no giving, whatever is sent at it.
+        let key = await opened("yd-key", 22)
+        XCTAssertFalse(key.state.givesCode)
+        XCTAssertTrue(key.state.secret)
+        XCTAssertTrue(key.state.secretElsewhere)
+        XCTAssertEqual(key.state.elsewhere, "yardr bead answer yd-key 22 --secret")
+        await key.give(code: "sk-ant-not-given")
+        key.words("sk-ant-not-given")
+        await key.pick()
+        XCTAssertTrue(calls("GiveSecret").isEmpty)
+        XCTAssertTrue(calls("AnswerAsk").isEmpty)
+        XCTAssertTrue(unlock.reasons.isEmpty)
+        key.leave()
+
+        // The code of a user's own login is refused down the link, so
+        // the phone does not take it either.
+        let own = await opened("yd-own", 36)
+        XCTAssertFalse(own.state.givesCode)
+        XCTAssertTrue(own.state.secretElsewhere)
+        XCTAssertEqual(own.state.elsewhere, "yardr bead answer yd-own 36 --secret")
+        await own.give(code: "the-code")
+        XCTAssertTrue(calls("GiveSecret").isEmpty)
+        XCTAssertTrue(unlock.reasons.isEmpty)
+        own.leave()
 
         // An ask with no options is answered as option 0 with words.
         let wordsOnly = await opened("yd-words", 12)
@@ -384,6 +522,7 @@ final class DecisionModelTests: XCTestCase {
     private static let map = #"{"bead": "yd-map", "bead_title": "Who wrote in", "ask": 7, "question": "Who is U024BE7LH on slack?", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "identity": {"source": "slack", "sender": "U024BE7LH"}, "weight": [{"class": "as-user", "line": "writes who a sender is"}]}"#
     private static let tidy = #"{"bead": "yd-tidy", "bead_title": "Tidy the sidings", "ask": 9, "question": "Remove the merged worktrees now?", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "run": {"command": "yardr depot tidy --merged"}}"#
     private static let links = #"{"bead": "yd-links", "bead_title": "Move the links", "ask": 3, "question": "Move this yard's links to the declared source now?", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z"}"#
+    private static let login = #"{"bead": "yd-login", "bead_title": "Claude Code sign-in", "ask": 34, "question": "Paste what Claude Code's sign-in page gave you", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "secret": {"source": "", "env": ["INPUT"], "login": "claude-ab12", "line": "a secret: INPUT, for the waiting login claude-ab12"}, "weight": [{"class": "credential", "line": "INPUT, for the waiting login claude-ab12"}]}"#
     private static let linksAside = #"{"bead": "yd-links", "bead_title": "Move the links", "ask": 3, "question": "Move this yard's links to the declared source now?", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "state": "put aside", "return_at": "2026-10-08T12:00:00Z"}"#
     private static let mapDeclined = #"{"bead": "yd-map", "bead_title": "Who wrote in", "ask": 7, "question": "Who is U024BE7LH on slack?", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "state": "declined", "words": "ask me on Monday", "identity": {"source": "slack", "sender": "U024BE7LH"}, "weight": [{"class": "as-user", "line": "writes who a sender is"}]}"#
     private static let greetDeclined = #"{"bead": "yd-greet", "bead_title": "The greeting", "ask": 5, "question": "What should the tone of the greeting be?", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "state": "declined", "words": "the greeting can wait"}"#

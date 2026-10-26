@@ -14,6 +14,10 @@ paired with. The protocol is yardr's `/user/*` API; the yard runs as it
 does. No code is shared with the other footplates: this one is Swift drawn
 with SwiftUI on the same protocol.
 
+One secret crosses the edge: the one-time code a harness's sign-in page
+gives. Its decision card links the page and takes the code behind the
+unlock; API keys and every other secret are answered on the yard's machine.
+
 Tracked in the yard as the `footplate-ios` depot. `.yardr/` holds its flow,
 roles and merge gate. Every change is reviewed twice before it lands:
 against its bead, then for security alone.
