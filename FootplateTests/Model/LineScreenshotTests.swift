@@ -4,11 +4,11 @@ import UIKit
 import XCTest
 
 // The lines place rendered in the simulator against a fake-followed
-// board (design 3.5, the bead's screenshot): the line with two depots.
-// Hand-run for the bead note; the gate runs it too, and it only asserts
-// that the screen renders non-empty at phone size. The PNG lands in
-// `LINE_SHOTS_DIR`, or the temporary directory's `line-shots` where that
-// names none.
+// board (design 3.5, the bead's screenshot): the overview unfiltered
+// and with one stat filtering it. Hand-run for the bead note; the
+// gate runs it too, and it only asserts that the screens render
+// non-empty at phone size. The PNGs land in `LINE_SHOTS_DIR`, or the
+// temporary directory's `line-shots` where that names none.
 @MainActor
 final class LineScreenshotTests: XCTestCase {
     func testLineScreenRenders() async throws {
@@ -50,12 +50,18 @@ final class LineScreenshotTests: XCTestCase {
         }
         XCTAssertTrue(line.state.read)
         XCTAssertEqual(line.state.depots.map(\.name), ["yard", "drafts"])
+        XCTAssertEqual(line.state.lines.map(\.title), ["yard · default"])
 
         let dir = ProcessInfo.processInfo.environment["LINE_SHOTS_DIR"]
             .map { URL(fileURLWithPath: $0) }
             ?? FileManager.default.temporaryDirectory.appendingPathComponent("line-shots")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try await render(LinesScreen(inbox: inbox, records: records, model: line), scene: scene, to: dir.appendingPathComponent("line.png"))
+        // One stat filtering: the yard's card with its moving bead alone.
+        line.filter(.moving)
+        XCTAssertEqual(line.state.lines.map(\.title), ["yard · default"])
+        XCTAssertEqual(line.state.lines[0].beads, ["yd-train"])
+        try await render(LinesScreen(inbox: inbox, records: records, model: line), scene: scene, to: dir.appendingPathComponent("line-filtered.png"))
         line.leave()
     }
 
