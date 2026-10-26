@@ -28,11 +28,13 @@ Under `Footplate/`:
   transport seam that `URLSession` implements; `FootplateTests/FakeYard/`
   implements the same seam in the tests.
 - `Session/`: one follower per paired yard, with `load`, the stream after
-  the head, the retries, the clock and the network watch;
+  the head, the retries, the clock and the network watch, and the
+  `Followed` seam the screen models read a followed yard through;
   `FootplateTests/Session/` follows the fake yard.
 - `Model/`: screen models and navigation (`Nav`, `PairModel`,
-  `SignInModel`).
-- `UI/`: SwiftUI screens (Pair, Sign in, the empty crew place), the
+  `SignInModel`, `InboxModel`, `ConversationModel`), the inbox board
+  (`Board`) and the boards' keeping (`Mailroom`).
+- `UI/`: SwiftUI screens (Pair, Sign in, Crew, Conversation), the
   scanner, theme and resources (catalogue, Plex fonts and licence).
 - `Unlock/`: reserved for approval gates and the system unlock prompt.
 - `Notify/`: reserved for notification rules, delivery and taps.

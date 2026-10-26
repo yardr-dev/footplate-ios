@@ -11,9 +11,13 @@ enum Screen: Equatable, Sendable {
     /// Sign in at the edge; `again` when the session ran out or was
     /// revoked, and only the password is asked.
     case signIn(again: Bool)
-    /// The selected yard's crew place. B4 opens it empty, with its
-    /// head line; B5 fills it.
+    /// The selected yard's crew place: the inbox rows and the yard
+    /// switch.
     case crew
+    /// One conversation of the yard named `yard`, with `with`; the
+    /// yard's notices where `with` is `yardRow`. Full screen over
+    /// the crew place.
+    case conversation(yard: String, with: String)
 
     /// The places that have the yard header in the full design.
     var isPlace: Bool { self == .crew }

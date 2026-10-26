@@ -149,6 +149,8 @@ final class Yards {
 final class Follower {
     private(set) var state = YardState()
 
+    private var observers: [UUID: @MainActor (YardState) -> Void] = [:]
+
     private let client: YardClient
     private let yards: Yards
     private let clock: any Clock
@@ -206,6 +208,17 @@ final class Follower {
 
     private func update(_ apply: (inout YardState) -> Void) {
         apply(&state)
+        for observer in observers.values { observer(state) }
+    }
+
+    func observe(_ observer: @escaping @MainActor (YardState) -> Void) -> UUID {
+        let id = UUID()
+        observers[id] = observer
+        return id
+    }
+
+    func removeObserver(_ id: UUID) {
+        observers.removeValue(forKey: id)
     }
 
     private func run() async {
@@ -481,6 +494,52 @@ final class Follower {
 
     private func down(_ error: ApiError) {
         update { $0.status = .down(words: words(error), short: short(error)) }
+    }
+}
+
+extension Follower: Followed {
+    /// The user every call is made as: what `/user/me` answered.
+    private func me() throws -> String {
+        guard let user = state.loaded?.me.user else {
+            throw ApiError.down(why: "the yard is not read yet")
+        }
+        return user
+    }
+
+    func conversation(with: String, limit: Int64, before: Int64) async throws -> Page {
+        try await client.conversation(a: me(), b: with, limit: limit, before: before)
+    }
+
+    func mail(to: String, text: String, files: [MailFile]) async throws {
+        try await client.mail(to: to, text: text, actor: me(), files: files)
+    }
+
+    func putBlob(_ bytes: Data) async throws -> BlobRef {
+        try await client.putBlob(bytes)
+    }
+
+    func blob(hash: String) async throws -> Data? {
+        try await client.blob(hash: hash)
+    }
+
+    func ackInbox(through: Int64) async throws {
+        try await client.ackUserInbox(name: me(), through: through)
+    }
+
+    func notifications() async throws -> Notifications {
+        try await client.userNotifications(name: me(), limit: 0)
+    }
+
+    func ackNotifications(through: Int64) async throws {
+        try await client.ackUserNotifications(name: me(), through: through)
+    }
+
+    func crew() async throws -> [CrewMember] {
+        try await client.crew()
+    }
+
+    func asks() async throws -> Asks {
+        try await client.userAsks(name: me())
     }
 }
 

@@ -25,6 +25,9 @@ final class AppServices {
     let nav: Nav
     let pairModel: PairModel
     let signInModel: SignInModel
+    let mailroom: Mailroom
+    let inboxModel: InboxModel
+    let conversationModel: ConversationModel
 
     private(set) var followers: [String: Follower] = [:]
     private var yards: Yards?
@@ -51,6 +54,11 @@ final class AppServices {
         self.nav = nav
         self.pairModel = PairModel(pairer: pairer, records: records, nav: nav)
         self.signInModel = SignInModel(pairer: pairer, records: records, nav: nav)
+        let mailroom = Mailroom()
+        self.mailroom = mailroom
+        self.conversationModel = ConversationModel(mailroom: mailroom)
+        self.inboxModel = InboxModel(pairer: pairer, records: records, followers: { [:] }, mailroom: mailroom, nav: nav)
+        self.inboxModel.followers = { [weak self] in (self?.followers ?? [:]).mapValues { $0 as any Followed } }
         recordsObserver = records.observe { [weak self] _ in
             self?.refollow()
         }
@@ -90,6 +98,7 @@ final class AppServices {
         yards?.close()
         yards = nil
         followers = [:]
+        mailroom.setFollowers([:])
         let kept = records.kept
         guard let session = kept.account?.session, !kept.yards.isEmpty else { return }
         let following = Yards(foreground: foreground)
@@ -101,6 +110,7 @@ final class AppServices {
             }
         }
         followers = made
+        mailroom.setFollowers(made.mapValues { $0 as any Followed })
     }
 }
 
@@ -119,10 +129,16 @@ private struct FootplateScene: View {
                 SignInScreen(model: services.signInModel, again: again, onBack: { services.nav.back() })
             case .crew:
                 CrewScreen(
+                    model: services.inboxModel,
                     records: services.records,
-                    pairer: services.pairer,
-                    nav: services.nav,
-                    follower: services.selectedFollower
+                    nav: services.nav
+                )
+            case .conversation(let yard, let with):
+                ConversationScreen(
+                    model: services.conversationModel,
+                    yard: yard,
+                    with: with,
+                    onBack: { services.nav.back() }
                 )
             }
         }

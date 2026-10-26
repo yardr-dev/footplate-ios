@@ -1,0 +1,752 @@
+@testable import Footplate
+import XCTest
+
+// The inbox and conversation models against plain state (design
+// 3.5): followers of our own over a YardState the test writes, as
+// the session would, and the calls a screen makes recorded. The rows
+// newest letter first, unread counted and cleared by an
+// acknowledgement, the events moving them, a conversation read a
+// page at a time and written to, the head row's words, and the yard
+// switch.
+@MainActor
+final class InboxModelTests: XCTestCase {
+    private var fake: FakeYard!
+    private var secret: MemoryShelf!
+    private var plain: MemoryShelf!
+    private var records: Records!
+    private var nav: Nav!
+    private var home: FakeFollowed!
+    private var laptop: FakeFollowed!
+    private var mailroom: Mailroom!
+    private var pairer: Pairer!
+    private var picturesDir: URL!
+
+    private let fixedNow = parseInstant("2026-10-08T12:00:00Z")!
+
+    override func setUp() async throws {
+        try await super.setUp()
+        fake = FakeYard()
+        secret = MemoryShelf()
+        plain = MemoryShelf()
+        records = makeRecords()
+        nav = Nav(first: .crew)
+        home = FakeFollowed()
+        laptop = FakeFollowed()
+        mailroom = Mailroom()
+        mailroom.setFollowers(["": home, "laptop": laptop])
+        pairer = Pairer(edge: try fake.edge(), records: records)
+        picturesDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pictures-\(UUID().uuidString)")
+    }
+
+    override func tearDown() async throws {
+        if let picturesDir {
+            try? FileManager.default.removeItem(at: picturesDir)
+        }
+        try await super.tearDown()
+    }
+
+    private func makeRecords() -> Records {
+        let made = Records(secret: secret, plain: plain, origin: fake.origin)
+        if made.kept.account == nil {
+            made.keepSession(account: fake.email, session: fake.session())
+            made.keepYard(PairedYard(name: "laptop", yard: "laptop", user: "jo", device: "pixel", token: "yardr-dev-laptop-1"))
+            made.keepYard(PairedYard(name: "", yard: "south", user: "jo", device: "phone", token: "yardr-dev-south-1"))
+        }
+        return made
+    }
+
+    private func inbox(records: Records? = nil) -> InboxModel {
+        let now = fixedNow
+        return InboxModel(
+            pairer: pairer, records: records ?? self.records,
+            followers: { ["": self.home, "laptop": self.laptop] },
+            mailroom: mailroom, nav: nav,
+            now: { now }, zone: { TimeZone(secondsFromGMT: 0)! }
+        )
+    }
+
+    private func conversation(shrink: @escaping @Sendable (Data) -> Data? = { $0 }) -> ConversationModel {
+        let now = fixedNow
+        return ConversationModel(
+            mailroom: mailroom, pictures: Pictures(directory: picturesDir), shrink: shrink,
+            now: { now }, zone: { TimeZone(secondsFromGMT: 0)! }
+        )
+    }
+
+    private func waitFor(_ what: String, match: (InboxState) -> Bool) async -> InboxState {
+        let model = inbox()
+        return await waitFor(what, state: { model.state }, match: match)
+    }
+
+    private func waitFor<T>(_ what: String, state: @escaping @MainActor () -> T, match: (T) -> Bool) async -> T {
+        let deadline = ContinuousClock.now + .seconds(10)
+        while true {
+            let value = state()
+            if match(value) { return value }
+            if ContinuousClock.now > deadline {
+                XCTFail("timed out waiting for \(what); last=\(value)")
+                return value
+            }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
+    private func waitAcks(_ fake: FakeFollowed, _ count: Int) async -> [Int64] {
+        let deadline = ContinuousClock.now + .seconds(10)
+        while fake.acks.count < count {
+            if ContinuousClock.now > deadline {
+                XCTFail("timed out waiting for \(count) acks; saw \(fake.acks)")
+                break
+            }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return fake.acks
+    }
+
+    func testRowsOrderedByNewestLetterAndUnreadCountedInWords() async {
+        home.up(loaded())
+        let model = inbox()
+        let state = await waitFor("the rows", state: { model.state }) { !$0.rows.isEmpty }
+        XCTAssertEqual(state.head, "south · jo")
+        // signalman wrote last (40), then yardmaster (14); relief and
+        // jo have no letter, and keep the crew's and the users'
+        // order; the yard's row is first, with unread notices.
+        XCTAssertEqual(state.rows.map(\.name), ["yard", "signalman", "yardmaster", "relief", "jo"])
+        let yard = state.rows[0]
+        XCTAssertEqual(yard.line, "yd-shed noted (all) by yardmaster note=1")
+        XCTAssertEqual(yard.unread, "1 unread")
+        let signalman = state.rows[1]
+        XCTAssertEqual(signalman.line, "Read the diff when you can.")
+        XCTAssertNil(signalman.unread)
+        XCTAssertEqual(signalman.state, "not logged in")
+        let yardmaster = state.rows[2]
+        XCTAssertEqual(yardmaster.line, "Or after Friday?")
+        XCTAssertEqual(yardmaster.time, "09:30")
+        XCTAssertEqual(yardmaster.unread, "2 unread")
+        XCTAssertEqual(yardmaster.state, waitingOnYou)
+        XCTAssertTrue(yardmaster.waiting)
+        XCTAssertEqual(state.rows[3].state, "idle")
+        XCTAssertNil(state.rows[4].state)
+    }
+
+    func testUnreadClearedByAnAcknowledgementThroughNewestShown() async {
+        home.up(loaded())
+        let model = inbox()
+        _ = await waitFor("the rows", state: { model.state }) { !$0.rows.isEmpty }
+        model.open("yardmaster")
+        XCTAssertEqual(nav.screen, .conversation(yard: "", with: "yardmaster"))
+        XCTAssertTrue(nav.back())
+        XCTAssertEqual(nav.screen, .crew)
+        XCTAssertFalse(nav.back())
+        model.open("yardmaster")
+        let conversation = conversation()
+        conversation.open(yard: "", with: "yardmaster")
+        // Opening the conversation acknowledges what it shows.
+        let acks = await waitAcks(home, 1)
+        XCTAssertEqual(acks, [14])
+        let rows = await waitFor("the unread cleared", state: { model.state }) {
+            $0.rows.first { $0.name == "yardmaster" }?.unread == nil
+        }
+        XCTAssertNil(rows.rows.first { $0.name == "yardmaster" }?.unread)
+        // Another client's acknowledgement clears the rest.
+        home.event(event(160, "mail", "signalman", ["to": .string("jo"), "to_user": .bool(true), "text": .string("One more.")]))
+        _ = await waitFor("signalman unread", state: { model.state }) {
+            $0.rows.first { $0.name == "signalman" }?.unread == "1 unread"
+        }
+        home.event(event(161, "mail_read", "jo", ["reader": .string("jo"), "through": .int(160)]))
+        _ = await waitFor("signalman read", state: { model.state }) {
+            $0.rows.first { $0.name == "signalman" }?.unread == nil
+        }
+        conversation.leave()
+    }
+
+    func testAcknowledgementStopsShortOfAnUnreadLetterNotShown() async {
+        // One position stands for every sender: shown yardmaster's
+        // 14, the acknowledgement may not pass signalman's unread 11.
+        home.up(loaded(unreadFromSignalman: true))
+        let model = inbox()
+        _ = await waitFor("the rows", state: { model.state }) { !$0.rows.isEmpty }
+        let conversation = conversation()
+        conversation.open(yard: "", with: "yardmaster")
+        let rows = await waitFor("yardmaster seen", state: { model.state }) {
+            $0.rows.first { $0.name == "yardmaster" }?.unread == nil
+        }
+        XCTAssertEqual(rows.rows.first { $0.name == "signalman" }?.unread, "1 unread")
+        XCTAssertEqual(home.acks, [])
+        conversation.open(yard: "", with: "signalman")
+        let acks = await waitAcks(home, 1)
+        XCTAssertEqual(acks, [14])
+        conversation.leave()
+    }
+
+    func testMailEventMovesItsRowToTheTop() async {
+        home.up(loaded(notices: false))
+        let model = inbox()
+        _ = await waitFor("the rows", state: { model.state }) { !$0.rows.isEmpty }
+        home.event(event(155, "mail", "relief", ["to": .string("jo"), "to_user": .bool(true), "text": .string("Back at four.\nThe fence after.")]))
+        let state = await waitFor("relief on top", state: { model.state }) { $0.rows.first?.name == "relief" }
+        XCTAssertEqual(state.rows[0].line, "Back at four.")
+        XCTAssertEqual(state.rows[0].unread, "1 unread")
+        // A letter the person sent moves its row too, and counts no
+        // unread.
+        home.event(event(156, "mail", "jo", ["to": .string("yardmaster"), "text": .string("Land it.")]))
+        let again = await waitFor("yardmaster on top", state: { model.state }) { $0.rows.first?.name == "yardmaster" }
+        XCTAssertEqual(again.rows[0].line, "Land it.")
+        XCTAssertEqual(again.rows[0].unread, "2 unread")
+    }
+
+    func testOlderPageReadOnScrollUpWhileYardHasMore() async {
+        var scroll = ConversationScrollTracking()
+        XCTAssertFalse(scroll.update(ConversationScrollEdges(atTop: true, atFoot: true, hasOlder: true)))
+        XCTAssertFalse(scroll.update(ConversationScrollEdges(atTop: false, atFoot: false, hasOlder: true)))
+        XCTAssertTrue(scroll.update(ConversationScrollEdges(atTop: true, atFoot: false, hasOlder: true)))
+        XCTAssertFalse(scroll.update(ConversationScrollEdges(atTop: true, atFoot: false, hasOlder: true)))
+        XCTAssertFalse(scroll.follows(mine: false), "new mail does not pull a person away from older letters")
+        XCTAssertTrue(scroll.follows(mine: true), "a letter sent from another position follows the newest end")
+
+        home.up(loaded())
+        home.pages["yardmaster|0"] = Page(letters: [letter(40, "yardmaster", "jo", "Forty."), letter(41, "jo", "yardmaster", "Forty-one.")], more: true)
+        home.pages["yardmaster|40"] = Page(letters: [letter(13, "yardmaster", "jo", "Thirteen."), letter(14, "yardmaster", "jo", "Fourteen.")], more: false)
+        let conversation = conversation()
+        conversation.open(yard: "", with: "yardmaster")
+        let first = await waitFor("the newest page", state: { conversation.state }) { !$0.letters.isEmpty }
+        XCTAssertEqual(first.letters.map(\.seq), [40, 41])
+        XCTAssertTrue(first.more)
+        XCTAssertEqual(first.letters.map(\.mine), [false, true])
+        XCTAssertEqual(first.state, waitingOnYou)
+        XCTAssertTrue(first.waiting)
+        // The unread mail is on the older page: merely opening the
+        // row cannot acknowledge it before that page is shown.
+        XCTAssertEqual(home.acks, [])
+        await conversation.older()
+        let older = await waitFor("the older page", state: { conversation.state }) { $0.letters.count == 4 }
+        XCTAssertEqual(older.letters.map(\.seq), [13, 14, 40, 41])
+        XCTAssertFalse(older.more)
+        XCTAssertEqual(home.asked.map { "\($0.0)|\($0.1)" }, ["yardmaster|0", "yardmaster|40"])
+        let acks = await waitAcks(home, 1)
+        XCTAssertEqual(acks, [14])
+        // Nothing older: scrolling up again asks nothing.
+        await conversation.older()
+        XCTAssertEqual(home.asked.count, 2)
+
+        // A read from a conversation that left the screen cannot clear
+        // the loading state of the same conversation when it comes back.
+        // Reopening reads the newest page again even at the same head.
+        home.holdPageCalls([3, 4])
+        conversation.leave()
+        conversation.open(yard: "", with: "yardmaster")
+        _ = await waitFor("the third page call", state: { self.home.asked.count }) { $0 >= 3 }
+        XCTAssertTrue(conversation.state.reading)
+        conversation.leave()
+        conversation.open(yard: "", with: "yardmaster")
+        _ = await waitFor("the fourth page call", state: { self.home.asked.count }) { $0 >= 4 }
+        XCTAssertTrue(conversation.state.reading)
+        home.releasePageCall(3)
+        _ = await waitFor("the stale page call to finish", state: { self.home.completedPageCalls.count }) { $0 >= 3 }
+        for _ in 0..<3 { await Task.yield() }
+        XCTAssertTrue(conversation.state.reading)
+        home.releasePageCall(4)
+        _ = await waitFor("the current page call to finish", state: { conversation.state }) { !$0.reading }
+        conversation.leave()
+    }
+
+    func testLetterSentAppearsOnceWhenItsEventComes() async {
+        home.up(loaded())
+        home.pages["yardmaster|0"] = Page(letters: [letter(13, "yardmaster", "jo", "Thirteen."), letter(14, "yardmaster", "jo", "Fourteen.")], more: false)
+        let conversation = conversation()
+        conversation.open(yard: "", with: "yardmaster")
+        _ = await waitFor("the page", state: { conversation.state }) { !$0.letters.isEmpty }
+        conversation.draft("Land it.")
+        home.holdNextMail = true
+        let sending = Task { await conversation.send() }
+        _ = await waitFor("the mail call", state: { self.home.mailCalls }) { $0 == 1 }
+        conversation.leave()
+        conversation.open(yard: "", with: "signalman")
+        conversation.draft("Land it.")
+        home.releaseMail()
+        await sending.value
+        XCTAssertEqual(home.sent.map { "\($0.0)|\($0.1)" }, ["yardmaster|Land it."])
+        XCTAssertEqual(conversation.state.draft, "Land it.", "a send in another conversation leaves this draft alone")
+        XCTAssertFalse(conversation.state.sending)
+        XCTAssertNil(conversation.state.error)
+        conversation.leave()
+        conversation.open(yard: "", with: "yardmaster")
+        _ = await waitFor("the reopened page", state: { conversation.state }) { !$0.letters.isEmpty }
+        let sent = await waitFor("the field emptied", state: { conversation.state }) { $0.draft.isEmpty && !$0.sending }
+        // Not shown before the yard says it is a letter.
+        XCTAssertEqual(sent.letters.map(\.seq), [13, 14])
+        home.event(event(170, "mail", "jo", ["to": .string("yardmaster"), "text": .string("Land it.")]))
+        let shown = await waitFor("the letter", state: { conversation.state }) { $0.letters.count == 3 }
+        XCTAssertEqual(shown.letters.map(\.seq), [13, 14, 170])
+        XCTAssertTrue(shown.letters[2].mine)
+        // The yard read again after the app came back has it in its
+        // page too: it is still shown once.
+        home.pages["yardmaster|0"] = Page(letters: [letter(14, "yardmaster", "jo", "Fourteen."), letter(170, "jo", "yardmaster", "Land it.")], more: false)
+        home.up(loaded(head: 170))
+        let deadline = ContinuousClock.now + .seconds(10)
+        while home.asked.count < 2, ContinuousClock.now <= deadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertGreaterThanOrEqual(home.asked.count, 2)
+        let again = await waitFor("read again", state: { conversation.state }) { !$0.reading }
+        XCTAssertEqual(again.letters.map(\.seq), [13, 14, 170])
+        conversation.leave()
+    }
+
+    func testYardRowOpensItsNoticesWithNoFieldAndAcknowledgesThem() async {
+        home.up(loaded())
+        let conversation = conversation()
+        conversation.open(yard: "", with: yardRow)
+        let state = await waitFor("the notices", state: { conversation.state }) { !$0.letters.isEmpty }
+        XCTAssertEqual(state.letters.map(\.seq), [10, 11])
+        XCTAssertFalse(state.writable)
+        let deadline = ContinuousClock.now + .seconds(10)
+        while home.noticeAcks.count < 1, ContinuousClock.now <= deadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(home.noticeAcks, [11])
+        conversation.leave()
+    }
+
+    func testHeadRowSaysTheFollowsStateInWords() async {
+        let model = inbox()
+        let words: [(FollowStatus, String?, HeadAction?)] = [
+            (.starting, nil, nil),
+            (.up, nil, nil),
+            (.down(words: "The yard is away: the edge cannot reach it.", short: "yard away"), "yard away", nil),
+            (.down(words: "The yard is busy.", short: "yard busy"), "yard busy", nil),
+            (.down(words: "The yard is not ready.", short: "yard not ready"), "yard not ready", nil),
+            (.down(words: "The edge is down.", short: "edge down"), "edge down", nil),
+            (.down(words: "Nothing answers.", short: "nothing answers"), "nothing answers", nil),
+            (.pairAgain(words: "Pair it again."), "pair again", .pairAgain),
+            (.signInAgain(words: "Sign in again."), "sign in again", .signInAgain),
+        ]
+        for (status, word, action) in words {
+            home.state.status = status
+            let state = await waitFor("\(status)", state: { model.state }) { $0.word == word }
+            XCTAssertEqual(state.action, action, "\(status)")
+        }
+    }
+
+    func testSwitchSaysWhatWaitsInEachYardAndAnAwayYardIsSelectable() async {
+        home.up(loaded())
+        laptop.state.status = .down(words: "The yard is away: the edge cannot reach it.", short: "yard away")
+        let model = inbox()
+        let state = await waitFor("the switch", state: { model.state }) { s in s.yards.contains { $0.waiting != nil } }
+        let south = state.yards.first { $0.name == "" }!
+        XCTAssertEqual(south.waiting, "2 waiting")
+        XCTAssertEqual(state.waiting, 2)
+        XCTAssertNil(south.word)
+        XCTAssertTrue(south.selected)
+        let away = state.yards.first { $0.name == "laptop" }!
+        XCTAssertEqual(away.word, "yard away")
+        XCTAssertNil(away.waiting)
+        model.select("laptop")
+        let selected = await waitFor("laptop selected", state: { model.state }) { $0.head == "laptop · jo" }
+        XCTAssertEqual(selected.word, "yard away")
+        XCTAssertEqual(selected.nothing, "Nothing from laptop yet: yard away")
+        XCTAssertEqual(selected.rows, [])
+        XCTAssertEqual(selected.waiting, 0)
+    }
+
+    func testSelectionSurvivesARestartOfTheModel() async {
+        inbox().select("laptop")
+        // The process again: the records read anew from the same
+        // shelves, and a new model.
+        let again = inbox(records: makeRecords())
+        XCTAssertEqual(again.state.head, "laptop · jo")
+        XCTAssertTrue(again.state.yards.first { $0.name == "laptop" }!.selected)
+    }
+
+    func testCrewEventChangesTheStateWord() async {
+        home.up(loaded())
+        let model = inbox()
+        _ = await waitFor("the rows", state: { model.state }) { !$0.rows.isEmpty }
+        home.event(event(158, "crew_status", "", ["crew": .string("relief"), "status": .string("working")]))
+        _ = await waitFor("relief working", state: { model.state }) {
+            $0.rows.first { $0.name == "relief" }?.state == "working"
+        }
+        // One that says less than what changed reads the crew again.
+        home.crewAgain = [CrewMember(name: "relief", enabled: true, state: "stopped", status: "", loginScreen: false)]
+        home.holdNextCrewRead = true
+        home.event(event(159, "crew_stopped", "", ["crew": .string("relief")]))
+        _ = await waitFor("the crew reread", state: { self.home.crewReadCount }) { $0 == 1 }
+
+        // A read from a follower removed while it was waiting cannot
+        // overwrite a replacement yard with the same edge name.
+        let replacement = FakeFollowed()
+        var replacementLoaded = loaded()
+        replacementLoaded.crew = replacementLoaded.crew.map { member in
+            member.name == "relief"
+                ? CrewMember(name: member.name, enabled: member.enabled, state: member.state, status: "working", loginScreen: member.loginScreen)
+                : member
+        }
+        replacement.up(replacementLoaded)
+        mailroom.setFollowers(["": replacement, "laptop": laptop])
+        home.releaseCrewRead()
+        _ = await waitFor("the removed follower's read", state: { self.home.completedCrewReads }) { $0 == 1 }
+        for _ in 0..<3 { await Task.yield() }
+        XCTAssertEqual(mailroom.boards[""]?.stateOf("relief"), "working")
+    }
+
+    func testFilesInALetterAreSaidByCount() async {
+        home.up(loaded())
+        home.pages["yardmaster|0"] = Page(letters: [
+            letter(70, "yardmaster", "jo", "Seventy.", files: [BlobRef(hash: String(repeating: "bb", count: 32), kind: "text/plain", bytes: 4, name: "notes.txt")]),
+            letter(71, "yardmaster", "jo", "Seventy-one.", files: [BlobRef(hash: String(repeating: "cc", count: 32), kind: "image/jpeg", bytes: 70, name: "gone.jpg")]),
+        ], more: false)
+        let conversation = conversation()
+        conversation.open(yard: "", with: "yardmaster")
+        let shown = await waitFor("the lines", state: { conversation.state }) {
+            $0.letters.count >= 2 && $0.letters.first { $0.seq == 71 }?.images.first?.missed == true
+        }
+        let text = shown.letters.first { $0.seq == 70 }
+        XCTAssertEqual(text?.files, "1 file, open it in footplate")
+        XCTAssertTrue(text?.images.isEmpty ?? false)
+        // An image is drawn, not lined: the yard holds it no more,
+        // so it stands missed with its name.
+        let missed = shown.letters.first { $0.seq == 71 }
+        XCTAssertNil(missed?.files)
+        XCTAssertEqual(missed?.images.first?.name, "gone.jpg")
+        XCTAssertEqual(missed?.images.first?.missed, true)
+        XCTAssertNil(missed?.images.first?.bytes)
+        XCTAssertEqual(home.blobAsked, [String(repeating: "cc", count: 32)])
+        // Opened again, what was missed is asked for again.
+        conversation.leave()
+        conversation.open(yard: "", with: "yardmaster")
+        _ = await waitFor("the missed picture asked again", state: { conversation.state }) {
+            $0.letters.first { $0.seq == 71 }?.images.first?.missed == true && home.blobAsked.count == 2
+        }
+        XCTAssertEqual(home.blobAsked, [String(repeating: "cc", count: 32), String(repeating: "cc", count: 32)])
+        conversation.leave()
+    }
+
+    func testImageFileIsDrawnUnderItsLetterAndOpensFull() async {
+        home.up(loaded())
+        let bytes = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3])
+        let hash = sha256Hex(bytes)
+        home.blobs[hash] = bytes
+        home.pages["yardmaster|0"] = Page(letters: [
+            letter(70, "yardmaster", "jo", "Seventy.", files: [BlobRef(hash: hash, kind: "image/png", bytes: Int64(bytes.count), name: "shed.png")]),
+        ], more: false)
+        let conversation = conversation()
+        conversation.open(yard: "", with: "yardmaster")
+        let shown = await waitFor("the picture", state: { conversation.state }) {
+            $0.letters.first { $0.seq == 70 }?.images.first?.bytes != nil
+        }
+        let image = shown.letters.first { $0.seq == 70 }?.images.first
+        XCTAssertEqual(image?.hash, hash)
+        XCTAssertEqual(image?.name, "shed.png")
+        XCTAssertEqual(image?.bytes, bytes)
+        XCTAssertEqual(image?.missed, false)
+        XCTAssertNil(shown.letters.first { $0.seq == 70 }?.files)
+        XCTAssertNil(shown.full)
+        XCTAssertEqual(home.blobAsked, [hash])
+        conversation.openPicture(hash)
+        let full = await waitFor("the full picture", state: { conversation.state }) { $0.full != nil }
+        XCTAssertEqual(full.full?.hash, hash)
+        XCTAssertEqual(full.full?.bytes, bytes)
+        conversation.closePicture()
+        _ = await waitFor("the picture shut", state: { conversation.state }) { $0.full == nil }
+        // One no letter carries opens nothing.
+        conversation.openPicture(String(repeating: "bb", count: 32))
+        XCTAssertNil(conversation.state.full)
+        // Opened again, the picture is here without asking the yard.
+        conversation.leave()
+        conversation.open(yard: "", with: "yardmaster")
+        _ = await waitFor("the picture again", state: { conversation.state }) {
+            $0.letters.first { $0.seq == 70 }?.images.first?.bytes != nil
+        }
+        XCTAssertEqual(home.blobAsked, [hash])
+        conversation.leave()
+    }
+
+    func testPickedPictureIsSentWithTheLetterAndDrawnAtOnce() async {
+        let jpeg = Data([0xFF, 0xD8, 0xFF, 0xE0, 1, 2, 3])
+        let png = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3])
+        home.up(loaded())
+        home.pages["yardmaster|0"] = Page(letters: [letter(13, "yardmaster", "jo", "Thirteen.")], more: false)
+        let conversation = conversation(shrink: { _ in jpeg })
+        conversation.open(yard: "", with: "yardmaster")
+        _ = await waitFor("the page", state: { conversation.state }) { !$0.letters.isEmpty }
+        conversation.attach(bytes: png, name: "yard.png", yard: "", with: "yardmaster")
+        let attached = await waitFor("the picture picked", state: { conversation.state }) { $0.attached != nil }
+        // Shrunk, and renamed for the JPEG it became.
+        XCTAssertEqual(attached.attached?.bytes, jpeg)
+        XCTAssertEqual(attached.attached?.name, "yard.jpg")
+        conversation.draft("The yard, painted.")
+        await conversation.send()
+        // The blob put first, then the mail naming its hash.
+        XCTAssertEqual(home.put, [jpeg])
+        XCTAssertEqual(home.sent.map { "\($0.0)|\($0.1)" }, ["yardmaster|The yard, painted."])
+        XCTAssertEqual(home.sentFiles, [[MailFile(hash: sha256Hex(jpeg), name: "yard.jpg")]])
+        _ = await waitFor("the field emptied", state: { conversation.state }) {
+            $0.attached == nil && $0.draft.isEmpty && !$0.sending
+        }
+        // The letter arrives with the file: drawn at once, from
+        // the kept bytes, with nothing asked of the yard.
+        home.pages["yardmaster|0"] = Page(letters: [
+            letter(170, "jo", "yardmaster", "The yard, painted.", files: [BlobRef(hash: sha256Hex(jpeg), kind: "image/jpeg", bytes: Int64(jpeg.count), name: "yard.jpg")]),
+        ], more: false)
+        home.up(loaded(head: 170))
+        let shown = await waitFor("the picture drawn", state: { conversation.state }) {
+            $0.letters.first { $0.seq == 170 }?.images.first?.bytes != nil
+        }
+        XCTAssertEqual(shown.letters.first { $0.seq == 170 }?.images.first?.bytes, jpeg)
+        XCTAssertTrue(home.blobAsked.isEmpty)
+        conversation.leave()
+
+        // A photo picker can finish loading after its conversation has
+        // changed. It stays with the conversation that opened the picker.
+        conversation.open(yard: "", with: "signalman")
+        conversation.attach(bytes: png, name: "yard.png", yard: "", with: "yardmaster")
+        XCTAssertNil(conversation.state.attached)
+        conversation.leave()
+    }
+
+    func testPictureAloneIsSentWithEmptyText() async {
+        let jpeg = Data([0xFF, 0xD8, 0xFF, 0xE0, 1, 2, 3])
+        home.up(loaded())
+        home.pages["yardmaster|0"] = Page(letters: [letter(13, "yardmaster", "jo", "Thirteen.")], more: false)
+        let conversation = conversation(shrink: { _ in jpeg })
+        conversation.open(yard: "", with: "yardmaster")
+        _ = await waitFor("the page", state: { conversation.state }) { !$0.letters.isEmpty }
+        conversation.attach(bytes: Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3]), name: "yard.png", yard: "", with: "yardmaster")
+        _ = await waitFor("the picture picked", state: { conversation.state }) { $0.attached != nil }
+        await conversation.send()
+        XCTAssertEqual(home.sent.map { "\($0.0)|\($0.1)" }, ["yardmaster|"])
+        XCTAssertEqual(home.sentFiles, [[MailFile(hash: sha256Hex(jpeg), name: "yard.jpg")]])
+        conversation.leave()
+    }
+
+    func testPictureThePhoneCannotReadSaysSo() async {
+        home.up(loaded())
+        let conversation = conversation(shrink: { _ in nil })
+        conversation.open(yard: "", with: "yardmaster")
+        conversation.attach(bytes: Data("not a picture".utf8), name: "yard.png", yard: "", with: "yardmaster")
+        let state = await waitFor("the refusal", state: { conversation.state }) { $0.error != nil }
+        XCTAssertEqual(state.error, "The phone cannot read that picture.")
+        XCTAssertNil(state.attached)
+        conversation.leave()
+    }
+
+    func testLetterOrPictureThatDoesNotGoSaysWhyAndKeepsItsDraftOrPicture() async {
+        let jpeg = Data([0xFF, 0xD8, 0xFF, 0xE0, 1, 2, 3])
+        home.up(loaded())
+        home.refuse = .away
+        let conversation = conversation(shrink: { _ in jpeg })
+        conversation.open(yard: "", with: "yardmaster")
+        conversation.draft("Land it.")
+        await conversation.send()
+        let state = await waitFor("the refusal", state: { conversation.state }) { $0.error != nil }
+        XCTAssertEqual(state.draft, "Land it.")
+        XCTAssertEqual(state.error, "The letter did not go: The yard is away: the edge cannot reach it.")
+        // The same send refusal keeps the picked JPEG and explains
+        // that the picture did not go.
+        home.refuse = nil
+        conversation.attach(bytes: Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3]), name: "yard.png", yard: "", with: "yardmaster")
+        _ = await waitFor("the picture picked", state: { conversation.state }) { $0.attached != nil }
+        home.refuse = .away
+        await conversation.send()
+        let failed = await waitFor("the picture refusal", state: { conversation.state }) {
+            $0.error != nil && $0.attached != nil && !$0.sending
+        }
+        XCTAssertEqual(failed.error, "The picture did not go: The yard is away: the edge cannot reach it.")
+        XCTAssertEqual(failed.attached?.bytes, jpeg)
+        conversation.leave()
+    }
+
+    // MARK: - Fixtures
+
+    private func letter(_ seq: Int64, _ from: String, _ to: String, _ text: String, read: Bool = false, files: [BlobRef] = []) -> Letter {
+        Letter(seq: seq, at: "2026-10-08T09:30:00Z", from: from, to: to, text: text, read: read, reactions: [], files: files)
+    }
+
+    /// A yard read at `head`: jo's mail read through 12; two unread
+    /// of yardmaster's, a read one of signalman's (or an unread one,
+    /// with `unreadFromSignalman`); a notice unread; yardmaster
+    /// asking.
+    private func loaded(head: Int64 = 151, unreadFromSignalman: Bool = false, notices: Bool = true) -> Loaded {
+        var mail = [
+            letter(13, "yardmaster", "jo", "The shed is painted. Shall I land it?"),
+            letter(14, "yardmaster", "jo", "Or after Friday?\nEither."),
+        ]
+        if unreadFromSignalman {
+            mail.append(letter(11, "signalman", "jo", "An old one."))
+        } else {
+            mail.append(letter(40, "signalman", "jo", "Read the diff when you can.", read: true))
+        }
+        return Loaded(
+            me: Me(user: "jo", saidBy: "phone", yard: "south"),
+            head: head,
+            settings: Settings(),
+            user: User(name: "jo", cursor: unreadFromSignalman ? 10 : 12, notificationCursor: 10),
+            crew: [
+                CrewMember(name: "signalman", enabled: true, state: "running", status: "idle", loginScreen: true),
+                CrewMember(name: "yardmaster", enabled: true, state: "running", status: "working", loginScreen: false),
+                CrewMember(name: "relief", enabled: true, state: "running", status: "idle", loginScreen: false),
+            ],
+            users: [User(name: "jo")],
+            inbox: Inbox(mail: mail, unread: Int64(mail.filter { !$0.read }.count), last: 0, from: []),
+            notifications: notices
+                ? Notifications(notifications: [
+                    Notification(seq: 10, at: "2026-10-08T09:30:00Z", kind: "created", bead: "yd-shed", text: "yd-shed created (all) by yardmaster", read: true),
+                    Notification(seq: 11, at: "2026-10-08T09:31:00Z", kind: "noted", bead: "yd-shed", text: "yd-shed noted (all) by yardmaster note=1", read: false),
+                ], unread: 1, last: 11)
+                : Notifications(),
+            asks: Asks(open: [
+                OpenAsk(bead: "yd-links", ask: 3, question: "Move the links?", asker: "yardmaster"),
+                OpenAsk(bead: "yd-map", ask: 7, question: "Who is U024BE7LH?", asker: "yardmaster"),
+            ], decided: [])
+        )
+    }
+
+    private func event(_ seq: Int64, _ kind: String, _ actor: String, _ data: [String: JSONValue]) -> Event {
+        Event(seq: seq, kind: kind, actor: actor, at: "2026-10-08T11:00:00Z", bead: "", data: data)
+    }
+}
+
+/// What a follower of our own holds: the state the test writes, as
+/// the session would, and the calls it was asked.
+@MainActor
+final class FakeFollowed: Followed {
+    var state: YardState = YardState() {
+        didSet {
+            for observer in observers.values { observer(state) }
+        }
+    }
+
+    private var observers: [UUID: @MainActor (YardState) -> Void] = [:]
+    var pages: [String: Page] = [:]
+    var asked: [(String, Int64)] = []
+    var completedPageCalls: [Int] = []
+    var sent: [(String, String)] = []
+    var sentFiles: [[MailFile]] = []
+    var mailCalls = 0
+    var holdNextMail = false
+    var put: [Data] = []
+    var blobs: [String: Data] = [:]
+    var blobAsked: [String] = []
+    var putAnswers: (Data) -> BlobRef = { bytes in
+        BlobRef(hash: sha256Hex(bytes), kind: "image/jpeg", bytes: Int64(bytes.count))
+    }
+    var acks: [Int64] = []
+    var noticeAcks: [Int64] = []
+    var crewAgain: [CrewMember] = []
+    var crewReadCount = 0
+    var completedCrewReads = 0
+    var refuse: ApiError? = nil
+    var holdNextCrewRead = false
+    private var heldPageCalls: Set<Int> = []
+    private var pendingPageCalls: [Int: CheckedContinuation<Page, Never>] = [:]
+    private var pendingCrewRead: CheckedContinuation<[CrewMember], Never>?
+    private var pendingMail: CheckedContinuation<Void, Never>?
+
+    func observe(_ observer: @escaping @MainActor (YardState) -> Void) -> UUID {
+        let id = UUID()
+        observers[id] = observer
+        return id
+    }
+
+    func removeObserver(_ id: UUID) {
+        observers.removeValue(forKey: id)
+    }
+
+    func up(_ loaded: Loaded) {
+        state = YardState(status: .up, loaded: loaded, lastSeq: loaded.head, lastEvent: nil, events: [])
+    }
+
+    func event(_ event: Event) {
+        state.lastSeq = event.seq
+        state.lastEvent = event
+        state.events = state.events + [event]
+    }
+
+    func conversation(with: String, limit: Int64, before: Int64) async throws -> Page {
+        let call = asked.count + 1
+        asked.append((with, before))
+        if let refuse { throw refuse }
+        if heldPageCalls.contains(call) {
+            let page = await withCheckedContinuation { pendingPageCalls[call] = $0 }
+            completedPageCalls.append(call)
+            return page
+        }
+        let page = pages["\(with)|\(before)"] ?? Page(letters: [], more: false)
+        completedPageCalls.append(call)
+        return page
+    }
+
+    func holdPageCalls(_ calls: Set<Int>) {
+        heldPageCalls = calls
+    }
+
+    func releasePageCall(_ call: Int) {
+        guard let continuation = pendingPageCalls.removeValue(forKey: call), asked.indices.contains(call - 1) else { return }
+        let request = asked[call - 1]
+        let page = pages["\(request.0)|\(request.1)"] ?? Page(letters: [], more: false)
+        continuation.resume(returning: page)
+    }
+
+    func mail(to: String, text: String, files: [MailFile]) async throws {
+        mailCalls += 1
+        if let refuse { throw refuse }
+        if holdNextMail {
+            holdNextMail = false
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                pendingMail = continuation
+            }
+        }
+        sent.append((to, text))
+        sentFiles.append(files)
+    }
+
+    func releaseMail() {
+        pendingMail?.resume()
+        pendingMail = nil
+    }
+
+    func putBlob(_ bytes: Data) async throws -> BlobRef {
+        if let refuse { throw refuse }
+        put.append(bytes)
+        return putAnswers(bytes)
+    }
+
+    func blob(hash: String) async throws -> Data? {
+        blobAsked.append(hash)
+        return blobs[hash]
+    }
+
+    func ackInbox(through: Int64) async throws {
+        acks.append(through)
+    }
+
+    func notifications() async throws -> Notifications {
+        Notifications()
+    }
+
+    func ackNotifications(through: Int64) async throws {
+        noticeAcks.append(through)
+    }
+
+    func crew() async throws -> [CrewMember] {
+        crewReadCount += 1
+        if holdNextCrewRead {
+            holdNextCrewRead = false
+            let result = await withCheckedContinuation { pendingCrewRead = $0 }
+            completedCrewReads += 1
+            return result
+        }
+        completedCrewReads += 1
+        return crewAgain
+    }
+
+    func releaseCrewRead() {
+        pendingCrewRead?.resume(returning: crewAgain)
+        pendingCrewRead = nil
+    }
+
+    func asks() async throws -> Asks {
+        Asks()
+    }
+}

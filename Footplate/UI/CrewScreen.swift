@@ -1,73 +1,61 @@
 import SwiftUI
 import UserNotifications
 
-// The crew place B4 opens: empty, with the head line, the yard
-// switch with Pair another yard and Forget this yard, and the
-// notifications permission asked once after the first pairing.
-// B5 fills the rows; the head line and the switch are B4's.
+// The crew place (design 3.5): the head line with the selected
+// yard's follow word, the inbox rows newest letter first with unread
+// as words, and the yard switch sheet with each yard's waiting count
+// or state word. Tapping a row opens its conversation.
 struct CrewScreen: View {
+    @Bindable var model: InboxModel
     @Bindable var records: Records
-    var pairer: Pairer
     @Bindable var nav: Nav
-    /// The selected yard's follower, where the app follows it: its
-    /// word where it is not up.
-    var follower: Follower?
     @State private var showingSwitch = false
     @State private var confirmingForget = false
-    @State private var forgetError: String?
     @State private var askingNotifications = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                Button {
-                    showingSwitch = true
-                } label: {
-                    HStack {
-                        Text(head)
-                            .themeType(.title)
-                            .foregroundStyle(ThemeColor.textPrimary.color)
-                        Spacer()
-                        if let word {
-                            Text(word)
-                                .themeType(.meta)
-                                .foregroundStyle(ThemeColor.textAccent.color)
-                        }
-                    }
-                    .frame(minHeight: 48)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Switch yard")
-                if word != nil, let actionLabel {
-                    Button(actionLabel) { act() }
-                        .buttonStyle(FootplateButtonStyle(primary: false))
-                }
-                Text("No letters yet.")
+        let state = model.state
+        VStack(spacing: 0) {
+            headRow(state)
+            Divider().overlay(ThemeColor.borderSubtle.color)
+            if let error = state.error {
+                Text(error)
                     .themeType(.body)
-                    .foregroundStyle(ThemeColor.textSecondary.color)
-                if let forgetError {
-                    Text(forgetError)
-                        .themeType(.body)
-                        .foregroundStyle(ThemeColor.textError.color)
-                }
+                    .foregroundStyle(ThemeColor.textError.color)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
             }
-            .frame(maxWidth: 480, alignment: .leading)
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .top)
+            content(state)
         }
+        .frame(maxWidth: 480)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .foregroundStyle(ThemeColor.textPrimary.color)
         .background(ThemeColor.surfaceApp.color.ignoresSafeArea())
         .sheet(isPresented: $showingSwitch) {
-            yardSwitch
+            YardSwitchView(
+                state: state,
+                onSelect: { name in
+                    model.select(name)
+                    showingSwitch = false
+                },
+                onPairAnother: {
+                    showingSwitch = false
+                    model.pairAnother()
+                },
+                onForget: {
+                    showingSwitch = false
+                    confirmingForget = true
+                }
+            )
         }
         .alert("Forget this yard", isPresented: $confirmingForget) {
             Button("Keep", role: .cancel) {}
             Button("Forget", role: .destructive) {
-                Task { await forget() }
+                Task { await model.forget() }
             }
         } message: {
-            if let sentence = forgettingSentence {
+            if let sentence = model.forgetting() {
                 Text(sentence)
             }
         }
@@ -86,111 +74,117 @@ struct CrewScreen: View {
         }
     }
 
-    private var head: String {
-        guard let yard = records.kept.selectedYard else { return "" }
-        return "\(yard.title) · \(yard.user)"
-    }
-
-    private var word: String? {
-        if records.kept.account == nil { return "sign in again" }
-        guard let follower else { return nil }
-        switch follower.state.status {
-        case .down(_, let short): return short
-        case .pairAgain: return "pair again"
-        case .signInAgain: return "sign in again"
-        case .starting, .up: return nil
-        }
-    }
-
-    private var actionLabel: String? {
-        if records.kept.account == nil { return "Sign in again" }
-        guard let follower else { return nil }
-        switch follower.state.status {
-        case .pairAgain: return "Pair again"
-        case .signInAgain: return "Sign in again"
-        default: return nil
-        }
-    }
-
-    private func act() {
-        if records.kept.account == nil {
-            nav.show(.signIn(again: true))
-            return
-        }
-        guard let follower else { return }
-        switch follower.state.status {
-        case .pairAgain: nav.show(.pair)
-        case .signInAgain: nav.show(.signIn(again: true))
-        default: break
-        }
-    }
-
-    private var forgettingSentence: String? {
-        guard let yard = records.kept.selectedYard else { return nil }
-        return "footplate forgets \(yard.title). The device stays at the yard until its operator runs yardr user device rm \(yard.user) \(yard.device)"
-    }
-
-    private func forget() async {
-        guard let name = records.kept.selected else { return }
-        forgetError = nil
-        do {
-            try await pairer.forget(name: name)
-        } catch let api as ApiError {
-            forgetError = "The edge did not end the session: \(words(api))"
-        } catch {
-            forgetError = "The edge did not end the session: \(error)"
-        }
-        if records.kept.yards.isEmpty {
-            nav.reset(.pair)
-        }
-    }
-
-    private var yardSwitch: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Switch yard")
-                .themeType(.section)
-            ForEach(records.kept.yards, id: \.name) { yard in
-                Button {
-                    records.select(yard.name)
-                    showingSwitch = false
-                } label: {
-                    HStack {
-                        Text("\(yard.title) · \(yard.user)")
-                            .themeType(.body)
-                            .foregroundStyle(ThemeColor.textPrimary.color)
-                        Spacer()
-                        if yard.name == records.kept.selected {
-                            Text("selected")
-                                .themeType(.meta)
-                                .foregroundStyle(ThemeColor.textSecondary.color)
-                        }
-                    }
-                    .frame(minHeight: 48)
-                    .contentShape(Rectangle())
+    private func headRow(_ state: InboxState) -> some View {
+        HStack(spacing: 6) {
+            Button {
+                showingSwitch = true
+            } label: {
+                HStack(spacing: 6) {
+                    Text(state.head)
+                        .themeType(.title)
+                        .foregroundStyle(ThemeColor.textPrimary.color)
+                        .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(ThemeColor.textSecondary.color)
                 }
-                .buttonStyle(.plain)
+                .frame(minHeight: 48)
+                .contentShape(Rectangle())
             }
-            Button("Pair another yard") {
-                showingSwitch = false
-                nav.show(.pair)
+            .buttonStyle(.plain)
+            .accessibilityLabel("Switch yard")
+            Spacer()
+            if let word = state.word {
+                if state.action != nil {
+                    Button(word) { model.act() }
+                        .themeType(.meta)
+                        .foregroundStyle(ThemeColor.textAccent.color)
+                        .frame(minHeight: 48)
+                } else {
+                    Text(word)
+                        .themeType(.meta)
+                        .foregroundStyle(ThemeColor.textSecondary.color)
+                }
             }
-            .buttonStyle(FootplateButtonStyle(primary: true))
-            Button("Forget this yard") {
-                showingSwitch = false
-                confirmingForget = true
+        }
+        .padding(.horizontal, 20)
+        .frame(height: 56)
+    }
+
+    @ViewBuilder
+    private func content(_ state: InboxState) -> some View {
+        if let nothing = state.nothing {
+            Text(nothing)
+                .themeType(.body)
+                .foregroundStyle(ThemeColor.textSecondary.color)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 20)
+            Spacer()
+        } else if state.rows.isEmpty {
+            Text("No letters yet.")
+                .themeType(.body)
+                .foregroundStyle(ThemeColor.textSecondary.color)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 20)
+            Spacer()
+        } else {
+            List {
+                ForEach(Array(state.rows.enumerated()), id: \.element.name) { _, row in
+                    Button {
+                        model.open(row.name)
+                    } label: {
+                        inboxRow(row)
+                    }
+                    .buttonStyle(.plain)
+                    .listRowBackground(ThemeColor.surfaceApp.color)
+                    .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))
+                    .listRowSeparatorTint(ThemeColor.borderSubtle.color)
+                }
             }
-            .buttonStyle(FootplateButtonStyle(primary: false))
-            if let forgetError {
-                Text(forgetError)
-                    .themeType(.body)
-                    .foregroundStyle(ThemeColor.textError.color)
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+        }
+    }
+
+    private func inboxRow(_ row: Row) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .lastTextBaseline, spacing: 8) {
+                    Text(row.name)
+                        .themeType(.label)
+                        .foregroundStyle(ThemeColor.textPrimary.color)
+                        .lineLimit(1)
+                    if let state = row.state {
+                        Text(state)
+                            .themeType(.meta)
+                            .foregroundStyle(row.waiting ? ThemeColor.textAccent.color : ThemeColor.textSecondary.color)
+                            .lineLimit(1)
+                    }
+                }
+                if !row.line.isEmpty {
+                    Text(row.line)
+                        .themeType(.body)
+                        .foregroundStyle(ThemeColor.textSecondary.color)
+                        .lineLimit(1)
+                }
             }
             Spacer()
+            VStack(alignment: .trailing, spacing: 2) {
+                if !row.time.isEmpty {
+                    Text(row.time)
+                        .themeType(.meta)
+                        .foregroundStyle(ThemeColor.textSecondary.color)
+                }
+                if let unread = row.unread {
+                    Text(unread)
+                        .themeType(.meta)
+                        .foregroundStyle(ThemeColor.textPrimary.color)
+                }
+            }
         }
-        .padding(20)
-        .frame(maxWidth: 480, alignment: .leading)
-        .frame(maxWidth: .infinity, alignment: .top)
-        .background(ThemeColor.surfaceApp.color.ignoresSafeArea())
-        .foregroundStyle(ThemeColor.textPrimary.color)
+        .frame(minHeight: 64)
+        .contentShape(Rectangle())
     }
 }
