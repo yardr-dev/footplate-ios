@@ -42,4 +42,24 @@ protocol Followed: AnyObject {
 
     /// The user's decisions again, on a `noted` event.
     func asks() async throws -> Asks
+
+    /// One bead whole, with its asks' options, recommendation and state.
+    func bead(_ bead: String) async throws -> Bead
+
+    /// Picks `option` with `words` beside it; `weighed` only after a
+    /// passed gate on a weighty pick.
+    func answer(bead: String, ask: Int64, option: Int64, words: String, weighed: Bool) async throws
+
+    /// Approves a run ask, with `weighed` after a passed gate.
+    func approve(bead: String, ask: Int64, weighed: Bool) async throws
+
+    /// Approves a setup ask with the preset pick `option`, with
+    /// `weighed` after a passed gate.
+    func approveSetup(bead: String, ask: Int64, option: Int64, weighed: Bool) async throws
+
+    /// Later: the ask is put aside.
+    func later(bead: String, ask: Int64) async throws
+
+    /// Decline: the ask ends with no option picked.
+    func decline(bead: String, ask: Int64, words: String) async throws
 }

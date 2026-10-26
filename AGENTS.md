@@ -32,16 +32,19 @@ Under `Footplate/`:
   `Followed` seam the screen models read a followed yard through;
   `FootplateTests/Session/` follows the fake yard.
 - `Model/`: screen models and navigation (`Nav`, `PairModel`,
-  `SignInModel`, `InboxModel`, `ConversationModel`), the inbox board
-  (`Board`) and the boards' keeping (`Mailroom`).
-- `UI/`: SwiftUI screens (Pair, Sign in, Crew, Conversation), the
-  scanner, theme and resources (catalogue, Plex fonts and licence).
-- `Unlock/`: reserved for approval gates and the system unlock prompt.
+  `SignInModel`, `InboxModel`, `ConversationModel`, `DecisionsModel`,
+  `DecisionModel`), the inbox board (`Board`) and the boards' keeping
+  (`Mailroom`).
+- `UI/`: SwiftUI screens (Pair, Sign in, Crew, Decide, Decision,
+  Conversation), the scanner, theme and resources (catalogue, Plex
+  fonts and licence).
+- `Unlock/`: which picks pass the gate and its reasons as plain
+  functions, and the `LAContext` prompt behind its protocol.
 - `Notify/`: reserved for notification rules, delivery and taps.
 - `Yard/`: the account and per-yard records in the Keychain, the QR
   read, and the pairer (sign-in, pairing, forgetting).
 
-The `Unlock` and `Notify` folders contain no implementation yet.
+The `Notify` folder contains no implementation yet.
 `.yardr/` holds the
 flow, roles and simulator gate; `docs/design/` holds design decisions.
 A change moving or adding a target, module, package or folder updates this

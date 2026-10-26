@@ -636,6 +636,17 @@ final class FakeFollowed: Followed {
     var crewAgain: [CrewMember] = []
     var crewReadCount = 0
     var completedCrewReads = 0
+    var beads: [String: Bead] = [:]
+    var beadAsked: [String] = []
+    var answers: [(String, Int64, Int64, String, Bool)] = []
+    var approvals: [(String, Int64, Bool)] = []
+    var setupApprovals: [(String, Int64, Int64, Bool)] = []
+    var defers: [(String, Int64)] = []
+    var declines: [(String, Int64, String)] = []
+    var asksAgain: Asks = Asks()
+    /// Refused to the answering calls alone, so a card can be read
+    /// and its answer refused.
+    var answerRefuse: ApiError? = nil
     var refuse: ApiError? = nil
     var holdNextCrewRead = false
     private var heldPageCalls: Set<Int> = []
@@ -747,6 +758,37 @@ final class FakeFollowed: Followed {
     }
 
     func asks() async throws -> Asks {
-        Asks()
+        asksAgain
+    }
+
+    func bead(_ bead: String) async throws -> Bead {
+        beadAsked.append(bead)
+        if let refuse { throw refuse }
+        return beads[bead] ?? Bead(id: bead)
+    }
+
+    func answer(bead: String, ask: Int64, option: Int64, words: String, weighed: Bool) async throws {
+        if let answerRefuse { throw answerRefuse }
+        answers.append((bead, ask, option, words, weighed))
+    }
+
+    func approve(bead: String, ask: Int64, weighed: Bool) async throws {
+        if let answerRefuse { throw answerRefuse }
+        approvals.append((bead, ask, weighed))
+    }
+
+    func approveSetup(bead: String, ask: Int64, option: Int64, weighed: Bool) async throws {
+        if let answerRefuse { throw answerRefuse }
+        setupApprovals.append((bead, ask, option, weighed))
+    }
+
+    func later(bead: String, ask: Int64) async throws {
+        if let answerRefuse { throw answerRefuse }
+        defers.append((bead, ask))
+    }
+
+    func decline(bead: String, ask: Int64, words: String) async throws {
+        if let answerRefuse { throw answerRefuse }
+        declines.append((bead, ask, words))
     }
 }

@@ -28,6 +28,8 @@ final class AppServices {
     let mailroom: Mailroom
     let inboxModel: InboxModel
     let conversationModel: ConversationModel
+    let decisionsModel: DecisionsModel
+    let decisionModel: DecisionModel
 
     private(set) var followers: [String: Follower] = [:]
     private var yards: Yards?
@@ -57,6 +59,8 @@ final class AppServices {
         let mailroom = Mailroom()
         self.mailroom = mailroom
         self.conversationModel = ConversationModel(mailroom: mailroom)
+        self.decisionsModel = DecisionsModel(records: records, mailroom: mailroom, nav: nav)
+        self.decisionModel = DecisionModel(mailroom: mailroom, records: records, nav: nav, unlock: LAUnlockPrompt())
         self.inboxModel = InboxModel(pairer: pairer, records: records, followers: { [:] }, mailroom: mailroom, nav: nav)
         self.inboxModel.followers = { [weak self] in (self?.followers ?? [:]).mapValues { $0 as any Followed } }
         recordsObserver = records.observe { [weak self] _ in
@@ -138,6 +142,20 @@ private struct FootplateScene: View {
                     model: services.conversationModel,
                     yard: yard,
                     with: with,
+                    onBack: { services.nav.back() }
+                )
+            case .decisions:
+                DecisionsScreen(
+                    inbox: services.inboxModel,
+                    records: services.records,
+                    model: services.decisionsModel
+                )
+            case .decision(let yard, let bead, let ask):
+                DecisionScreen(
+                    model: services.decisionModel,
+                    yard: yard,
+                    bead: bead,
+                    ask: ask,
                     onBack: { services.nav.back() }
                 )
             }

@@ -541,6 +541,30 @@ extension Follower: Followed {
     func asks() async throws -> Asks {
         try await client.userAsks(name: me())
     }
+
+    func bead(_ bead: String) async throws -> Bead {
+        try await client.bead(bead)
+    }
+
+    func answer(bead: String, ask: Int64, option: Int64, words: String, weighed: Bool) async throws {
+        try await client.answerAsk(bead: bead, ask: ask, option: option, words: words, actor: me(), weighed: weighed)
+    }
+
+    func approve(bead: String, ask: Int64, weighed: Bool) async throws {
+        try await client.approveAsk(bead: bead, ask: ask, actor: me(), weighed: weighed)
+    }
+
+    func approveSetup(bead: String, ask: Int64, option: Int64, weighed: Bool) async throws {
+        try await client.approveSetup(bead: bead, ask: ask, option: option, actor: me(), weighed: weighed)
+    }
+
+    func later(bead: String, ask: Int64) async throws {
+        try await client.deferAsk(bead: bead, ask: ask, actor: me())
+    }
+
+    func decline(bead: String, ask: Int64, words: String) async throws {
+        try await client.declineAsk(bead: bead, ask: ask, words: words, actor: me())
+    }
 }
 
 /// How a stream ended.

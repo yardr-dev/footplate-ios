@@ -95,6 +95,12 @@ final class InboxModel {
         nav.show(.pair)
     }
 
+    /// A place starts a new back stack; back from it leaves the app.
+    func place(_ screen: Screen) {
+        guard screen.isPlace else { return }
+        nav.reset(screen)
+    }
+
     /// What the head line's word does: sign in again with the
     /// password alone, or pair the yard again.
     func act() {

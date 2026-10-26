@@ -18,9 +18,14 @@ enum Screen: Equatable, Sendable {
     /// yard's notices where `with` is `yardRow`. Full screen over
     /// the crew place.
     case conversation(yard: String, with: String)
+    /// The selected yard's decide place: the decisions list.
+    case decisions
+    /// One decision of the yard named `yard`: the ask `ask` on
+    /// `bead`. Full screen over the decide place.
+    case decision(yard: String, bead: String, ask: Int64)
 
     /// The places that have the yard header in the full design.
-    var isPlace: Bool { self == .crew }
+    var isPlace: Bool { self == .crew || self == .decisions }
 }
 
 /// Which screen is shown. Made with the screen the app opens on.
