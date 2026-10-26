@@ -48,6 +48,7 @@ struct ConversationScreen: View {
     @Bindable var model: ConversationModel
     var yard: String
     var with: String
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var field: String = ""
     @State private var scrollTracking = ConversationScrollTracking()
     @State private var showGallery = false
@@ -122,39 +123,58 @@ struct ConversationScreen: View {
                             .padding(.horizontal, 20)
                             .padding(.vertical, 4)
                     }
-                    HStack(alignment: .center, spacing: 8) {
-                        Menu {
-                            Button("Gallery") { showGallery = true }
-                            if canPhoto {
-                                Button("Camera") { showCamera = true }
-                            }
-                        } label: {
-                            Image(systemName: "paperclip")
-                                .font(.system(size: 18))
-                                .foregroundStyle(ThemeColor.textPrimary.color)
-                                .frame(width: 48, height: 48)
+                    // Attach, the field and Send in one row, or the
+                    // field's row above a full-width Send where the
+                    // text is set to an accessibility size, as the
+                    // bead card stacks its buttons: a fixed-width Send
+                    // cannot hold its label grown that large.
+                    let attach = Menu {
+                        Button("Gallery") { showGallery = true }
+                        if canPhoto {
+                            Button("Camera") { showCamera = true }
                         }
-                        .accessibilityLabel("Attach a picture")
-                        TextField("Write back", text: $field, axis: .vertical)
-                            .lineLimit(1...5)
-                            .accessibilityIdentifier("conversation-field")
-                            .themeType(.body)
-                            .padding(.horizontal, 12)
-                            .frame(minHeight: 48)
-                            .background(ThemeColor.surfaceRaised.color, in: RoundedRectangle(cornerRadius: 6))
-                            .overlay { RoundedRectangle(cornerRadius: 6).strokeBorder(ThemeColor.borderStrong.color, lineWidth: 1) }
-                            .onChange(of: field) { _, text in
-                                if text != model.draftText { model.draft(text) }
-                            }
-                            .onChange(of: state.draft) { _, draft in
-                                if draft.isEmpty { field = "" }
-                            }
-                        Button("Send") {
-                            Task { await model.send() }
+                    } label: {
+                        Image(systemName: "paperclip")
+                            .font(.system(size: 18))
+                            .foregroundStyle(ThemeColor.textPrimary.color)
+                            .frame(width: 48, height: 48)
+                    }
+                    .accessibilityLabel("Attach a picture")
+                    let write = TextField("Write back", text: $field, axis: .vertical)
+                        .lineLimit(1...5)
+                        .accessibilityIdentifier("conversation-field")
+                        .themeType(.body)
+                        .padding(.horizontal, 12)
+                        .frame(minHeight: 48)
+                        .background(ThemeColor.surfaceRaised.color, in: RoundedRectangle(cornerRadius: 6))
+                        .overlay { RoundedRectangle(cornerRadius: 6).strokeBorder(ThemeColor.borderStrong.color, lineWidth: 1) }
+                        .onChange(of: field) { _, text in
+                            if text != model.draftText { model.draft(text) }
                         }
-                        .buttonStyle(FootplateButtonStyle(primary: true))
-                        .frame(width: 96)
-                        .disabled((field.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && state.attached == nil) || state.sending || state.attaching)
+                        .onChange(of: state.draft) { _, draft in
+                            if draft.isEmpty { field = "" }
+                        }
+                    let send = Button("Send") {
+                        Task { await model.send() }
+                    }
+                    .buttonStyle(FootplateButtonStyle(primary: true))
+                    .disabled((field.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && state.attached == nil) || state.sending || state.attaching)
+                    Group {
+                        if dynamicTypeSize.isAccessibilitySize {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(alignment: .center, spacing: 8) {
+                                    attach
+                                    write
+                                }
+                                send
+                            }
+                        } else {
+                            HStack(alignment: .center, spacing: 8) {
+                                attach
+                                write
+                                send.frame(width: 96)
+                            }
+                        }
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)

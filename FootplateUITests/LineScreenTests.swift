@@ -1,8 +1,9 @@
 import XCTest
 
 // Run by hand, outside .yardr/test; attachments record the simulator's appearance.
-// Pair the simulator's app with a yard whose lines contain beads that a stat
-// separates, open Lines, then run these tests: the filter removes bead ids from
+// After AAPairForHand against scripts/fake-edge, whose canned board holds
+// what each test needs (or a real yard whose lines hold the same): the
+// stand-in's counts stand on the overview; the filter removes bead ids from
 // the cards, and the transit count clears the filter; a line card pushes its
 // route map, whose backlog station opens and shuts, whose bead card pushes the
 // bead's card, and the back returns; a bead id on a card or a row pushes the
@@ -231,6 +232,30 @@ final class LineScreenTests: XCTestCase {
             app.navigationBars.buttons.element(boundBy: 0).tap()
             XCTAssertTrue(transit.waitForExistence(timeout: 5))
         }
+    }
+
+    // After AAPairForHand against scripts/fake-edge: opening Lines
+    // reads the canned board through the app's edge client.
+    @MainActor
+    func testLineScreenReadsFromTheStandIn() {
+        let app = XCUIApplication()
+        app.launch()
+
+        let lines = app.tabBars.buttons["Lines"]
+        XCTAssertTrue(lines.waitForExistence(timeout: 10))
+        lines.tap()
+
+        // The canned board's transit count, its moving line's card
+        // with a bead id, its quiet line's chip, and its Elsewhere
+        // and No line rows.
+        let transit = app.buttons["filter-all"]
+        XCTAssertTrue(transit.waitForExistence(timeout: 30))
+        XCTAssertEqual(transit.label, "7 in transit")
+        XCTAssertTrue(app.buttons["line/yard/default"].exists)
+        XCTAssertTrue(app.buttons["bead-id/yd-gate"].exists)
+        XCTAssertTrue(app.buttons["quiet/drafts/default"].exists)
+        XCTAssertTrue(app.buttons["bead-row/yd-fence"].exists)
+        XCTAssertTrue(app.buttons["bead-row/yd-crm"].exists)
     }
 
     /// The beads on the route map's bead cards.

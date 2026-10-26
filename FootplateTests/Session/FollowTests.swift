@@ -242,16 +242,20 @@ final class FollowTests: XCTestCase {
         let yards = await makeYards()
         let laptop = try await follow(yards, yardName: "laptop")
         _ = try await laptop.waitFor("not ready") { $0.status.isDown }
-        try await waitForRequests(fake, 2)
+        // Each wait counts from what is taken, never from zero.
+        var takenCount = 0
+        try await waitForRequests(fake, takenCount + 2)
         _ = fake.taken()
         _ = fake.taken()
+        takenCount += 2
         _ = try await waitPending(clock)
         await setForeground(yards, false)
         await setForeground(yards, true)
         // The clock does not move: the load runs again at once.
         _ = try await laptop.waitFor("followed") { $0.status == .up }
-        try await waitForRequests(fake, 3)
+        try await waitForRequests(fake, takenCount + 1)
         XCTAssertEqual(fake.taken().path, "/user/me")
+        takenCount += 1
     }
 
     func testTwoYardsAreFollowedAtOnce() async throws {
@@ -338,25 +342,32 @@ final class FollowTests: XCTestCase {
         fake.stream(lines: [], hang: true)
         let yards = await makeYards()
         let home = try await follow(yards, yardName: "")
-        try await waitForRequests(fake, 4)
+        // Each wait counts from what is taken, never from zero: the
+        // waits below land while requests are still arriving.
+        var takenCount = 0
+        try await waitForRequests(fake, takenCount + 4)
         _ = fake.taken()
         _ = fake.taken()
         _ = fake.taken()
         XCTAssertEqual(fake.taken().path, "/user/call/GetUser")
+        takenCount += 4
         await setForeground(yards, false)
         await setForeground(yards, true)
-        try await waitForRequests(fake, 10)
+        try await waitForRequests(fake, takenCount + 7)
         for _ in 1...6 {
             _ = fake.taken() // the rest of the load in progress
         }
         XCTAssertEqual(fake.taken().path, "/user/me") // return reads it again
-        try await waitForRequests(fake, 20)
+        takenCount += 7
+        try await waitForRequests(fake, takenCount + 9)
         for _ in 1...9 {
             _ = fake.taken() // the rest of the new load
         }
+        takenCount += 9
         _ = try await home.waitFor("up after loading again") { $0.status == .up }
-        try await waitForRequests(fake, 21)
+        try await waitForRequests(fake, takenCount + 1)
         XCTAssertEqual(fake.taken().path, "/user/events?after=151")
+        takenCount += 1
 
         await setForeground(yards, false)
         try await waitForOpenStreams(fake, 0)
@@ -394,16 +405,20 @@ final class FollowTests: XCTestCase {
         let yards = await makeYards()
         let home = try await follow(yards, yardName: "")
         _ = try await home.waitFor("152 applied") { $0.lastSeq == 152 }
-        try await waitForRequests(fake, 11)
+        // Each wait counts from what is taken, never from zero.
+        var takenCount = 0
+        try await waitForRequests(fake, takenCount + 11)
         for _ in 1...10 {
             _ = fake.taken() // the load's calls
         }
         XCTAssertEqual(fake.taken().path, "/user/events?after=151")
+        takenCount += 11
         await MainActor.run { yards.noteNetworkChanged() }
         // The stream opens again after the last seen, with no load
         // between.
-        try await waitForRequests(fake, 12)
+        try await waitForRequests(fake, takenCount + 1)
         XCTAssertEqual(fake.taken().path, "/user/events?after=152")
+        takenCount += 1
         try await waitForOpenStreams(fake, 1)
         let homeStatus = await status(of: home)
         XCTAssertEqual(homeStatus, .up)

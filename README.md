@@ -27,8 +27,8 @@ against its bead, then for security alone.
 Open `Footplate.xcodeproj` in Xcode 26.3 and run the shared `Footplate`
 scheme. The app supports iOS 18 and later on iPhone and iPad. It pairs
 with a yard by a scanned or typed code and signs in at the edge; after
-pairing it opens an empty crew place. The crew and decide places are
-built; the line screen is not built yet.
+pairing it opens an empty crew place. The crew, decide and line places are
+built.
 The project uses platform frameworks only and needs no generator or package
 installation. For a physical device, select your signing team in Xcode.
 
@@ -42,13 +42,63 @@ It builds the app and runs `FootplateTests` on iPhone 17 Pro simulator
 `7EC91353-EDF5-4E93-B644-46A44BA6CFCB`. A missing simulator fails the gate.
 The theme test compares the catalogue's dark and light appearances and the
 phone type roles with vendored yardr-design tokens, and checks the bundled
-fonts are registered. `FootplateUITests` runs separately by hand, for example:
+fonts are registered. `FootplateUITests` runs separately by hand, against the
+stand-in edge below.
+
+## The by-hand UI tests
+
+`scripts/fake-edge` stands in for the edge on loopback: Kratos's sign-in
+and logout, one account's pairing, `/user/me`, every `/user/call/<Method>`
+answered from `FootplateTests/FakeYard/Canned.swift`'s board, the
+`/user/events` stream with a heartbeat every 25 seconds, and a page per
+bead. It checks no credentials and serves `127.0.0.1` alone. It prints
+its URL, for the build's `EDGE_URL`, and every request to standard
+error:
+
+Run `python3 scripts/test-fake-edge.py` to check that values in its JSON
+responses and bead pages stay data.
+
+```sh
+edge_dir=$(mktemp -d)
+scripts/fake-edge >"$edge_dir/url" 2>"$edge_dir/edge.log" &
+edge_pid=$!
+cleanup_edge() {
+  kill "$edge_pid" 2>/dev/null || true
+  wait "$edge_pid" 2>/dev/null || true
+  rm -rf "$edge_dir"
+}
+trap cleanup_edge EXIT
+```
+
+`FootplateUITests/AAPairForHand` pairs the simulator with the stand-in
+before the class under test runs (XCTest runs classes alphabetically,
+so it goes first) and leaves the app on the Crew tab. A run goes:
 
 ```sh
 xcodebuild test -project Footplate.xcodeproj -scheme Footplate \
-  -destination 'platform=iOS Simulator,id=77724F1C-CB67-476C-AF33-074587FD90A7' \
-  -only-testing:FootplateUITests
+  -destination 'platform=iOS Simulator,id=7EC91353-EDF5-4E93-B644-46A44BA6CFCB' \
+  EDGE_URL="$(cat "$edge_dir/url")" \
+  -only-testing:FootplateUITests/AAPairForHand \
+  -only-testing:FootplateUITests/LineScreenTests
 ```
+
+`LineScreenTests` checks that the app reads the canned line board from
+the stand-in edge.
+
+The shell trap stops the edge by its pid and removes its files when the
+shell exits, including after an interrupted test run.
+
+The pairing and the notification answer stay in the simulator, so a
+later run pairs nothing and starts from the tabs. For a fresh run,
+uninstall the test build first:
+
+```sh
+xcrun simctl uninstall 7EC91353-EDF5-4E93-B644-46A44BA6CFCB dev.yardr.footplate.edge
+```
+
+`PairScreenTests` walks the unpaired journey, so it runs alone, without
+`AAPairForHand`, on a fresh install. Nothing runs the stand-in from
+the gate: the UI tests stay by hand.
 
 The build settings live in `Config/`. The default edge is
 `https://my.yardr.dev`; overriding `EDGE_URL` automatically changes the app's

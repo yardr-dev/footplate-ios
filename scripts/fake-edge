@@ -1,0 +1,240 @@
+#!/usr/bin/env python3
+# A stand-in edge for the by-hand UI tests: Kratos's sign-in and
+# logout, one account's pairing, /user/me, every /user/call/<Method>
+# answered from FootplateTests/FakeYard/Canned.swift's board, the
+# /user/events stream with a heartbeat every 25 seconds, and a page
+# per bead. It checks no credentials and serves loopback alone.
+#
+#   scripts/fake-edge [port]   # 0 or left out: a free loopback port
+#
+# It prints the URL to build the app against, and every request to
+# standard error. A run against it goes:
+#
+#   edge_dir=$(mktemp -d)
+#   scripts/fake-edge >"$edge_dir/url" 2>"$edge_dir/edge.log" &
+#   edge_pid=$!
+#   cleanup_edge() {
+#     kill "$edge_pid" 2>/dev/null || true
+#     wait "$edge_pid" 2>/dev/null || true
+#     rm -rf "$edge_dir"
+#   }
+#   trap cleanup_edge EXIT
+#   xcodebuild test -project Footplate.xcodeproj -scheme Footplate \
+#     -destination 'platform=iOS Simulator,id=7EC91353-EDF5-4E93-B644-46A44BA6CFCB' \
+#     EDGE_URL="$(cat "$edge_dir/url")" \
+#     -only-testing:FootplateUITests/AAPairForHand \
+#     -only-testing:FootplateUITests/<class>
+#
+# The UI tests stay by hand: nothing runs this from the gate.
+import html
+import json
+import re
+import sys
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from time import sleep
+from urllib.parse import urlsplit
+
+ROOT = Path(__file__).resolve().parent.parent
+CANNED = ROOT / "FootplateTests" / "FakeYard" / "Canned.swift"
+HEARTBEAT_EVERY = 25
+
+# One reply per line of Canned.swift's dicts: `"name": #"..."#`
+# (the raw literal holds no `"#`, so the match ends at the line's
+# last one) or `"name": "..."` for the empty answers.
+REPLY = re.compile(r'^\s*"([^"]+)":\s*#"(.*)"#\s*,?\s*$')
+PLAIN_REPLY = re.compile(r'^\s*"([^"]+)":\s*"([{}]*)"\s*,?\s*$')
+# The Flows answer is computed in Swift: a prefix, the twelve backlog
+# drafts joined, and a suffix. The drafts are rebuilt here; the two
+# halves are read from the source.
+FLOWS_SPLIT = '"# + backlog + #"'
+
+
+def json_body(value):
+    return json.dumps(value, separators=(",", ":"))
+
+
+def bead_page(bead, yard):
+    bead_text = html.escape(bead)
+    yard_text = html.escape(yard or "the account's own")
+    return (
+        f"<html><head><title>{bead_text}</title></head>"
+        f"<body><h1>{bead_text}</h1>"
+        f"<p>yard {yard_text}, from the stand-in edge</p></body></html>\n"
+    )
+
+
+def canned_board():
+    try:
+        text = CANNED.read_text()
+    except OSError as error:
+        sys.exit(f"scripts/fake-edge: cannot read {CANNED}: {error}")
+    replies = {}
+    for line in text.splitlines():
+        match = REPLY.match(line) or PLAIN_REPLY.match(line)
+        if match:
+            replies[match.group(1)] = match.group(2)
+    flows = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("return #\"") and FLOWS_SPLIT in stripped:
+            halves = stripped[len('return #"'): -len('"#')].split(FLOWS_SPLIT)
+            if len(halves) == 2:
+                drafts = ",".join(
+                    '{"bead": "yd-draft-%d", "title": "Draft %d", '
+                    '"expected": "\\u2014", "working": false}' % (i, i)
+                    for i in range(1, 13)
+                )
+                flows = halves[0] + drafts + halves[1]
+    if flows is not None:
+        replies["Flows"] = flows
+    for name in ("Head", "GetUser", "UserInbox", "UserAsks", "Bead", "Flows"):
+        if name not in replies:
+            sys.exit(f"scripts/fake-edge: {CANNED} answers no {name}; refusing to serve half a board")
+    return replies
+
+
+REPLIES = canned_board()
+BEADS = {key: REPLIES[key] for key in REPLIES if key.startswith("yd-")}
+minted = 0
+
+
+def mint(prefix):
+    global minted
+    minted += 1
+    return f"{prefix}-{minted}"
+
+
+class StandIn(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.0"
+
+    def log_request(self, code="-"):
+        yard = self.headers.get("X-Edge-Yard")
+        at = f" yard={yard}" if yard else ""
+        sys.stderr.write(f"{self.command} {self.path}{at} -> {code}\n")
+        sys.stderr.flush()
+
+    def _send(self, status, body, content_type="application/json"):
+        data = body.encode()
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _json(self, status, body):
+        self._send(status, body)
+
+    def _json_value(self, status, value):
+        self._json(status, json_body(value))
+
+    def _body_object(self):
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        raw = self.rfile.read(length) if length else b""
+        try:
+            value = json.loads(raw) if raw else {}
+            return value if isinstance(value, dict) else {}
+        except ValueError:
+            return {}
+
+    def do_GET(self):  # noqa: N802
+        split = urlsplit(self.path)
+        if split.path == "/kratos/self-service/login/api":
+            self._json_value(200, {"id": mint("flow"), "type": "api", "ui": {"method": "POST", "nodes": []}})
+        elif split.path == "/user/me":
+            yard = self.headers.get("X-Edge-Yard") or "south"
+            self._json_value(200, {"user": "jo", "said_by": "phone", "yard": yard})
+        elif split.path == "/user/events":
+            self._events()
+        elif split.path.startswith("/user/blobs/"):
+            self._send(404, "not found\n", "text/plain")
+        elif split.path.startswith("/beads/"):
+            bead = split.path[len("/beads/"):]
+            yard = self.headers.get("X-Edge-Yard") or ""
+            self._send(200, bead_page(bead, yard), "text/html")
+        else:
+            self._send(404, "not found\n", "text/plain")
+
+    def do_POST(self):  # noqa: N802
+        split = urlsplit(self.path)
+        if split.path == "/kratos/self-service/login":
+            # Any credentials sign in: the stand-in checks none.
+            identifier = self._body_object().get("identifier")
+            if not isinstance(identifier, str) or not identifier:
+                identifier = "jo@example.com"
+            handle = identifier.split("@")[0]
+            self._json_value(200, {
+                "session_token": mint("ory_st"),
+                "session": {
+                    "id": "s-1",
+                    "active": True,
+                    "identity": {"id": "i-1", "traits": {"email": identifier, "handle": handle}},
+                },
+            })
+        elif split.path == "/user/pair":
+            yard = self.headers.get("X-Edge-Yard") or "south"
+            self._json_value(200, {"token": mint("stand-in-token"), "user": "jo", "device": "phone", "yard": yard})
+        elif split.path.startswith("/user/call/"):
+            method = split.path[len("/user/call/"):]
+            bead = self._body_object().get("bead") if method == "Bead" else None
+            if not isinstance(bead, str):
+                bead = None
+            answer = (BEADS.get(bead) if bead else None) or REPLIES.get(method)
+            if answer is None:
+                self._json_value(200, {"error": {"code": "error", "message": f"no such method {method}"}})
+            else:
+                self._json(200, answer)
+        else:
+            self._send(404, "not found\n", "text/plain")
+
+    def do_DELETE(self):  # noqa: N802
+        if urlsplit(self.path).path == "/kratos/self-service/logout/api":
+            self._send(204, "")
+        else:
+            self._send(404, "not found\n", "text/plain")
+
+    def _events(self):
+        # The stream the follower holds open: a blank heartbeat line
+        # every 25 seconds, two missed of which the client outlives.
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson")
+        self.end_headers()
+        try:
+            while True:
+                self.wfile.write(b"\n")
+                self.wfile.flush()
+                sleep(HEARTBEAT_EVERY)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+
+def main(argv):
+    port = 0
+    if len(argv) > 2:
+        sys.exit("usage: scripts/fake-edge [port]")
+    if len(argv) == 2:
+        try:
+            port = int(argv[1])
+        except ValueError:
+            sys.exit("usage: scripts/fake-edge [port]")
+    server = ThreadingHTTPServer(("127.0.0.1", port), StandIn)
+    server.daemon_threads = True
+    url = "http://127.0.0.1:%d" % server.server_address[1]
+    # The URL alone on standard output, for EDGE_URL=$(scripts/fake-edge).
+    sys.stdout.write(url + "\n")
+    sys.stdout.flush()
+    sys.stderr.write("stand-in edge at %s (%d replies from %s)\n" % (url, len(REPLIES), CANNED))
+    sys.stderr.flush()
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+
+
+if __name__ == "__main__":
+    main(sys.argv)
