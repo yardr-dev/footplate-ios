@@ -23,7 +23,7 @@ final class DecisionScreenshotTests: XCTestCase {
         records.keepYard(PairedYard(name: "laptop", yard: "laptop", user: "jo", device: "pixel", token: "yardr-dev-laptop-1"))
         records.keepYard(PairedYard(name: "", yard: "south", user: "jo", device: "phone", token: "yardr-dev-south-1"))
         records.noteNotificationsAsked()
-        let nav = Nav(first: .decisions)
+        let nav = Nav(place: .decide)
         let home = FakeFollowed()
         let laptop = FakeFollowed()
         let mailroom = Mailroom()
@@ -53,14 +53,14 @@ final class DecisionScreenshotTests: XCTestCase {
         XCTAssertEqual(decisions.state.open.count, 3)
         XCTAssertEqual(decisions.state.decided.map(\.what), ["declined"])
 
-        try await render(DecisionsScreen(inbox: inbox, records: records, model: decisions), scene: scene, to: dir.appendingPathComponent("decisions.png"))
+        try await render(DecisionsScreen(inbox: inbox, model: decisions, decision: decision, nav: nav), scene: scene, to: dir.appendingPathComponent("decisions.png"))
         try await render(
-            DecisionScreen(model: decision, yard: "", bead: "yd-links", ask: 3, onBack: {}),
+            DecisionScreen(model: decision, yard: "", bead: "yd-links", ask: 3),
             scene: scene, to: dir.appendingPathComponent("routine.png")
         )
         decision.leave()
         try await render(
-            DecisionScreen(model: decision, yard: "", bead: "yd-map", ask: 7, onBack: {}),
+            DecisionScreen(model: decision, yard: "", bead: "yd-map", ask: 7),
             scene: scene, to: dir.appendingPathComponent("weighty.png")
         )
         decision.leave()

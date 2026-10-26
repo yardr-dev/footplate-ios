@@ -85,28 +85,22 @@ final class InboxModel {
     }
 
     /// Opens the row `name` of the selected yard: its conversation,
-    /// or the yard's notices.
+    /// or the yard's notices, pushed onto the crew stack.
     func open(_ name: String) {
         guard let yard = records.kept.selected else { return }
-        nav.show(.conversation(yard: yard, with: name))
+        nav.openConversation(yard: yard, with: name)
     }
 
     func pairAnother() {
-        nav.show(.pair)
+        nav.showPair()
     }
 
-    /// A place starts a new back stack; back from it leaves the app.
-    func place(_ screen: Screen) {
-        guard screen.isPlace else { return }
-        nav.reset(screen)
-    }
-
-    /// What the head line's word does: sign in again with the
-    /// password alone, or pair the yard again.
+    /// What the follow word does: sign in again with the password
+    /// alone, or pair the yard again.
     func act() {
         switch state.action {
-        case .signInAgain: nav.show(.signIn(again: true))
-        case .pairAgain: nav.show(.pair)
+        case .signInAgain: nav.showSignIn(again: true)
+        case .pairAgain: nav.showPair()
         case nil: break
         }
     }
@@ -130,8 +124,11 @@ final class InboxModel {
         } catch {
             forgetError = "The edge did not end the session: \(error)"
         }
+        if !records.kept.yards.contains(where: { $0.name == name }) {
+            nav.didForgetYard(name)
+        }
         if records.kept.yards.isEmpty {
-            nav.reset(.pair)
+            nav.didForgetAll()
         }
     }
 

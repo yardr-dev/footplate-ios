@@ -384,7 +384,7 @@ final class DecisionModel {
         do {
             try await body(followed)
             guard active, self.activation == activation, screen() == target else { return }
-            nav.leave(.decision(yard: target.yard, bead: target.bead, ask: target.ask))
+            nav.closeDecision(yard: target.yard, bead: target.bead, ask: target.ask)
         } catch let error as ApiError {
             guard active, self.activation == activation, screen() == target else { return }
             if case .refused = error,
@@ -415,7 +415,7 @@ final class DecisionModel {
         do {
             try await body(followed)
             guard active, self.activation == activation, screen() == target else { return }
-            nav.leave(.decision(yard: target.yard, bead: target.bead, ask: target.ask))
+            nav.closeDecision(yard: target.yard, bead: target.bead, ask: target.ask)
         } catch let error as ApiError {
             guard active, self.activation == activation, screen() == target else { return }
             errorText = "\(failed): \(refusalWords(error))"

@@ -25,7 +25,7 @@ final class LineScreenshotTests: XCTestCase {
         records.keepYard(PairedYard(name: "", yard: "south", user: "jo", device: "phone", token: "yardr-dev-south-1"))
         records.noteNotificationsAsked()
         records.select("")
-        let nav = Nav(first: .lines)
+        let nav = Nav(place: .lines)
         let home = FakeFollowed()
         let laptop = FakeFollowed()
         let mailroom = Mailroom()

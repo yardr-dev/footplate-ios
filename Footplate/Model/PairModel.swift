@@ -37,7 +37,6 @@ final class PairModel {
     /// be replaced.
     private var waiting: (code: PairingCode, before: String?)?
     private var recordsObserver: UUID?
-    private var navObserver: UUID?
 
     /// The edge the app speaks to: the line **Type the code** shows.
     var edge: String { pairer.origin }
@@ -51,11 +50,6 @@ final class PairModel {
             guard let session = kept.account?.session, session != before else { return }
             self.waiting = nil
             Task { @MainActor in await self.run(code) }
-        }
-        navObserver = nav.observe { [weak self] screen in
-            // The person went on to the crew: nothing waits any more,
-            // and a later sign-in from there pairs nothing.
-            if screen == .crew { self?.waiting = nil }
         }
     }
 
@@ -96,6 +90,13 @@ final class PairModel {
         return true
     }
 
+    /// The Pair cover shut without pairing: nothing waits any more,
+    /// and a later sign-in from the tabs pairs nothing.
+    func close() {
+        waiting = nil
+        if !state.busy { state = PairState() }
+    }
+
     /// Pairs with the code read: at once under the session kept, or
     /// after the Sign in screen where there is none.
     func pair() async {
@@ -127,12 +128,12 @@ final class PairModel {
             return
         }
         state = PairState()
-        nav.reset(.crew)
+        nav.didPair()
     }
 
     private func signInFirst(code: PairingCode, session: String?, again: Bool) {
         waiting = (code, session)
-        nav.show(.signIn(again: again))
+        nav.showSignIn(again: again)
     }
 
     private func read(_ read: CodeRead) {

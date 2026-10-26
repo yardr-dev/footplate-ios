@@ -53,7 +53,7 @@ final class AppServices {
         self.records = records
         let pairer = Pairer(edge: edge, records: records)
         self.pairer = pairer
-        let nav = Nav(first: records.kept.yards.isEmpty ? .pair : .crew)
+        let nav = Nav()
         self.nav = nav
         self.pairModel = PairModel(pairer: pairer, records: records, nav: nav)
         self.signInModel = SignInModel(pairer: pairer, records: records, nav: nav)
@@ -127,45 +127,26 @@ private struct FootplateScene: View {
 
     var body: some View {
         Group {
-            switch services.nav.screen {
-            case .pair:
-                PairScreen(model: services.pairModel, canGoBack: services.nav.canBack, onBack: {
-                    if !services.pairModel.back() { services.nav.back() }
+            if services.records.kept.yards.isEmpty {
+                PairScreen(model: services.pairModel, onBack: {
+                    _ = services.pairModel.back()
                 })
-            case .signIn(let again):
-                SignInScreen(model: services.signInModel, again: again, onBack: { services.nav.back() })
-            case .crew:
-                CrewScreen(
-                    model: services.inboxModel,
-                    records: services.records,
-                    nav: services.nav
-                )
-            case .conversation(let yard, let with):
-                ConversationScreen(
-                    model: services.conversationModel,
-                    yard: yard,
-                    with: with,
-                    onBack: { services.nav.back() }
-                )
-            case .decisions:
-                DecisionsScreen(
+                .fullScreenCover(isPresented: signInShown) {
+                    SignInScreen(model: services.signInModel, again: services.nav.signIn?.again ?? false, onBack: {
+                        services.nav.signIn = nil
+                    })
+                }
+            } else {
+                TabsView(
+                    nav: services.nav,
                     inbox: services.inboxModel,
                     records: services.records,
-                    model: services.decisionsModel
-                )
-            case .decision(let yard, let bead, let ask):
-                DecisionScreen(
-                    model: services.decisionModel,
-                    yard: yard,
-                    bead: bead,
-                    ask: ask,
-                    onBack: { services.nav.back() }
-                )
-            case .lines:
-                LinesScreen(
-                    inbox: services.inboxModel,
-                    records: services.records,
-                    model: services.lineModel
+                    conversation: services.conversationModel,
+                    decisions: services.decisionsModel,
+                    decision: services.decisionModel,
+                    line: services.lineModel,
+                    pair: services.pairModel,
+                    signIn: services.signInModel
                 )
             }
         }
@@ -174,5 +155,13 @@ private struct FootplateScene: View {
         .onChange(of: scenePhase, initial: true) { _, phase in
             services.setForeground(phase == .active)
         }
+    }
+
+    /// Sign in over the Pair root.
+    private var signInShown: Binding<Bool> {
+        Binding(
+            get: { services.nav.signIn != nil },
+            set: { if !$0 { services.nav.signIn = nil } }
+        )
     }
 }

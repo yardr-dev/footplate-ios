@@ -25,7 +25,7 @@ final class CrewScreenshotTests: XCTestCase {
         records.keepYard(PairedYard(name: "laptop", yard: "laptop", user: "jo", device: "pixel", token: "yardr-dev-laptop-1"))
         records.keepYard(PairedYard(name: "", yard: "south", user: "jo", device: "phone", token: "yardr-dev-south-1"))
         records.noteNotificationsAsked()
-        let nav = Nav(first: .crew)
+        let nav = Nav()
         let home = FakeFollowed()
         let laptop = FakeFollowed()
         let mailroom = Mailroom()
@@ -71,8 +71,8 @@ final class CrewScreenshotTests: XCTestCase {
         }
         XCTAssertFalse(inbox.state.rows.isEmpty)
 
-        try await render(CrewScreen(model: inbox, records: records, nav: nav), scene: scene, to: dir.appendingPathComponent("inbox.png"))
         let conversation = ConversationModel(mailroom: mailroom, now: { now }, zone: { TimeZone(secondsFromGMT: 0)! })
+        try await render(CrewScreen(model: inbox, nav: nav, conversation: conversation), scene: scene, to: dir.appendingPathComponent("inbox.png"))
         conversation.open(yard: "", with: "yardmaster")
         let convDeadline = ContinuousClock.now + .seconds(10)
         while conversation.state.letters.count < 4
@@ -83,7 +83,7 @@ final class CrewScreenshotTests: XCTestCase {
         XCTAssertEqual(conversation.state.letters.count, 4)
         XCTAssertNotNil(conversation.state.letters.first { $0.seq == 15 }?.images.first?.bytes)
         try await render(
-            ConversationScreen(model: conversation, yard: "", with: "yardmaster", onBack: {}),
+            ConversationScreen(model: conversation, yard: "", with: "yardmaster"),
             scene: scene, to: dir.appendingPathComponent("conversation.png")
         )
         conversation.leave()

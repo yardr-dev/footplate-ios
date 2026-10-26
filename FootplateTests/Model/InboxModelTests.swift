@@ -29,7 +29,7 @@ final class InboxModelTests: XCTestCase {
         secret = MemoryShelf()
         plain = MemoryShelf()
         records = makeRecords()
-        nav = Nav(first: .crew)
+        nav = Nav()
         home = FakeFollowed()
         laptop = FakeFollowed()
         mailroom = Mailroom()
@@ -135,10 +135,11 @@ final class InboxModelTests: XCTestCase {
         let model = inbox()
         _ = await waitFor("the rows", state: { model.state }) { !$0.rows.isEmpty }
         model.open("yardmaster")
-        XCTAssertEqual(nav.screen, .conversation(yard: "", with: "yardmaster"))
-        XCTAssertTrue(nav.back())
-        XCTAssertEqual(nav.screen, .crew)
-        XCTAssertFalse(nav.back())
+        XCTAssertEqual(nav.crewPath, [ConversationRoute(yard: "", with: "yardmaster")])
+        model.open("yardmaster")
+        XCTAssertEqual(nav.crewPath.count, 1, "opening what is open pushes nothing more")
+        nav.crewPath.removeLast()
+        XCTAssertEqual(nav.crewPath, [])
         model.open("yardmaster")
         let conversation = conversation()
         conversation.open(yard: "", with: "yardmaster")
@@ -329,7 +330,7 @@ final class InboxModelTests: XCTestCase {
         }
     }
 
-    func testSwitchSaysWhatWaitsInEachYardAndAnAwayYardIsSelectable() async {
+    func testSwitchSaysWhatWaitsAndForgettingClearsOnlyThatYardsRoutes() async {
         home.up(loaded())
         laptop.state.status = .down(words: "The yard is away: the edge cannot reach it.", short: "yard away")
         let model = inbox()
@@ -348,6 +349,13 @@ final class InboxModelTests: XCTestCase {
         XCTAssertEqual(selected.nothing, "Nothing from laptop yet: yard away")
         XCTAssertEqual(selected.rows, [])
         XCTAssertEqual(selected.waiting, 0)
+
+        nav.crewPath = [ConversationRoute(yard: "laptop", with: "yardmaster")]
+        nav.decidePath = [DecisionRoute(yard: "", bead: "yd-map", ask: 7)]
+        await model.forget()
+        XCTAssertEqual(nav.crewPath, [])
+        XCTAssertEqual(nav.decidePath, [DecisionRoute(yard: "", bead: "yd-map", ask: 7)])
+        XCTAssertEqual(records.kept.yards.map(\.name), [""])
     }
 
     func testSelectionSurvivesARestartOfTheModel() async {

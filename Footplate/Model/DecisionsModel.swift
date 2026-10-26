@@ -63,10 +63,10 @@ final class DecisionsModel {
         decisions(board: records.kept.selected.flatMap { mailroom.boards[$0] })
     }
 
-    /// Opens one decision's card.
+    /// Opens one decision's card, pushed onto the decide stack.
     func open(_ card: Card) {
         guard let yard = records.kept.selected else { return }
-        nav.show(.decision(yard: yard, bead: card.bead, ask: card.ask))
+        nav.openDecision(yard: yard, bead: card.bead, ask: card.ask)
     }
 
     private func decisions(board: Board?) -> DecisionsState {

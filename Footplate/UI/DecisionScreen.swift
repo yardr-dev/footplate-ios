@@ -3,67 +3,76 @@ import UIKit
 
 // The decide place and one decision (design 3.5): the open asks oldest
 // first, each a card — the only cards in the app — the weighty lines
-// first; then Decided, one line each. One decision opens full screen:
-// the weighty lines first, the question, its context and the beads it
-// is about, the options with what each costs and the recommended one,
-// the words, and Pick, Later and Decline. A run or setup ask is
-// approved with Approve behind the unlock. A card the edge cannot
-// approve shows what it proposes and the command that answers it on
-// the yard's machine, with Copy, in place of Pick or Approve.
+// first; then Decided, one line each. One decision is pushed onto the
+// place's stack: the weighty lines first, the question, its context
+// and the beads it is about, the options with what each costs and the
+// recommended one, the words, and Pick, Later and Decline. A run or
+// setup ask is approved with Approve behind the unlock. A card the edge
+// cannot approve shows what it proposes and the command that answers
+// it on the yard's machine, with Copy, in place of Pick or Approve.
 
-/// The decisions list, in the shared yard chrome.
+/// The decisions list, in the place's own stack.
 struct DecisionsScreen: View {
     @Bindable var inbox: InboxModel
-    @Bindable var records: Records
     @Bindable var model: DecisionsModel
+    @Bindable var decision: DecisionModel
+    @Bindable var nav: Nav
 
     var body: some View {
-        YardChrome(inbox: inbox, records: records, place: .decisions, onPlace: { inbox.place($0) }) {
-            let state = model.state
-            if state.open.isEmpty, state.decided.isEmpty {
-                Text("Nothing waits on you.")
-                    .themeType(.body)
-                    .foregroundStyle(ThemeColor.textSecondary.color)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 20)
-                Spacer()
-            } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
-                        ForEach(Array(state.open.enumerated()), id: \.offset) { _, card in
-                            Button {
-                                model.open(card)
-                            } label: {
-                                decisionCard(card)
-                            }
-                            .buttonStyle(.plain)
+        NavigationStack(path: $nav.decidePath) {
+            list(model.state)
+                .yardPlace(inbox: inbox, title: "Decide")
+                .navigationDestination(for: DecisionRoute.self) { route in
+                    DecisionScreen(model: decision, yard: route.yard, bead: route.bead, ask: route.ask)
+                }
+        }
+    }
+
+    @ViewBuilder
+    private func list(_ state: DecisionsState) -> some View {
+        if state.open.isEmpty, state.decided.isEmpty {
+            Text("Nothing waits on you.")
+                .themeType(.body)
+                .foregroundStyle(ThemeColor.textSecondary.color)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 20)
+            Spacer()
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(Array(state.open.enumerated()), id: \.offset) { _, card in
+                        Button {
+                            model.open(card)
+                        } label: {
+                            decisionCard(card)
                         }
-                        if !state.decided.isEmpty {
-                            Text("Decided")
-                                .themeType(.section)
-                                .foregroundStyle(ThemeColor.textPrimary.color)
-                                .padding(.top, 12)
-                                .padding(.leading, 4)
-                            ForEach(Array(state.decided.enumerated()), id: \.offset) { _, line in
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(line.question)
-                                        .themeType(.body)
-                                        .foregroundStyle(ThemeColor.textPrimary.color)
-                                        .lineLimit(1)
-                                    Text(line.what)
-                                        .themeType(.meta)
-                                        .foregroundStyle(ThemeColor.textSecondary.color)
-                                        .lineLimit(1)
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 4)
+                        .buttonStyle(.plain)
+                    }
+                    if !state.decided.isEmpty {
+                        Text("Decided")
+                            .themeType(.section)
+                            .foregroundStyle(ThemeColor.textPrimary.color)
+                            .padding(.top, 12)
+                            .padding(.leading, 4)
+                        ForEach(Array(state.decided.enumerated()), id: \.offset) { _, line in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(line.question)
+                                    .themeType(.body)
+                                    .foregroundStyle(ThemeColor.textPrimary.color)
+                                    .lineLimit(1)
+                                Text(line.what)
+                                    .themeType(.meta)
+                                    .foregroundStyle(ThemeColor.textSecondary.color)
+                                    .lineLimit(1)
                             }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 4)
                         }
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 16)
                 }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 16)
             }
         }
     }
@@ -98,60 +107,38 @@ struct DecisionsScreen: View {
     }
 }
 
-/// One decision, full screen over the decide place.
+/// One decision, pushed onto the decide stack.
 struct DecisionScreen: View {
     @Bindable var model: DecisionModel
     var yard: String
     var bead: String
     var ask: Int64
-    var onBack: (() -> Void)? = nil
     @State private var wordsField: String = ""
     @State private var typedField: String = ""
     @State private var declineField: String = ""
 
     var body: some View {
         let state = model.state
-        VStack(spacing: 0) {
-            HStack(spacing: 4) {
-                Button {
-                    onBack?()
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(ThemeColor.textPrimary.color)
-                        .frame(width: 48, height: 48)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                if state.read {
+                    card(state)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Back")
-                Text("Decision")
-                    .themeType(.title)
-                    .foregroundStyle(ThemeColor.textPrimary.color)
-                    .lineLimit(1)
-                Spacer()
-            }
-            .padding(.trailing, 20)
-            .frame(height: 56)
-            Divider().overlay(ThemeColor.borderSubtle.color)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 8) {
-                    if state.read {
-                        card(state)
-                    }
-                    if let error = state.error {
-                        Text(error)
-                            .themeType(.body)
-                            .foregroundStyle(ThemeColor.textError.color)
-                    }
+                if let error = state.error {
+                    Text(error)
+                        .themeType(.body)
+                        .foregroundStyle(ThemeColor.textError.color)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 16)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
         }
-        .frame(maxWidth: 480)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .foregroundStyle(ThemeColor.textPrimary.color)
         .background(ThemeColor.surfaceApp.color.ignoresSafeArea())
+        .navigationTitle("Decision")
+        .toolbar(.hidden, for: .tabBar)
         .onAppear { model.open(yard: yard, bead: bead, ask: ask) }
         .onDisappear { model.leave() }
     }

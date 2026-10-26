@@ -27,7 +27,7 @@ final class PairModelTests: XCTestCase {
         let records = Records(secret: secret, plain: plain, origin: fake.origin)
         let edge = try fake.edge()
         let pairer = Pairer(edge: edge, records: records)
-        let nav = Nav(first: .pair)
+        let nav = Nav()
         return World(
             fake: fake, secret: secret, plain: plain, records: records, edge: edge,
             pairer: pairer, nav: nav,
@@ -36,24 +36,27 @@ final class PairModelTests: XCTestCase {
         )
     }
 
-    private func waitForCrew(_ world: World) async {
-        guard world.nav.screen != .crew else { return }
-        let reached = expectation(description: "the crew opens")
-        let observer = world.nav.observe { screen in
-            if screen == .crew { reached.fulfill() }
+    /// The pairing goes on by itself once a session is kept: its end
+    /// is the yards paired and the Pair screen back at its start.
+    private func waitForYards(_ world: World, _ count: Int) async {
+        let deadline = ContinuousClock.now + .seconds(5)
+        while world.records.kept.yards.count < count || world.pair.state.step != .choose {
+            if ContinuousClock.now > deadline {
+                XCTFail("the pairing did not finish; yards=\(world.records.kept.yards.map(\.name)), step=\(world.pair.state.step)")
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(10))
         }
-        await fulfillment(of: [reached], timeout: 5)
-        world.nav.removeObserver(observer)
     }
 
-    /// Signs in through the screen the pairing asked for.
+    /// Signs in through the cover the pairing asked for.
     private func signInAs(_ world: World, password: String? = nil) async {
-        guard case .signIn(let again) = world.nav.screen else {
-            XCTFail("expected the Sign in screen, got \(world.nav.screen)")
+        guard let request = world.nav.signIn else {
+            XCTFail("expected the Sign in cover, got \(String(describing: world.nav.signIn))")
             return
         }
-        world.signIn.opened(again: again)
-        if !again { world.signIn.email(world.fake.email) }
+        world.signIn.opened(again: request.again)
+        if !request.again { world.signIn.email(world.fake.email) }
         world.signIn.password(password ?? world.fake.password)
         await world.signIn.signIn()
     }
@@ -63,7 +66,7 @@ final class PairModelTests: XCTestCase {
         world.pair.scanned("\(world.fake.origin)#\(world.fake.laptop.code ?? "")#laptop")
         await world.pair.pair()
         try await signInAs(world)
-        await waitForCrew(world)
+        await waitForYards(world, 1)
     }
 
     func testAPairingEndToEnd() async throws {
@@ -76,9 +79,9 @@ final class PairModelTests: XCTestCase {
         // No session yet: Pair asks for the sign-in first, and goes
         // on by itself once it is kept.
         await world.pair.pair()
-        XCTAssertEqual(world.nav.screen, .signIn(again: false))
+        XCTAssertEqual(world.nav.signIn, SignInRequest(again: false))
         try await signInAs(world)
-        await waitForCrew(world)
+        await waitForYards(world, 1)
         XCTAssertEqual(world.pair.state, PairState())
         // The password is held nowhere once sent.
         XCTAssertEqual(world.signIn.state.password, "")
@@ -113,13 +116,14 @@ final class PairModelTests: XCTestCase {
         let baseline = world.fake.requestCount
 
         // Pair another yard: the account's own, typed, no sign-in.
-        world.nav.show(.pair)
+        world.nav.showPair()
         world.pair.typeCode()
         world.pair.typed(yard: "", code: "k7qm2xpd")
         world.pair.readTyped()
         XCTAssertEqual(world.pair.state.step, .read(PairingCode(code: "K7QM-2XPD", yard: "")))
         await world.pair.pair()
-        XCTAssertEqual(world.nav.screen, .crew)
+        XCTAssertFalse(world.nav.pairing)
+        XCTAssertEqual(world.nav.place, .crew)
 
         let sent = Array(world.fake.allRequests[baseline...])
         XCTAssertEqual(sent.map(\.path), ["/user/pair", "/user/me"])
@@ -141,7 +145,8 @@ final class PairModelTests: XCTestCase {
             world.pair.state.error,
             "That is not the code. The yard counts a wrong one, and the fifth ends the pairing."
         )
-        XCTAssertEqual(world.nav.screen, .pair)
+        XCTAssertNil(world.nav.signIn)
+        XCTAssertFalse(world.nav.pairing)
 
         // The pairing ran out: the yard has none open.
         world.fake.laptop.code = nil
@@ -150,7 +155,8 @@ final class PairModelTests: XCTestCase {
         await world.pair.pair()
         XCTAssertTrue(world.pair.state.error?.hasPrefix("No pairing is open at this yard") == true, world.pair.state.error ?? "")
         XCTAssertTrue(world.records.kept.yards.isEmpty)
-        XCTAssertEqual(world.nav.screen, .pair)
+        XCTAssertNil(world.nav.signIn)
+        XCTAssertFalse(world.nav.pairing)
     }
 
     func testARefusedSignInIsSaidAndKeepsNothing() async throws {
@@ -163,28 +169,50 @@ final class PairModelTests: XCTestCase {
         XCTAssertFalse(state.error?.contains("wrong") == true, state.error ?? "")
         XCTAssertEqual(state.password, "")
         XCTAssertNil(world.records.kept.account)
-        XCTAssertEqual(world.nav.screen, .signIn(again: false))
+        XCTAssertEqual(world.nav.signIn, SignInRequest(again: false))
         XCTAssertEqual(
             world.fake.allRequests.map { $0.path.split(separator: "?").first.map(String.init) ?? $0.path },
             ["/kratos/self-service/login/api", "/kratos/self-service/login"]
         )
     }
 
-    func testASessionThatRanOutAsksForThePasswordAloneAndThePairingGoesOn() async throws {
+    func testASessionThatRanOutCanResumeOrAbandonPairing() async throws {
         let world = try makeWorld()
         world.records.keepSession(account: world.fake.email, session: "ory_st_revoked")
         world.pair.scanned("\(world.fake.origin)#\(world.fake.laptop.code ?? "")#laptop")
         await world.pair.pair()
-        XCTAssertEqual(world.nav.screen, .signIn(again: true))
+        XCTAssertEqual(world.nav.signIn, SignInRequest(again: true))
         world.signIn.opened(again: true)
         XCTAssertEqual(world.signIn.state, SignInState(email: world.fake.email, password: "", again: true, busy: false, error: nil))
         // The email is the account's: not typed over.
         world.signIn.email("someone@else.example")
         XCTAssertEqual(world.signIn.state.email, world.fake.email)
         try await signInAs(world)
-        await waitForCrew(world)
+        await waitForYards(world, 1)
         XCTAssertEqual(world.records.kept.yards.map(\.name), ["laptop"])
         XCTAssertNotEqual(world.records.kept.account?.session, "ory_st_revoked")
+
+        // A pairing cover dismissed after the renewed session was
+        // requested drops its pending code. Signing in later cannot
+        // pair that abandoned yard in the background.
+        let renewed = try XCTUnwrap(world.records.kept.account?.session)
+        try await world.edge.logout(session: renewed)
+        let pairCalls = world.fake.allRequests.filter { $0.path == "/user/pair" }.count
+        world.nav.showPair()
+        world.pair.typeCode()
+        world.pair.typed(yard: "", code: world.fake.home.code ?? "")
+        world.pair.readTyped()
+        await world.pair.pair()
+        XCTAssertEqual(world.nav.signIn, SignInRequest(again: true))
+        world.pair.close()
+        XCTAssertEqual(world.pair.state, PairState())
+        world.nav.pairing = false
+        world.nav.signIn = nil
+        world.nav.showSignIn(again: true)
+        try await signInAs(world)
+        XCTAssertEqual(world.records.kept.yards.map(\.name), ["laptop"])
+        XCTAssertFalse(world.nav.pairing)
+        XCTAssertEqual(world.fake.allRequests.filter { $0.path == "/user/pair" }.count, pairCalls + 1)
 
         // A restart with the session item missing still knows which
         // account must sign in, without keeping its session token.
@@ -195,7 +223,7 @@ final class PairModelTests: XCTestCase {
         let restartedSignIn = SignInModel(
             pairer: Pairer(edge: world.edge, records: restartedRecords),
             records: restartedRecords,
-            nav: Nav(first: .crew)
+            nav: Nav()
         )
         restartedSignIn.opened(again: true)
         XCTAssertEqual(restartedSignIn.state.email, world.fake.email)
@@ -211,7 +239,8 @@ final class PairModelTests: XCTestCase {
         )
         XCTAssertEqual(world.pair.state.step, .choose)
         await world.pair.pair()
-        XCTAssertEqual(world.nav.screen, .pair)
+        XCTAssertNil(world.nav.signIn)
+        XCTAssertFalse(world.nav.pairing)
         XCTAssertEqual(world.fake.requestCount, 0)
     }
 

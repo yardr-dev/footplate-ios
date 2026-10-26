@@ -33,7 +33,7 @@ final class DecisionModelTests: XCTestCase {
         records = Records(secret: MemoryShelf(), plain: MemoryShelf(), origin: fake.origin)
         records.keepSession(account: fake.email, session: session)
         records.keepYard(PairedYard(name: "laptop", yard: "laptop", user: "jo", device: "pixel", token: token))
-        nav = Nav(first: .decisions)
+        nav = Nav(place: .decide)
         yards = Yards(clock: clock, foreground: true)
         let client = try fake.edge().yard(device: token, session: session, name: "laptop")
         follower = yards.follow(client)
@@ -67,7 +67,7 @@ final class DecisionModelTests: XCTestCase {
     }
 
     private func opened(_ bead: String, _ ask: Int64) async -> DecisionModel {
-        nav.show(.decision(yard: "laptop", bead: bead, ask: ask))
+        nav.openDecision(yard: "laptop", bead: bead, ask: ask)
         let model = decision()
         model.open(yard: "laptop", bead: bead, ask: ask)
         _ = await waitFor("the card \(bead)", state: { model.state }) { $0.read }
@@ -129,7 +129,7 @@ final class DecisionModelTests: XCTestCase {
         XCTAssertTrue(calls("AnswerAsk").isEmpty)
         XCTAssertEqual(card.state.chosen, 1)
         XCTAssertNil(card.state.unlocking)
-        XCTAssertEqual(nav.screen, .decision(yard: "laptop", bead: "yd-map", ask: 7))
+        XCTAssertEqual(nav.decidePath, [DecisionRoute(yard: "laptop", bead: "yd-map", ask: 7)])
 
         // A choice cannot change and another pick cannot start while the
         // prompt is open. A new bead event also cancels an approval of the
@@ -160,7 +160,7 @@ final class DecisionModelTests: XCTestCase {
         XCTAssertEqual(body["option"] as? Int, 1)
         XCTAssertEqual(body["actor"] as? String, "jo")
         XCTAssertEqual(body["weighed"] as? Bool, true)
-        XCTAssertEqual(nav.screen, .decisions)
+        XCTAssertEqual(nav.decidePath, [])
     }
 
     func testWithoutAScreenLockTheNumberTypedBackStandsForTheUnlock() async {
@@ -187,7 +187,7 @@ final class DecisionModelTests: XCTestCase {
         card.choose(3)
         await card.pick()
         card.leave()
-        nav.show(.decision(yard: "laptop", bead: "yd-map", ask: 7))
+        nav.openDecision(yard: "laptop", bead: "yd-map", ask: 7)
         card.open(yard: "laptop", bead: "yd-map", ask: 7)
         card.choose(4)
         await card.pick()
@@ -210,13 +210,13 @@ final class DecisionModelTests: XCTestCase {
         await card.approve()
         XCTAssertEqual(unlock.reasons, ["approve yardr depot tidy --merged in laptop"])
         XCTAssertTrue(calls("ApproveAsk").isEmpty, "a cancelled unlock sends nothing")
-        XCTAssertEqual(nav.screen, .decision(yard: "laptop", bead: "yd-tidy", ask: 9))
+        XCTAssertEqual(nav.decidePath, [DecisionRoute(yard: "laptop", bead: "yd-tidy", ask: 9)])
 
         unlock.promptResults = [true]
         await card.approve()
         XCTAssertEqual(calls("ApproveAsk").count, 1)
         XCTAssertEqual(calls("ApproveAsk")[0]["weighed"] as? Bool, true)
-        XCTAssertEqual(nav.screen, .decisions)
+        XCTAssertEqual(nav.decidePath, [])
 
         // Without a screen lock the number typed back stands for the
         // unlock, wanted at once since a run wants nothing picked.

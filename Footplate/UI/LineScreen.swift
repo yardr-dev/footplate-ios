@@ -1,7 +1,7 @@
 import SwiftUI
 
 // The lines place (design 3.5): the depots as lines with their stages
-// and open beads, the travelling totals, in the shared yard chrome.
+// and open beads, the travelling totals, in the place's own stack.
 // Read-only: a bead's row opens nothing, and a backlog stage opens and
 // shuts. Pull to refresh reads the board again.
 struct LinesScreen: View {
@@ -10,8 +10,9 @@ struct LinesScreen: View {
     @Bindable var model: LineModel
 
     var body: some View {
-        YardChrome(inbox: inbox, records: records, place: .lines, onPlace: { inbox.place($0) }) {
+        NavigationStack {
             content(model.state)
+                .yardPlace(inbox: inbox, title: "Lines")
         }
         .onAppear { openSelected() }
         .onDisappear { model.leave() }

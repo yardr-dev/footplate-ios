@@ -1,93 +1,122 @@
 import Foundation
 
-// Which screen is shown, held as state and drawn by a `switch`:
-// no navigation library (design 3.5). The system back goes one step
-// back, through the screens shown since the last `reset`.
+// The app's navigation state (design 3.5): the selected place for the
+// TabView, one stack of pushed screens per place that pushes any, and
+// the Pair and Sign in covers. The views read it through TabView
+// selection and NavigationStack paths, so the tab bar, the titles,
+// the back button and the swipe back are the system's own.
 
-/// The screens that exist so far.
-enum Screen: Equatable, Sendable {
-    /// Pair with a yard: the first screen, and **Pair another yard**.
-    case pair
-    /// Sign in at the edge; `again` when the session ran out or was
-    /// revoked, and only the password is asked.
-    case signIn(again: Bool)
-    /// The selected yard's crew place: the inbox rows and the yard
-    /// switch.
+/// The three places of the tab bar.
+enum Place: Hashable, Sendable {
     case crew
-    /// One conversation of the yard named `yard`, with `with`; the
-    /// yard's notices where `with` is `yardRow`. Full screen over
-    /// the crew place.
-    case conversation(yard: String, with: String)
-    /// The selected yard's decide place: the decisions list.
-    case decisions
-    /// One decision of the yard named `yard`: the ask `ask` on
-    /// `bead`. Full screen over the decide place.
-    case decision(yard: String, bead: String, ask: Int64)
-    /// The selected yard's lines place: the flows view, read-only.
+    case decide
     case lines
-
-    /// The places that have the yard header in the full design.
-    var isPlace: Bool { self == .crew || self == .decisions || self == .lines }
 }
 
-/// Which screen is shown. Made with the screen the app opens on.
+/// A conversation pushed onto the crew stack: with `with` of the yard
+/// named `yard`, its notices where `with` is `yardRow`.
+struct ConversationRoute: Hashable, Sendable {
+    var yard: String
+    var with: String
+}
+
+/// A decision pushed onto the decide stack: the ask `ask` on `bead`
+/// of the yard named `yard`.
+struct DecisionRoute: Hashable, Sendable {
+    var yard: String
+    var bead: String
+    var ask: Int64
+}
+
+/// A Sign in cover, over the Pair screen or the tabs; `again` when the
+/// session ran out or was revoked, and only the password is asked.
+struct SignInRequest: Hashable, Sendable {
+    var again: Bool
+}
+
+/// Which place is shown and what is pushed or covered over it.
 @MainActor
 @Observable
 final class Nav {
-    private(set) var screen: Screen
-    private var shown: [Screen]
-    private var observers: [UUID: @MainActor (Screen) -> Void] = [:]
+    /// The selected tab.
+    var place: Place
+    /// The conversations pushed onto the crew stack.
+    var crewPath: [ConversationRoute]
+    /// The decisions pushed onto the decide stack.
+    var decidePath: [DecisionRoute]
+    /// Pair another yard, over the tabs. The Pair root, shown while no
+    /// yard is paired, is the records', not this.
+    var pairing: Bool
+    /// Sign in, over the Pair screen or the tabs.
+    var signIn: SignInRequest?
 
-    init(first: Screen) {
-        self.screen = first
-        self.shown = [first]
+    init(place: Place = .crew) {
+        self.place = place
+        self.crewPath = []
+        self.decidePath = []
+        self.pairing = false
+        self.signIn = nil
     }
 
-    /// Whether `back` has a screen to go back to.
-    var canBack: Bool { shown.count > 1 }
-
-    func observe(_ observer: @escaping @MainActor (Screen) -> Void) -> UUID {
-        let id = UUID()
-        observers[id] = observer
-        return id
+    /// Pushes the conversation, unless it is the one pushed already.
+    func openConversation(yard: String, with: String) {
+        let route = ConversationRoute(yard: yard, with: with)
+        guard crewPath.last != route else { return }
+        crewPath.append(route)
     }
 
-    func removeObserver(_ id: UUID) {
-        observers.removeValue(forKey: id)
+    /// Pushes the decision, unless it is the one pushed already.
+    func openDecision(yard: String, bead: String, ask: Int64) {
+        let route = DecisionRoute(yard: yard, bead: bead, ask: ask)
+        guard decidePath.last != route else { return }
+        decidePath.append(route)
     }
 
-    private func publish() {
-        for observer in observers.values { observer(screen) }
+    /// Pops the decision where it is the one pushed: an answered card
+    /// leaves for the list.
+    func closeDecision(yard: String, bead: String, ask: Int64) {
+        if decidePath.last == DecisionRoute(yard: yard, bead: bead, ask: ask) {
+            decidePath.removeLast()
+        }
     }
 
-    /// Shows `screen` over the one shown, unless it is shown already.
-    func show(_ screen: Screen) {
-        guard shown.last != screen else { return }
-        shown.append(screen)
-        self.screen = screen
-        publish()
+    /// Pair another yard, over the tabs.
+    func showPair() {
+        pairing = true
     }
 
-    /// Shows `screen` with nothing to go back to.
-    func reset(_ screen: Screen) {
-        shown = [screen]
-        self.screen = screen
-        publish()
+    /// Sign in, over the Pair screen or the tabs.
+    func showSignIn(again: Bool) {
+        signIn = SignInRequest(again: again)
     }
 
-    /// Goes one step back; false where there is no step to go back
-    /// to, and the system's back then leaves the app.
-    @discardableResult
-    func back() -> Bool {
-        guard shown.count >= 2 else { return false }
-        shown.removeLast()
-        screen = shown[shown.count - 1]
-        publish()
-        return true
+    /// The sign-in finished: its cover shuts.
+    func didSignIn() {
+        signIn = nil
     }
 
-    /// Leaves `screen` where it is the one shown.
-    func leave(_ screen: Screen) {
-        if shown.last == screen { back() }
+    /// The pairing finished: the Pair cover shuts and the crew opens.
+    func didPair() {
+        pairing = false
+        place = .crew
+    }
+
+    /// Removes pushed screens for a yard that is no longer paired.
+    func didForgetYard(_ name: String) {
+        if crewPath.contains(where: { $0.yard == name }) {
+            crewPath = []
+        }
+        if decidePath.contains(where: { $0.yard == name }) {
+            decidePath = []
+        }
+    }
+
+    /// Every yard forgotten: the stacks are cleared for the Pair root.
+    func didForgetAll() {
+        pairing = false
+        signIn = nil
+        place = .crew
+        crewPath = []
+        decidePath = []
     }
 }

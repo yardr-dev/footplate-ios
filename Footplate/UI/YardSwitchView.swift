@@ -64,7 +64,6 @@ struct YardSwitchView: View {
             Spacer()
         }
         .padding(.top, 16)
-        .frame(maxWidth: 480)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(ThemeColor.surfaceApp.color.ignoresSafeArea())
         .foregroundStyle(ThemeColor.textPrimary.color)

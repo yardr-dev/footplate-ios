@@ -36,19 +36,18 @@ struct ConversationScrollTracking: Equatable {
     }
 }
 
-// One conversation (design 3.5): the head row with the back control,
-// the name and its state word; the letters oldest first with the
-// newest at the foot, the correspondent's on the raised surface at
-// the left and the person's own on none at the right; its images
-// under its text, opened full on tap; the field and Send, with a
-// picture picked from the gallery or the camera above it.
+// One conversation (design 3.5), pushed onto the crew stack: the name
+// in the navigation bar with its state word; the letters oldest first
+// with the newest at the foot, the correspondent's on the raised
+// surface at the left and the person's own on none at the right; its
+// images under its text, opened full on tap; the field and Send, with
+// a picture picked from the gallery or the camera above it.
 // Scrolling to the oldest letter reads the page before it. The
 // yard's notices are drawn the same way, with no field.
 struct ConversationScreen: View {
     @Bindable var model: ConversationModel
     var yard: String
     var with: String
-    var onBack: (() -> Void)? = nil
     @State private var field: String = ""
     @State private var scrollTracking = ConversationScrollTracking()
     @State private var showGallery = false
@@ -63,31 +62,6 @@ struct ConversationScreen: View {
         let state = model.state
         ZStack {
             VStack(spacing: 0) {
-                HStack(spacing: 4) {
-                    Button {
-                        onBack?()
-                    } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(ThemeColor.textPrimary.color)
-                            .frame(width: 48, height: 48)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Back")
-                    Text(state.title)
-                        .themeType(.title)
-                        .foregroundStyle(ThemeColor.textPrimary.color)
-                        .lineLimit(1)
-                    if let word = state.state {
-                        Text(word)
-                            .themeType(.meta)
-                            .foregroundStyle(state.waiting ? ThemeColor.textAccent.color : ThemeColor.textSecondary.color)
-                    }
-                    Spacer()
-                }
-                .padding(.trailing, 20)
-                .frame(height: 56)
-                Divider().overlay(ThemeColor.borderSubtle.color)
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 12) {
@@ -190,10 +164,20 @@ struct ConversationScreen: View {
                     .id(full.hash)
             }
         }
-        .frame(maxWidth: 480)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .foregroundStyle(ThemeColor.textPrimary.color)
         .background(ThemeColor.surfaceApp.color.ignoresSafeArea())
+        .navigationTitle(state.title)
+        .toolbar {
+            if let word = state.state {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Text(word)
+                        .themeType(.meta)
+                        .foregroundStyle(state.waiting ? ThemeColor.textAccent.color : ThemeColor.textSecondary.color)
+                }
+            }
+        }
+        .toolbar(.hidden, for: .tabBar)
         .onAppear { model.open(yard: yard, with: with) }
         .onDisappear { model.leave() }
         .photosPicker(isPresented: $showGallery, selection: $pickerItem, matching: .images)

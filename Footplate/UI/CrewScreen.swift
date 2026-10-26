@@ -1,16 +1,20 @@
 import SwiftUI
 
 // The crew place (design 3.5): the inbox rows newest letter first
-// with unread as words, in the shared yard chrome. Tapping a row
-// opens its conversation.
+// with unread as words, in the place's own stack. Tapping a row
+// pushes its conversation.
 struct CrewScreen: View {
     @Bindable var model: InboxModel
-    @Bindable var records: Records
     @Bindable var nav: Nav
+    @Bindable var conversation: ConversationModel
 
     var body: some View {
-        YardChrome(inbox: model, records: records, place: .crew, onPlace: { model.place($0) }) {
+        NavigationStack(path: $nav.crewPath) {
             content(model.state)
+                .yardPlace(inbox: model, title: "Crew")
+                .navigationDestination(for: ConversationRoute.self) { route in
+                    ConversationScreen(model: conversation, yard: route.yard, with: route.with)
+                }
         }
     }
 

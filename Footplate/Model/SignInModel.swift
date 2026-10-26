@@ -24,9 +24,6 @@ final class SignInModel {
     private let records: Records
     private let nav: Nav
 
-    /// The screen this model was opened for, left once signed in.
-    private var shown: Screen = .signIn(again: false)
-
     init(pairer: Pairer, records: Records, nav: Nav) {
         self.pairer = pairer
         self.records = records
@@ -45,7 +42,6 @@ final class SignInModel {
     /// The screen is shown: for a first sign-in, or `again` with the
     /// account's email filled.
     func opened(again: Bool) {
-        shown = .signIn(again: again)
         let account = records.accountNameForSignIn ?? ""
         if again, !account.isEmpty {
             state = SignInState(email: account, again: true)
@@ -65,7 +61,6 @@ final class SignInModel {
 
     func signIn() async {
         let typed = state
-        let leaving = shown
         guard !typed.busy, !typed.email.trimmingCharacters(in: .whitespaces).isEmpty, !typed.password.isEmpty else { return }
         // The password leaves the field as it is sent, whatever answers.
         state.password = ""
@@ -83,6 +78,6 @@ final class SignInModel {
             return
         }
         state.busy = false
-        nav.leave(leaving)
+        nav.didSignIn()
     }
 }
