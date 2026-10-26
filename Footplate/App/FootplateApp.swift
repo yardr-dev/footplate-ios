@@ -1,4 +1,5 @@
 import SwiftUI
+import UserNotifications
 
 @main
 struct FootplateApp: App {
@@ -31,6 +32,8 @@ final class AppServices {
     let decisionsModel: DecisionsModel
     let decisionModel: DecisionModel
     let lineModel: LineModel
+    let notifier: Notifier
+    private let notifyDelegate: NotifyDelegate
 
     private(set) var followers: [String: Follower] = [:]
     private var yards: Yards?
@@ -64,6 +67,18 @@ final class AppServices {
         self.decisionModel = DecisionModel(mailroom: mailroom, records: records, nav: nav, unlock: LAUnlockPrompt())
         self.inboxModel = InboxModel(pairer: pairer, records: records, followers: { [:] }, mailroom: mailroom, nav: nav)
         self.lineModel = LineModel(followers: { [:] })
+        self.notifier = Notifier(
+            mailroom: mailroom,
+            records: records,
+            allowed: { await canNotify() },
+            tell: { telling in await show(telling) }
+        )
+        let delegate = NotifyDelegate { [weak records, weak nav] yard, target in
+            guard let records, let nav else { return }
+            applyNotifyTap(yard: yard, target: target, records: records, nav: nav)
+        }
+        self.notifyDelegate = delegate
+        UNUserNotificationCenter.current().delegate = delegate
         self.inboxModel.followers = { [weak self] in (self?.followers ?? [:]).mapValues { $0 as any Followed } }
         self.lineModel.followers = { [weak self] in (self?.followers ?? [:]).mapValues { $0 as any Followed } }
         recordsObserver = records.observe { [weak self] _ in
@@ -84,6 +99,12 @@ final class AppServices {
     func setForeground(_ foreground: Bool) {
         self.foreground = foreground
         yards?.foreground = foreground
+    }
+
+    /// What the screen shows, as far as a notification cares: what
+    /// arrives on it is read where it stands.
+    func syncShown() {
+        notifier.show(shownOf(place: nav.place, crewPath: nav.crewPath, decidePath: nav.decidePath, selected: records.kept.selected))
     }
 
     var selectedFollower: Follower? {
@@ -146,7 +167,8 @@ private struct FootplateScene: View {
                     decision: services.decisionModel,
                     line: services.lineModel,
                     pair: services.pairModel,
-                    signIn: services.signInModel
+                    signIn: services.signInModel,
+                    notifier: services.notifier
                 )
             }
         }
@@ -154,7 +176,15 @@ private struct FootplateScene: View {
         .onAppear(perform: services.start)
         .onChange(of: scenePhase, initial: true) { _, phase in
             services.setForeground(phase == .active)
+            if phase == .active {
+                services.syncShown()
+                Task { await services.notifier.refresh() }
+            }
         }
+        .onChange(of: services.nav.place) { _, _ in services.syncShown() }
+        .onChange(of: services.nav.crewPath) { _, _ in services.syncShown() }
+        .onChange(of: services.nav.decidePath) { _, _ in services.syncShown() }
+        .onChange(of: services.records.kept.selected) { _, _ in services.syncShown() }
     }
 
     /// Sign in over the Pair root.

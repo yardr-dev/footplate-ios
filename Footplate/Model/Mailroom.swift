@@ -89,9 +89,11 @@ final class Mailroom {
     private func sync(_ name: String) {
         guard let followed = watched[name]?.followed, let loaded = followed.state.loaded else { return }
         var rereads: Set<Reread> = []
+        var changed = false
         if lastLoaded[name] != loaded {
             boards[name] = Board.of(loaded)
             lastLoaded[name] = loaded
+            changed = true
         }
         guard var board = boards[name] else { return }
         for event in followed.state.events {
@@ -101,6 +103,9 @@ final class Mailroom {
         }
         if boards[name] != board {
             boards[name] = board
+            changed = true
+        }
+        if changed {
             publish()
         }
         for reread in rereads {

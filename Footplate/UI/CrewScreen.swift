@@ -7,14 +7,25 @@ struct CrewScreen: View {
     @Bindable var model: InboxModel
     @Bindable var nav: Nav
     @Bindable var conversation: ConversationModel
+    @Bindable var notifier: Notifier
 
     var body: some View {
         NavigationStack(path: $nav.crewPath) {
-            content(model.state)
-                .yardPlace(inbox: model, title: "Crew")
-                .navigationDestination(for: ConversationRoute.self) { route in
-                    ConversationScreen(model: conversation, yard: route.yard, with: route.with)
+            VStack(spacing: 0) {
+                if notifier.muted {
+                    Text("notifications off")
+                        .themeType(.meta)
+                        .foregroundStyle(ThemeColor.textSecondary.color)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 4)
                 }
+                content(model.state)
+            }
+            .yardPlace(inbox: model, title: "Crew")
+            .navigationDestination(for: ConversationRoute.self) { route in
+                ConversationScreen(model: conversation, yard: route.yard, with: route.with)
+            }
         }
     }
 

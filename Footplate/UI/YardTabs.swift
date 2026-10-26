@@ -15,12 +15,13 @@ struct TabsView: View {
     @Bindable var line: LineModel
     @Bindable var pair: PairModel
     @Bindable var signIn: SignInModel
+    @Bindable var notifier: Notifier
     @State private var askingNotifications = false
 
     var body: some View {
         TabView(selection: $nav.place) {
             Tab("Crew", systemImage: "person.2", value: Place.crew) {
-                CrewScreen(model: inbox, nav: nav, conversation: conversation)
+                CrewScreen(model: inbox, nav: nav, conversation: conversation, notifier: notifier)
             }
             Tab("Decide", systemImage: "checkmark.circle", value: Place.decide) {
                 DecisionsScreen(inbox: inbox, model: decisions, decision: decision, nav: nav)
@@ -49,7 +50,10 @@ struct TabsView: View {
         .alert("Notifications", isPresented: $askingNotifications) {
             Button("Continue") {
                 records.noteNotificationsAsked()
-                Task { _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) }
+                Task {
+                    _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
+                    await notifier.refresh()
+                }
             }
         } message: {
             Text("footplate tells you of letters and decisions while it is open, if you allow it.")

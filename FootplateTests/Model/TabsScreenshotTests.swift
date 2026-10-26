@@ -49,8 +49,10 @@ final class TabsScreenshotTests: XCTestCase {
         let line = LineModel(followers: { ["": home, "laptop": laptop] })
         let pair = PairModel(pairer: pairer, records: records, nav: nav)
         let signIn = SignInModel(pairer: pairer, records: records, nav: nav)
+        let notifier = Notifier(mailroom: mailroom, records: records, allowed: { true }, tell: { _ in })
+        await notifier.refresh()
         func tabs() -> TabsView {
-            TabsView(nav: nav, inbox: inbox, records: records, conversation: conversation, decisions: decisions, decision: decision, line: line, pair: pair, signIn: signIn)
+            TabsView(nav: nav, inbox: inbox, records: records, conversation: conversation, decisions: decisions, decision: decision, line: line, pair: pair, signIn: signIn, notifier: notifier)
         }
 
         home.up(loaded())

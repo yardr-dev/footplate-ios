@@ -40,11 +40,14 @@ Under `Footplate/`:
   fonts and licence).
 - `Unlock/`: which picks pass the gate and its reasons as plain
   functions, and the `LAContext` prompt behind its protocol.
-- `Notify/`: reserved for notification rules, delivery and taps.
+- `Notify/`: what is told of as plain functions with the 3-second
+  burst, the local notifications threaded per yard and row through
+  `UNUserNotificationCenter`, and the tap opening the app on that
+  yard and there; `FootplateTests/Notify/` drives the rules and
+  the bursts.
 - `Yard/`: the account and per-yard records in the Keychain, the QR
   read, and the pairer (sign-in, pairing, forgetting).
 
-The `Notify` folder contains no implementation yet.
 `.yardr/` holds the
 flow, roles and simulator gate; `docs/design/` holds design decisions.
 A change moving or adding a target, module, package or folder updates this

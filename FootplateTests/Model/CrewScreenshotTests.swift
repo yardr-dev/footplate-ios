@@ -72,7 +72,9 @@ final class CrewScreenshotTests: XCTestCase {
         XCTAssertFalse(inbox.state.rows.isEmpty)
 
         let conversation = ConversationModel(mailroom: mailroom, now: { now }, zone: { TimeZone(secondsFromGMT: 0)! })
-        try await render(CrewScreen(model: inbox, nav: nav, conversation: conversation), scene: scene, to: dir.appendingPathComponent("inbox.png"))
+        let notifier = Notifier(mailroom: mailroom, records: records, allowed: { true }, tell: { _ in })
+        await notifier.refresh()
+        try await render(CrewScreen(model: inbox, nav: nav, conversation: conversation, notifier: notifier), scene: scene, to: dir.appendingPathComponent("inbox.png"))
         conversation.open(yard: "", with: "yardmaster")
         let convDeadline = ContinuousClock.now + .seconds(10)
         while conversation.state.letters.count < 4
