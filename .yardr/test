@@ -2,6 +2,14 @@
 # The iPhone simulator gate; UI/instrumentation and iPad runs are by hand.
 # A missing destination must fail rather than silently testing another phone.
 set -e
+# App Store Connect refuses a large icon with an alpha channel, so every PNG
+# in the app icon set must be opaque.
+for icon in Footplate/UI/Resources/Assets.xcassets/AppIcon.appiconset/*.png; do
+  if [ -f "$icon" ] && sips -g hasAlpha "$icon" | grep -q 'hasAlpha: yes'; then
+    echo "alpha channel in $icon" >&2
+    exit 1
+  fi
+done
 xcodebuild test \
   -project Footplate.xcodeproj \
   -scheme Footplate \
