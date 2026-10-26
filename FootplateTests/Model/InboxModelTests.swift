@@ -638,6 +638,9 @@ final class FakeFollowed: Followed {
     var completedCrewReads = 0
     var beads: [String: Bead] = [:]
     var beadAsked: [String] = []
+    /// The board its `flows` reads serve.
+    var board: Flows = Flows()
+    var flowCalls = 0
     var answers: [(String, Int64, Int64, String, Bool)] = []
     var approvals: [(String, Int64, Bool)] = []
     var setupApprovals: [(String, Int64, Int64, Bool)] = []
@@ -765,6 +768,12 @@ final class FakeFollowed: Followed {
         beadAsked.append(bead)
         if let refuse { throw refuse }
         return beads[bead] ?? Bead(id: bead)
+    }
+
+    func flows() async throws -> Flows {
+        flowCalls += 1
+        if let refuse { throw refuse }
+        return board
     }
 
     func answer(bead: String, ask: Int64, option: Int64, words: String, weighed: Bool) async throws {

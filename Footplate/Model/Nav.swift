@@ -23,9 +23,11 @@ enum Screen: Equatable, Sendable {
     /// One decision of the yard named `yard`: the ask `ask` on
     /// `bead`. Full screen over the decide place.
     case decision(yard: String, bead: String, ask: Int64)
+    /// The selected yard's lines place: the flows view, read-only.
+    case lines
 
     /// The places that have the yard header in the full design.
-    var isPlace: Bool { self == .crew || self == .decisions }
+    var isPlace: Bool { self == .crew || self == .decisions || self == .lines }
 }
 
 /// Which screen is shown. Made with the screen the app opens on.

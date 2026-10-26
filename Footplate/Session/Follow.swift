@@ -546,6 +546,10 @@ extension Follower: Followed {
         try await client.bead(bead)
     }
 
+    func flows() async throws -> Flows {
+        try await client.flows(viewer: me())
+    }
+
     func answer(bead: String, ask: Int64, option: Int64, words: String, weighed: Bool) async throws {
         try await client.answerAsk(bead: bead, ask: ask, option: option, words: words, actor: me(), weighed: weighed)
     }

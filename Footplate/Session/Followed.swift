@@ -46,6 +46,10 @@ protocol Followed: AnyObject {
     /// One bead whole, with its asks' options, recommendation and state.
     func bead(_ bead: String) async throws -> Bead
 
+    /// The flows view, read-only: the depots as lines with the open
+    /// beads on each, as the device's user may see them.
+    func flows() async throws -> Flows
+
     /// Picks `option` with `words` beside it; `weighed` only after a
     /// passed gate on a weighty pick.
     func answer(bead: String, ask: Int64, option: Int64, words: String, weighed: Bool) async throws

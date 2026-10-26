@@ -115,8 +115,8 @@ struct YardChrome<Content: View>: View {
     }
 }
 
-/// The places at the foot: Crew and Decide, the waiting count as words
-/// beside Decide where any wait. Lines joins it with its own bead.
+/// The places at the foot: Crew, Decide and Lines, the waiting count
+/// as words beside Decide where any wait.
 struct PlaceBar: View {
     var waiting: Int
     var current: Screen
@@ -128,6 +128,7 @@ struct PlaceBar: View {
             HStack(spacing: 0) {
                 placeButton("Crew", screen: .crew)
                 placeButton("Decide", screen: .decisions, note: waiting > 0 ? "\(waiting) waiting" : nil)
+                placeButton("Lines", screen: .lines)
             }
         }
         .background(ThemeColor.surfaceApp.color)

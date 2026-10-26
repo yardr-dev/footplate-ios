@@ -30,6 +30,7 @@ final class AppServices {
     let conversationModel: ConversationModel
     let decisionsModel: DecisionsModel
     let decisionModel: DecisionModel
+    let lineModel: LineModel
 
     private(set) var followers: [String: Follower] = [:]
     private var yards: Yards?
@@ -62,7 +63,9 @@ final class AppServices {
         self.decisionsModel = DecisionsModel(records: records, mailroom: mailroom, nav: nav)
         self.decisionModel = DecisionModel(mailroom: mailroom, records: records, nav: nav, unlock: LAUnlockPrompt())
         self.inboxModel = InboxModel(pairer: pairer, records: records, followers: { [:] }, mailroom: mailroom, nav: nav)
+        self.lineModel = LineModel(followers: { [:] })
         self.inboxModel.followers = { [weak self] in (self?.followers ?? [:]).mapValues { $0 as any Followed } }
+        self.lineModel.followers = { [weak self] in (self?.followers ?? [:]).mapValues { $0 as any Followed } }
         recordsObserver = records.observe { [weak self] _ in
             self?.refollow()
         }
@@ -157,6 +160,12 @@ private struct FootplateScene: View {
                     bead: bead,
                     ask: ask,
                     onBack: { services.nav.back() }
+                )
+            case .lines:
+                LinesScreen(
+                    inbox: services.inboxModel,
+                    records: services.records,
+                    model: services.lineModel
                 )
             }
         }
