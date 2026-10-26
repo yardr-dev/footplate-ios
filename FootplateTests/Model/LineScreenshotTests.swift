@@ -42,7 +42,11 @@ final class LineScreenshotTests: XCTestCase {
         laptop.state.status = .down(words: "The yard is away: the edge cannot reach it.", short: "yard away")
         home.board = try cannedBoard()
 
-        let line = LineModel(followers: { ["": home, "laptop": laptop] }, nav: nav, now: { now })
+        let conversation = ConversationModel(mailroom: mailroom, now: { now }, zone: { TimeZone(secondsFromGMT: 0)! })
+        let line = LineModel(
+            followers: { ["": home, "laptop": laptop] }, nav: nav,
+            conversation: conversation, origin: fake.origin, now: { now }
+        )
         line.open(yard: "")
         let deadline = ContinuousClock.now + .seconds(10)
         while !line.state.read, ContinuousClock.now <= deadline {

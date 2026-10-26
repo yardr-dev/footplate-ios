@@ -7,12 +7,14 @@ import XCTest
 // a stat filtering it, the board drawn with its head words, a failed
 // read said and cleared, an unreadable depot in the yard's own words,
 // the place following a yard switch, the backlog opening and
-// shutting, and a line pushed as its route map.
+// shutting, a line pushed as its route map, and a bead pushed as its
+// card with its Ask and its web view.
 @MainActor
 final class LineModelTests: XCTestCase {
     private var home: FakeFollowed!
     private var laptop: FakeFollowed!
     private var nav: Nav!
+    private var conversation: ConversationModel!
     private var model: LineModel!
 
     override func setUp() {
@@ -21,14 +23,25 @@ final class LineModelTests: XCTestCase {
         laptop = FakeFollowed()
         nav = Nav(place: .lines)
         let now = parseInstant("2026-10-08T10:11:00Z")!
+        let mailroom = Mailroom()
+        mailroom.setFollowers(["": home, "laptop": laptop])
+        // The Ask reaches the real conversation model; no picture is
+        // ever fetched, so its directory is never made.
+        conversation = ConversationModel(
+            mailroom: mailroom,
+            pictures: Pictures(directory: FileManager.default.temporaryDirectory.appendingPathComponent("pictures-\(UUID().uuidString)")),
+            now: { now }, zone: { TimeZone(secondsFromGMT: 0)! }
+        )
         model = LineModel(followers: { [home, laptop] in
             ["": home!, "laptop": laptop!]
-        }, nav: nav, now: { now })
+        }, nav: nav, conversation: conversation, origin: "https://edge.example", now: { now })
     }
 
     override func tearDown() {
         model.leave()
+        conversation.leave()
         model = nil
+        conversation = nil
         nav = nil
         home = nil
         laptop = nil
@@ -291,9 +304,9 @@ final class LineModelTests: XCTestCase {
 
         model.openLine(depot: "yard", flow: "default")
         let route = LineRoute(yard: "", depot: "yard", flow: "default")
-        XCTAssertEqual(nav.linesPath, [route])
+        XCTAssertEqual(nav.linesPath, [.line(route)])
         model.openLine(depot: "yard", flow: "default")
-        XCTAssertEqual(nav.linesPath, [route], "opening what is pushed pushes nothing more")
+        XCTAssertEqual(nav.linesPath, [.line(route)], "opening what is pushed pushes nothing more")
 
         let map = try XCTUnwrap(model.routeMap(for: route))
         XCTAssertEqual(map.title, "yard · default")
@@ -395,13 +408,14 @@ final class LineModelTests: XCTestCase {
         XCTAssertFalse(waitsForSeat(plain, in: FlowStage(stage: "new", limit: 0, taken: 0)))
     }
 
-    func testThePushedLineLeavesWithItsYardAndItsFlow() async throws {
+    func testThePushedLineAndCardLeaveWithTheirYardAndTheirBoard() async throws {
         home.up(loaded())
         laptop.up(loaded())
         home.board = board()
         laptop.board = board()
         // No yard shown yet: a tap has nowhere to push.
         model.openLine(depot: "yard", flow: "default")
+        model.openBead("yd-gate")
         XCTAssertEqual(nav.linesPath, [])
         model.open(yard: "")
         try await waitRead()
@@ -417,23 +431,203 @@ final class LineModelTests: XCTestCase {
         // the next read; the lines it still holds stay.
         model.openLine(depot: "yard", flow: "default")
         model.openLine(depot: "drafts", flow: "default")
-        XCTAssertEqual(nav.linesPath.map(\.depot), ["yard", "drafts"])
+        XCTAssertEqual(pushedDepots, ["yard", "drafts"])
         var without = board()
         without.depots.removeLast()
         home.board = without
         await model.refresh()
-        XCTAssertEqual(nav.linesPath.map(\.depot), ["yard"])
+        XCTAssertEqual(pushedDepots, ["yard"])
 
         // The other yard's line is none of the yard switched to.
         model.open(yard: "laptop")
         try await waitFor("the laptop's board") { [model] in model?.state.read == true }
         XCTAssertEqual(nav.linesPath, [])
         model.openLine(depot: "yard", flow: "default")
-        XCTAssertEqual(nav.linesPath, [LineRoute(yard: "laptop", depot: "yard", flow: "default")])
+        XCTAssertEqual(nav.linesPath, [.line(LineRoute(yard: "laptop", depot: "yard", flow: "default"))])
         // The tab left and come back to the same yard keeps the line.
         model.leave()
         model.open(yard: "laptop")
         XCTAssertEqual(nav.linesPath.count, 1)
+
+        // A card leaves the same ways, whether its bead stood in a stage,
+        // in Elsewhere or on no line: the board no longer holds the
+        // bead, or its yard is switched away from. The line under it
+        // stays while the board holds it.
+        model.openBead("yd-gate")
+        model.openBead("yd-fence")
+        model.openBead("yd-crm")
+        XCTAssertEqual(pushedBeads, ["yd-gate", "yd-fence", "yd-crm"])
+        var landed = board()
+        landed.depots[0].flows[0].stages[1].beads.removeFirst()
+        landed.depots[0].elsewhere = []
+        laptop.board = landed
+        await model.refresh()
+        XCTAssertEqual(pushedBeads, ["yd-crm"])
+        XCTAssertEqual(pushedDepots, ["yard"])
+        // Nothing is a card where the board holds no such bead, or the
+        // yard is another's.
+        XCTAssertNil(model.card(for: BeadRoute(yard: "laptop", bead: "yd-gate")))
+        XCTAssertNil(model.card(for: BeadRoute(yard: "", bead: "yd-crm")))
+        model.open(yard: "")
+        XCTAssertEqual(nav.linesPath, [])
+    }
+
+    func testABeadOpensItsCard() async throws {
+        home.up(loaded())
+        home.board = richBoard()
+        model.open(yard: "")
+        try await waitRead()
+
+        model.openBead("yd-train")
+        let route = BeadRoute(yard: "", bead: "yd-train")
+        XCTAssertEqual(nav.linesPath, [.bead(route)])
+        model.openBead("yd-train")
+        XCTAssertEqual(nav.linesPath, [.bead(route)], "opening what is pushed pushes nothing more")
+
+        let card = try XCTUnwrap(model.card(for: route))
+        XCTAssertEqual(card.bead.id, "yd-train")
+        XCTAssertEqual(card.bead.title, "Release train")
+        XCTAssertEqual(card.line, "yard · default")
+        XCTAssertEqual(card.stage, "new")
+        // The line's strip, the backlog first, with the bead's stage to
+        // mark.
+        XCTAssertEqual(
+            card.stages,
+            [
+                StripStage(name: "backlog", state: .none, human: false),
+                StripStage(name: "new", state: .broken, human: false),
+                StripStage(name: "review", state: .yourTurn, human: false),
+                StripStage(name: "decide", state: .none, human: true),
+            ]
+        )
+        XCTAssertEqual(card.head, "yard · default · new for 41m · expected 11–25m")
+        XCTAssertTrue(card.bead.working)
+        XCTAssertEqual(card.bead.worker, "train-new")
+        XCTAssertEqual(card.bead.workedBy, "worked by muse-builders · claude/opus")
+        XCTAssertEqual(card.bead.stay, "41m")
+        XCTAssertEqual(workerWords(card.bead), "train-new · 41m")
+        XCTAssertEqual(beadMeta(card.bead), "expected 11–25m")
+        // The account's own yard needs no yard parameter.
+        XCTAssertEqual(card.webView, "https://edge.example/beads/yd-train")
+
+        // The whole card, whatever filter the overview holds; a bead in
+        // the backlog has its card too, on the same strip.
+        model.filter(.late)
+        XCTAssertEqual(model.card(for: route), card)
+        model.filter(.all)
+        let draft = try XCTUnwrap(model.card(for: BeadRoute(yard: "", bead: "yd-draft-2")))
+        XCTAssertEqual(draft.stage, "backlog")
+        XCTAssertEqual(draft.stages, card.stages)
+        XCTAssertEqual(draft.head, "yard · default · backlog")
+        XCTAssertEqual(draft.bead.remark, "waits for you")
+        XCTAssertEqual(beadMeta(draft.bead), "waits for you")
+        // A bead standing for a seat says so in its meta.
+        let waiting = try XCTUnwrap(model.card(for: BeadRoute(yard: "", bead: "yd-greet")))
+        XCTAssertTrue(waiting.bead.waitsSeat)
+        XCTAssertEqual(beadMeta(waiting.bead), "waits for a seat")
+        XCTAssertEqual(waiting.head, "drafts · default · new")
+    }
+
+    func testABeadCardNamesItsLineOrNone() throws {
+        let now = parseInstant("2026-10-08T10:11:00Z")!
+        // Elsewhere: no strip, no stage, still a card.
+        let held = try XCTUnwrap(
+            beadCard(board: board(), me: "jo", now: now, origin: "https://edge.example", yard: "north", id: "yd-fence")
+        )
+        XCTAssertEqual(held.line, "yard · Elsewhere")
+        XCTAssertEqual(held.stage, "")
+        XCTAssertEqual(held.stages, [])
+        XCTAssertEqual(held.head, "yard · Elsewhere")
+        XCTAssertEqual(held.bead.remark, "held by yardmaster")
+        XCTAssertFalse(held.bead.waitsSeat)
+        XCTAssertEqual(held.webView, "https://edge.example/beads/yd-fence?yard=north")
+        // No line: the same, and no depot to name.
+        let bare = try XCTUnwrap(
+            beadCard(board: board(), me: "jo", now: now, origin: "https://edge.example", yard: "", id: "yd-crm")
+        )
+        XCTAssertEqual(bare.line, "No line")
+        XCTAssertEqual(bare.stage, "")
+        XCTAssertEqual(bare.stages, [])
+        XCTAssertEqual(bare.head, "No line")
+        XCTAssertEqual(bare.webView, "https://edge.example/beads/yd-crm")
+        // The board holds no such bead.
+        XCTAssertNil(beadCard(board: board(), me: "jo", now: now, origin: "https://edge.example", yard: "", id: "yd-nope"))
+        XCTAssertNil(beadCard(board: Flows(), me: "jo", now: now, origin: "https://edge.example", yard: "", id: "yd-crm"))
+    }
+
+    func testACardsHeadSaysItsStayAndItsRange() {
+        func bead(stay: String = "", expected: String = "") -> StationBead {
+            StationBead(id: "yd-x", title: "", stay: stay, expected: expected)
+        }
+        XCTAssertEqual(cardHead(line: "yard · default", stage: "new", bead: bead()), "yard · default · new")
+        XCTAssertEqual(cardHead(line: "yard · default", stage: "new", bead: bead(stay: "41m")), "yard · default · new for 41m")
+        XCTAssertEqual(
+            cardHead(line: "yard · default", stage: "new", bead: bead(expected: "11–25m")),
+            "yard · default · new · expected 11–25m"
+        )
+        XCTAssertEqual(
+            cardHead(line: "yard · default", stage: "new", bead: bead(stay: "2h", expected: "5h–8h")),
+            "yard · default · new for 2h · expected 5h–8h"
+        )
+    }
+
+    func testABeadIdNeverShapesItsWebViewUrl() throws {
+        XCTAssertEqual(
+            webViewUrl(origin: "https://edge.example", yard: "a+b", bead: "yd-gate"),
+            "https://edge.example/beads/yd-gate?yard=a%2Bb"
+        )
+        // The id arrives from the yard: slashes, queries and fragments in
+        // it stay one path segment, never the URL's shape.
+        let hostile = webViewUrl(origin: "https://edge.example", yard: "", bead: "yd-../../x?yard=other#frag")
+        XCTAssertEqual(hostile, "https://edge.example/beads/yd-..%2F..%2Fx%3Fyard%3Dother%23frag")
+        let parts = try XCTUnwrap(URLComponents(string: hostile))
+        XCTAssertEqual(parts.host, "edge.example")
+        XCTAssertEqual(parts.percentEncodedPath.split(separator: "/").map(String.init), ["beads", "yd-..%2F..%2Fx%3Fyard%3Dother%23frag"])
+        XCTAssertNil(parts.query)
+        XCTAssertNil(parts.fragment)
+        XCTAssertEqual(
+            webViewUrl(origin: "https://edge.example", yard: "north", bead: "a b"),
+            "https://edge.example/beads/a%20b?yard=north"
+        )
+        // What is not ASCII is percent-encoded as UTF-8, and the yard's
+        // name is a value as the id is a segment.
+        XCTAssertEqual(
+            webViewUrl(origin: "https://edge.example", yard: "café&x=1", bead: "yd-é"),
+            "https://edge.example/beads/yd-%C3%A9?yard=caf%C3%A9%26x%3D1"
+        )
+    }
+
+    func testAskingTheYardmasterOpensItsConversationWithTheBeadFirst() async throws {
+        home.up(loaded())
+        laptop.up(loaded())
+        home.board = board()
+        laptop.board = board()
+        // No yard shown yet: the Ask has nowhere to go.
+        model.askYardmaster(about: "yd-train")
+        XCTAssertEqual(nav.crewPath, [])
+        XCTAssertEqual(nav.place, .lines)
+
+        model.open(yard: "laptop")
+        try await waitRead()
+        model.openBead("yd-train")
+        model.askYardmaster(about: "yd-train")
+        // The crew place shows the shown yard's conversation with the
+        // yardmaster; the card stays pushed for the way back.
+        XCTAssertEqual(nav.place, .crew)
+        XCTAssertEqual(nav.crewPath, [ConversationRoute(yard: "laptop", with: "yardmaster")])
+        XCTAssertEqual(nav.linesPath, [.bead(BeadRoute(yard: "laptop", bead: "yd-train"))])
+        // The screen's open starts the draft, the bead's id its first
+        // words.
+        conversation.open(yard: "laptop", with: "yardmaster")
+        XCTAssertEqual(conversation.state.title, "yardmaster")
+        XCTAssertEqual(conversation.state.draft, "yd-train ")
+        // Asked again with the conversation pushed already: pushed no
+        // more, and the bead is still the first words, once.
+        conversation.leave()
+        model.askYardmaster(about: "yd-train")
+        XCTAssertEqual(nav.crewPath.count, 1)
+        conversation.open(yard: "laptop", with: "yardmaster")
+        XCTAssertEqual(conversation.state.draft, "yd-train ")
     }
 
     func testStageStatesReadLampAndWork() {
@@ -549,6 +743,22 @@ final class LineModelTests: XCTestCase {
     }
 
     // MARK: - Helpers
+
+    /// The depots of the lines pushed, in order.
+    private var pushedDepots: [String] {
+        nav.linesPath.compactMap { route -> String? in
+            if case .line(let line) = route { return line.depot }
+            return nil
+        }
+    }
+
+    /// The ids of the beads pushed, in order.
+    private var pushedBeads: [String] {
+        nav.linesPath.compactMap { route -> String? in
+            if case .bead(let bead) = route { return bead.bead }
+            return nil
+        }
+    }
 
     private func waitRead() async throws {
         try await waitFor("the board") { [model] in model?.state.read == true }

@@ -295,6 +295,56 @@ final class InboxModelTests: XCTestCase {
         conversation.leave()
     }
 
+    func testAskingTheYardmasterStartsTheDraftWithTheBead() async {
+        home.up(loaded())
+        home.pages["yardmaster|0"] = Page(letters: [letter(13, "yardmaster", "jo", "Thirteen.")], more: false)
+        let conversation = conversation()
+        // The card's Ask is taken before the screen is shown: the open
+        // that follows starts the draft with the bead.
+        conversation.askAbout(yard: "", bead: "yd-train")
+        conversation.open(yard: "", with: "yardmaster")
+        XCTAssertEqual(conversation.state.draft, "yd-train ")
+        // Written on, left, and asked again about the same bead: the
+        // bead stays the first words, once.
+        conversation.draft("yd-train when is it green?")
+        conversation.leave()
+        conversation.askAbout(yard: "", bead: "yd-train")
+        conversation.open(yard: "", with: "yardmaster")
+        XCTAssertEqual(conversation.state.draft, "yd-train when is it green?")
+        // Asked about another bead with words already there: its id goes
+        // first, keeping what is there.
+        conversation.leave()
+        conversation.askAbout(yard: "", bead: "yd-shed")
+        conversation.open(yard: "", with: "yardmaster")
+        XCTAssertEqual(conversation.state.draft, "yd-shed yd-train when is it green?")
+        // An Ask for another conversation is not this one's draft, and
+        // the next open takes it: none is held for a later one.
+        conversation.leave()
+        conversation.askAbout(yard: "", bead: "yd-gate")
+        conversation.open(yard: "", with: "signalman")
+        XCTAssertEqual(conversation.state.draft, "")
+        conversation.leave()
+        conversation.open(yard: "", with: "yardmaster")
+        XCTAssertEqual(conversation.state.draft, "")
+        // Nor is another yard's.
+        conversation.leave()
+        conversation.askAbout(yard: "laptop", bead: "yd-gate")
+        conversation.open(yard: "", with: "yardmaster")
+        XCTAssertEqual(conversation.state.draft, "")
+        // Asked while the conversation is shown already: the draft takes
+        // it at once, for no open comes.
+        conversation.askAbout(yard: "", bead: "yd-gate")
+        conversation.open(yard: "", with: "yardmaster")
+        XCTAssertEqual(conversation.state.draft, "yd-gate ")
+        conversation.leave()
+
+        XCTAssertEqual(askDraft("yd-train", bead: "yd-train"), "yd-train ")
+        XCTAssertEqual(askDraft("yd-train when?", bead: "yd-train"), "yd-train when?")
+        XCTAssertEqual(askDraft("yd-trainer", bead: "yd-train"), "yd-train yd-trainer")
+        XCTAssertEqual(askDraft("hello", bead: "yd-shed"), "yd-shed hello")
+        XCTAssertEqual(askDraft("", bead: "yd-shed"), "yd-shed ")
+    }
+
     func testYardRowOpensItsNoticesWithNoFieldAndAcknowledgesThem() async {
         home.up(loaded())
         let conversation = conversation()
@@ -352,7 +402,10 @@ final class InboxModelTests: XCTestCase {
 
         nav.crewPath = [ConversationRoute(yard: "laptop", with: "yardmaster")]
         nav.decidePath = [DecisionRoute(yard: "", bead: "yd-map", ask: 7)]
-        nav.linesPath = [LineRoute(yard: "laptop", depot: "yard", flow: "default")]
+        nav.linesPath = [
+            .line(LineRoute(yard: "laptop", depot: "yard", flow: "default")),
+            .bead(BeadRoute(yard: "laptop", bead: "yd-train")),
+        ]
         await model.forget()
         XCTAssertEqual(nav.crewPath, [])
         XCTAssertEqual(nav.decidePath, [DecisionRoute(yard: "", bead: "yd-map", ask: 7)])
@@ -360,7 +413,7 @@ final class InboxModelTests: XCTestCase {
         XCTAssertEqual(records.kept.yards.map(\.name), [""])
 
         // The last yard forgotten clears every stack for the Pair root.
-        nav.linesPath = [LineRoute(yard: "", depot: "yard", flow: "default")]
+        nav.linesPath = [.bead(BeadRoute(yard: "", bead: "yd-train"))]
         await model.forget()
         XCTAssertEqual(nav.decidePath, [])
         XCTAssertEqual(nav.linesPath, [])

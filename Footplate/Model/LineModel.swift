@@ -7,7 +7,10 @@ import Foundation
 // opens, read again on pull-to-refresh and on every stream event
 // that moves it, the way footplate reads Flows again; no polling.
 // A line tap pushes its route map: the whole line as stations from
-// top to bottom, whatever filter the overview holds.
+// top to bottom, whatever filter the overview holds. A bead tap, from
+// a card, a row or a station, pushes its card: the strip with its
+// stage marked, what is happening now, and two actions, Ask yardmaster
+// and Open in web view.
 
 /// One open bead on the line, as its row draws it.
 struct LineBead: Equatable, Sendable {
@@ -157,6 +160,23 @@ struct RouteMap: Equatable, Sendable {
     var stations: [Station]
 }
 
+/// One bead opened from the line: its card, from the board's row. A
+/// place to check and nudge, not to edit (Android's `BeadCard`).
+struct BeadCard: Equatable, Sendable {
+    var bead: StationBead
+    /// `yard · default`, `yard · Elsewhere`, or `No line`.
+    var line: String
+    /// The stage it stands in, empty on no line.
+    var stage: String
+    /// The line's strip with the bead's stage to mark, the backlog
+    /// first; empty on no line.
+    var stages: [StripStage]
+    /// `yard · default · new for 41m · expected 11–25m`.
+    var head: String
+    /// The yard's web view URL for the bead.
+    var webView: String
+}
+
 struct LineState: Equatable, Sendable {
     /// `7 travelling · 1 working`: words, never badges.
     var head: String = ""
@@ -208,6 +228,9 @@ final class LineModel {
     /// its services stand, since the followers are rebuilt with them.
     var followers: @MainActor () -> [String: any Followed]
     private let nav: Nav
+    private let conversation: ConversationModel
+    /// The edge's origin, whose web view serves a bead's page.
+    private let origin: String
     private let now: @Sendable () -> Date
     private var active = false
     private var generation = 0
@@ -217,10 +240,14 @@ final class LineModel {
     init(
         followers: @escaping @MainActor () -> [String: any Followed],
         nav: Nav,
+        conversation: ConversationModel,
+        origin: String,
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.followers = followers
         self.nav = nav
+        self.conversation = conversation
+        self.origin = origin
         self.now = now
     }
 
@@ -314,6 +341,33 @@ final class LineModel {
         )
     }
 
+    /// A bead tapped, on a card, a row or a station: its card is pushed
+    /// onto the lines stack.
+    func openBead(_ id: String) {
+        guard let yard = openedYard else { return }
+        nav.openBead(yard: yard, bead: id)
+    }
+
+    /// The pushed bead as its card, whatever filter the overview holds;
+    /// nil where the board is not read, is another yard's, or holds no
+    /// such bead.
+    func card(for route: BeadRoute) -> BeadCard? {
+        guard let board, openedYard == route.yard else { return nil }
+        let me = followers()[route.yard]?.state.loaded?.me.user ?? ""
+        return beadCard(
+            board: board, me: me, now: now(), origin: origin, yard: route.yard, id: route.bead
+        )
+    }
+
+    /// The card's Ask: the yardmaster's conversation is pushed onto the
+    /// crew stack, its draft starting with the bead's id.
+    func askYardmaster(about bead: String) {
+        guard let yard = openedYard else { return }
+        conversation.askAbout(yard: yard, bead: bead)
+        nav.place = .crew
+        nav.openConversation(yard: yard, with: yardmaster)
+    }
+
     private func lineDepot(_ depot: FlowDepot, me: String, filter: LineFilter) -> LineDepot {
         LineDepot(
             name: depot.name,
@@ -404,9 +458,10 @@ final class LineModel {
             // board with the old error.
             errorText = nil
             board = fresh
-            // A line the board no longer holds leaves for the overview.
+            // A line or a bead the board no longer holds leaves for what
+            // is under it.
             nav.closeLines { route in
-                route.yard == yard && flowStages(fresh, depot: route.depot, flow: route.flow) == nil
+                route.yard == yard && !holds(fresh, route)
             }
         } catch is CancellationError {
             return
@@ -642,6 +697,23 @@ private func flowStages(_ board: Flows, depot: String, flow: String) -> [FlowSta
     board.depots.first { $0.name == depot }?.flows.first { $0.name == flow }?.stages
 }
 
+/// Whether the board still holds what a pushed route shows: the flow of
+/// a line, the bead of a card.
+private func holds(_ board: Flows, _ route: LinesRoute) -> Bool {
+    switch route {
+    case .line(let line):
+        return flowStages(board, depot: line.depot, flow: line.flow) != nil
+    case .bead(let bead):
+        return board.unassigned.contains { $0.bead == bead.bead }
+            || board.depots.contains { depot in
+                depot.elsewhere.contains { $0.bead == bead.bead }
+                    || depot.flows.contains { flow in
+                        flow.stages.contains { stage in stage.beads.contains { $0.bead == bead.bead } }
+                    }
+            }
+    }
+}
+
 /// One line as its route map: every stage a station from top to
 /// bottom, the backlog first and the landed stage last. Nil where the
 /// depot or the flow is none. The whole line, whatever filter the
@@ -693,6 +765,79 @@ private func stationBead(_ bead: FlowBead, me: String, now: Date, waitsSeat: Boo
         waitsSeat: waitsSeat
     )
 }
+
+/// One bead's card from the board: on its line with the strip, in a
+/// depot's Elsewhere, or with no line. Nil where the board holds no
+/// bead of `id`. The whole card, whatever filter the overview holds.
+func beadCard(
+    board: Flows,
+    me: String,
+    now: Date,
+    origin: String,
+    yard: String,
+    id: String
+) -> BeadCard? {
+    let webView = webViewUrl(origin: origin, yard: yard, bead: id)
+    for depot in board.depots {
+        for flow in depot.flows {
+            for stage in flow.stages {
+                guard let bead = stage.beads.first(where: { $0.bead == id }) else { continue }
+                let shown = stationBead(bead, me: me, now: now, waitsSeat: waitsForSeat(bead, in: stage))
+                let line = "\(depot.name) · \(flow.name)"
+                return BeadCard(
+                    bead: shown,
+                    line: line,
+                    stage: stage.stage,
+                    stages: backlogFirst(flow.stages).map {
+                        StripStage(name: $0.stage, state: stageStateOf($0), human: $0.human)
+                    },
+                    head: cardHead(line: line, stage: stage.stage, bead: shown),
+                    webView: webView
+                )
+            }
+        }
+        if let bead = depot.elsewhere.first(where: { $0.bead == id }) {
+            let line = "\(depot.name) · Elsewhere"
+            return BeadCard(
+                bead: stationBead(bead, me: me, now: now, waitsSeat: false),
+                line: line, stage: "", stages: [], head: line, webView: webView
+            )
+        }
+    }
+    if let bead = board.unassigned.first(where: { $0.bead == id }) {
+        return BeadCard(
+            bead: stationBead(bead, me: me, now: now, waitsSeat: false),
+            line: "No line", stage: "", stages: [], head: "No line", webView: webView
+        )
+    }
+    return nil
+}
+
+/// A card's head: `yard · default · new for 41m · expected 11–25m`.
+func cardHead(line: String, stage: String, bead: StationBead) -> String {
+    var words = [line, stage + (bead.stay.isEmpty ? "" : " for \(bead.stay)")]
+    if !bead.expected.isEmpty { words.append("expected \(bead.expected)") }
+    return words.joined(separator: " · ")
+}
+
+/// The yard's web view URL for one bead: the edge serves the yard's
+/// pages, `?yard=` picking the yard (edge.md), and a bead's page is
+/// `/beads/<id>` (web.md). The account's own yard, named `""`, needs no
+/// parameter. The id arrives from the yard: it stays one path segment
+/// whatever it holds, never the URL's shape.
+func webViewUrl(origin: String, yard: String, bead: String) -> String {
+    let page = "\(origin)/beads/\(urlEscaped(bead))"
+    return yard.isEmpty ? page : "\(page)?yard=\(urlEscaped(yard))"
+}
+
+/// Percent-encoded but for the unreserved characters of RFC 3986.
+private func urlEscaped(_ text: String) -> String {
+    text.addingPercentEncoding(withAllowedCharacters: unreservedCharacters) ?? ""
+}
+
+private let unreservedCharacters = CharacterSet(
+    charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
+)
 
 /// The session a worker names: without its runner word where the
 /// runner is herdr, as footplate's `worker_session` has it.

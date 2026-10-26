@@ -83,6 +83,16 @@ private enum Picture: Equatable {
 /// How many letters a page is.
 let conversationPage: Int64 = 30
 
+/// The crew member a bead card's Ask writes to.
+let yardmaster = "yardmaster"
+
+/// The draft with `bead` as its first words, keeping what is there.
+func askDraft(_ draft: String, bead: String) -> String {
+    if draft.hasPrefix("\(bead) ") { return draft }
+    if draft == bead { return "\(bead) " }
+    return "\(bead) \(draft)"
+}
+
 @MainActor
 @Observable
 final class ConversationModel {
@@ -100,6 +110,9 @@ final class ConversationModel {
     private(set) var attaching: Bool = false
     private var fetched: [String: Picture] = [:]
     private var fullHash: String? = nil
+    /// The bead card's Ask, waiting for the open of the conversation
+    /// it names.
+    private var pendingAsk: (key: ConversationKey, bead: String)? = nil
 
     private let mailroom: Mailroom
     private let pictures: Pictures
@@ -191,7 +204,14 @@ final class ConversationModel {
     /// as it is shown.
     func open(yard: String, with: String) {
         let same = openedYard == yard && openedWith == with
-        if same, active { return }
+        // Any open takes the Ask, and only the conversation it names
+        // keeps it.
+        let ask = pendingAsk.flatMap { $0.key == ConversationKey(yard: yard, with: with) ? $0.bead : nil }
+        pendingAsk = nil
+        if same, active {
+            if let ask { draft(askDraft(draftText, bead: ask)) }
+            return
+        }
         generation += 1
         readTask?.cancel()
         readTask = nil
@@ -216,6 +236,7 @@ final class ConversationModel {
             return false
         }
         fullHash = nil
+        if let ask { draft(askDraft(draftText, bead: ask)) }
         // A conversation that comes back on screen reads its newest page
         // again, even when the follower's head has not changed.
         lastHead = nil
@@ -256,6 +277,14 @@ final class ConversationModel {
         draftRevision &+= 1
         draftText = text
         sendError = nil
+    }
+
+    /// The bead card's Ask: the next open of `yard`'s conversation with
+    /// the yardmaster starts its draft with `bead` as the first words.
+    /// Taken before the screen is shown, as `open` clears the draft of
+    /// a conversation it was not showing.
+    func askAbout(yard: String, bead: String) {
+        pendingAsk = (ConversationKey(yard: yard, with: yardmaster), bead)
     }
 
     /// The picture picked under `name` is shrunk for the letter,
