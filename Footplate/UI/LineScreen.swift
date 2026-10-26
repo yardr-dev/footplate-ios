@@ -4,8 +4,8 @@ import SwiftUI
 // filters, a card per moving line and the quiet lines' chips, the
 // Elsewhere rows and the beads with no line, in the place's own
 // stack. Read-only: a card or a quiet chip pushes its line's route
-// map, and a card's bead ids are plain text. Pull to refresh reads
-// the board again.
+// map, and a bead id on a card or a row pushes the bead's card. Pull
+// to refresh reads the board again.
 struct LinesScreen: View {
     @Bindable var inbox: InboxModel
     @Bindable var records: Records
@@ -16,8 +16,11 @@ struct LinesScreen: View {
         NavigationStack(path: $nav.linesPath) {
             content(model.state)
                 .yardPlace(inbox: inbox, title: "Lines")
-                .navigationDestination(for: LineRoute.self) { route in
-                    RouteMapScreen(model: model, route: route)
+                .navigationDestination(for: LinesRoute.self) { route in
+                    switch route {
+                    case .line(let line): RouteMapScreen(model: model, route: line)
+                    case .bead(let bead): BeadCardScreen(model: model, route: bead)
+                    }
                 }
         }
         .onAppear { openSelected() }
@@ -177,66 +180,154 @@ struct LinesScreen: View {
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
-    /// One line's card: its lamp, its count, a strip with every stage
-    /// the same width, and its beads' ids as plain text; a tap pushes
-    /// the line's route map. The card reads as one control, its bead
-    /// ids as its value.
+    /// One line's card: its lamp, its count and a strip with every
+    /// stage the same width, which a tap pushes as the line's route
+    /// map; under them its beads' ids, each a tap to the bead's card.
     private func lineCard(_ card: LineCard) -> some View {
-        Button {
-            model.openLine(depot: card.depot, flow: card.flow)
-        } label: {
-            VStack(alignment: .leading, spacing: 0) {
-                HStack {
-                    if let dot = lampColor(card.lamp) {
-                        Circle()
-                            .fill(dot)
-                            .frame(width: 8, height: 8)
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                model.openLine(depot: card.depot, flow: card.flow)
+            } label: {
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack {
+                        if let dot = lampColor(card.lamp) {
+                            Circle()
+                                .fill(dot)
+                                .frame(width: 8, height: 8)
+                        }
+                        Text(card.title)
+                            .themeType(.label)
+                            .foregroundStyle(ThemeColor.textPrimary.color)
+                            .lineLimit(1)
+                        Spacer()
+                        Text("\(card.inTransit) · \(card.backlog) backlog")
+                            .themeType(.meta)
+                            .foregroundStyle(ThemeColor.textSecondary.color)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(ThemeColor.textSecondary.color)
                     }
-                    Text(card.title)
-                        .themeType(.label)
-                        .foregroundStyle(ThemeColor.textPrimary.color)
-                        .lineLimit(1)
-                    Spacer()
-                    Text("\(card.inTransit) · \(card.backlog) backlog")
-                        .themeType(.meta)
-                        .foregroundStyle(ThemeColor.textSecondary.color)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(ThemeColor.textSecondary.color)
+                    StageStrip(stages: card.stages)
+                        .padding(.top, 10)
                 }
-                strip(card.stages)
-                    .padding(.top, 10)
-                if !card.beads.isEmpty {
-                    Text(card.beads.joined(separator: " "))
-                        .themeType(.code)
-                        .foregroundStyle(ThemeColor.textPrimary.color)
-                        .lineLimit(2)
-                        .padding(.top, 8)
-                }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, card.beads.isEmpty ? 12 : 0)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(ThemeColor.surfaceRaised.color, in: RoundedRectangle(cornerRadius: 12))
-            .contentShape(RoundedRectangle(cornerRadius: 12))
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(card.title), \(card.inTransit) in transit, \(card.backlog) backlog")
+            .accessibilityHint("Opens the route map")
+            .accessibilityIdentifier("line/\(card.depot)/\(card.flow)")
+            if !card.beads.isEmpty {
+                // Each id's own padding puts the first at the strip's edge.
+                beadIds(card.beads)
+                    .padding(.horizontal, 10)
+            }
         }
-        .buttonStyle(.plain)
+        .background(ThemeColor.surfaceRaised.color, in: RoundedRectangle(cornerRadius: 12))
         .padding(.horizontal, 20)
         .padding(.vertical, 6)
-        .accessibilityLabel("\(card.title), \(card.inTransit) in transit, \(card.backlog) backlog")
-        .accessibilityValue(card.beads.joined(separator: " "))
-        .accessibilityHint("Opens the route map")
-        .accessibilityIdentifier("line/\(card.depot)/\(card.flow)")
     }
 
-    /// The compact stage strip: every stage the same width, each
-    /// segment coloured by its state, the stages handled by people
-    /// dashed, their names under them.
-    private func strip(_ stages: [StripStage]) -> some View {
+    /// A card's bead ids, each its own button to the bead's card, on a
+    /// row that scrolls sideways where they run on.
+    private func beadIds(_ ids: [String]) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 4) {
+                ForEach(ids, id: \.self) { id in
+                    Button {
+                        model.openBead(id)
+                    } label: {
+                        Text(id)
+                            .themeType(.code)
+                            .foregroundStyle(ThemeColor.textPrimary.color)
+                            .lineLimit(1)
+                            .padding(.horizontal, 6)
+                            .frame(minHeight: 48)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Opens the bead's card")
+                    .accessibilityIdentifier("bead-id/\(id)")
+                }
+            }
+        }
+    }
+
+    /// A line card's lamp: its worst state as a dot, nothing where
+    /// the line carries none.
+    private func lampColor(_ lamp: StageState) -> Color? {
+        lamp == .none ? nil : stateColor(lamp)
+    }
+
+    /// One open bead on no line: a tap pushes its card.
+    private func beadRow(_ bead: LineBead) -> some View {
+        Button {
+            model.openBead(bead.id)
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .lastTextBaseline, spacing: 8) {
+                    Text(bead.id)
+                        .themeType(.code)
+                        .foregroundStyle(ThemeColor.textPrimary.color)
+                        .lineLimit(1)
+                    if !bead.title.isEmpty {
+                        Text(bead.title)
+                            .themeType(.label)
+                            .foregroundStyle(ThemeColor.textPrimary.color)
+                            .lineLimit(1)
+                    }
+                }
+                if !bead.remark.isEmpty {
+                    Text(bead.remark)
+                        .themeType(.meta)
+                        .foregroundStyle(ThemeColor.textSecondary.color)
+                }
+                if bead.working {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(ThemeColor.statusRunning.color)
+                            .frame(width: 8, height: 8)
+                        if let by = bead.workedBy {
+                            Text(by)
+                                .themeType(.meta)
+                                .foregroundStyle(ThemeColor.textSecondary.color)
+                        }
+                    }
+                    .padding(.top, 2)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.leading, 36)
+            .padding(.trailing, 20)
+            .padding(.vertical, 8)
+            .frame(minHeight: 48)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Opens the bead's card")
+        .accessibilityIdentifier("bead-row/\(bead.id)")
+    }
+}
+
+/// The compact stage strip: every stage the same width, each segment
+/// coloured by its state, the stages handled by people dashed, their
+/// names under them. On a bead's card `marked` is the bead's stage, and
+/// every other stage stands faint. The line cards and the bead card
+/// share it.
+struct StageStrip: View {
+    var stages: [StripStage]
+    var marked: String? = nil
+
+    var body: some View {
         VStack(spacing: 4) {
             HStack(spacing: 2) {
                 ForEach(stages, id: \.name) { stage in
-                    stripSegment(stage)
+                    segment(stage)
                         .frame(maxWidth: .infinity)
+                        .opacity(lit(stage) ? 1 : 0.3)
                 }
             }
             HStack(spacing: 2) {
@@ -246,13 +337,19 @@ struct LinesScreen: View {
                         .foregroundStyle(ThemeColor.textSecondary.color)
                         .lineLimit(1)
                         .frame(maxWidth: .infinity)
+                        .opacity(lit(stage) ? 1 : 0.4)
                 }
             }
         }
     }
 
+    /// Every stage is lit where none is marked.
+    private func lit(_ stage: StripStage) -> Bool {
+        marked == nil || stage.name == marked
+    }
+
     @ViewBuilder
-    private func stripSegment(_ stage: StripStage) -> some View {
+    private func segment(_ stage: StripStage) -> some View {
         let color = stateColor(stage.state)
         if stage.human {
             Canvas { context, size in
@@ -267,51 +364,6 @@ struct LinesScreen: View {
                 .fill(color)
                 .frame(height: 6)
         }
-    }
-
-    /// A line card's lamp: its worst state as a dot, nothing where
-    /// the line carries none.
-    private func lampColor(_ lamp: StageState) -> Color? {
-        lamp == .none ? nil : stateColor(lamp)
-    }
-
-    private func beadRow(_ bead: LineBead) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(alignment: .lastTextBaseline, spacing: 8) {
-                Text(bead.id)
-                    .themeType(.code)
-                    .foregroundStyle(ThemeColor.textPrimary.color)
-                    .lineLimit(1)
-                if !bead.title.isEmpty {
-                    Text(bead.title)
-                        .themeType(.label)
-                        .foregroundStyle(ThemeColor.textPrimary.color)
-                        .lineLimit(1)
-                }
-            }
-            if !bead.remark.isEmpty {
-                Text(bead.remark)
-                    .themeType(.meta)
-                    .foregroundStyle(ThemeColor.textSecondary.color)
-            }
-            if bead.working {
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(ThemeColor.statusRunning.color)
-                        .frame(width: 8, height: 8)
-                    if let by = bead.workedBy {
-                        Text(by)
-                            .themeType(.meta)
-                            .foregroundStyle(ThemeColor.textSecondary.color)
-                    }
-                }
-                .padding(.top, 2)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.leading, 36)
-        .padding(.trailing, 20)
-        .padding(.vertical, 8)
     }
 }
 

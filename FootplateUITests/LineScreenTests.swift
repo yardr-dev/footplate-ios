@@ -4,8 +4,11 @@ import XCTest
 // Pair the simulator's app with a yard whose lines contain beads that a stat
 // separates, open Lines, then run these tests: the filter removes bead ids from
 // the cards, and the transit count clears the filter; a line card pushes its
-// route map, whose backlog station opens and shuts, and the back returns. The
-// gate never runs them.
+// route map, whose backlog station opens and shuts, whose bead card pushes the
+// bead's card, and the back returns; a bead id on a card or a row pushes the
+// bead's card too, where Ask yardmaster lands in the yardmaster's conversation
+// with the id first in the field and Open in web view leaves for the browser.
+// The gate never runs them.
 final class LineScreenTests: XCTestCase {
     @MainActor
     func testStatsChipsFilterTheCards() {
@@ -121,6 +124,18 @@ final class LineScreenTests: XCTestCase {
         XCTAssertTrue(waitFor { backlog.label.contains("in backlog") })
         XCTAssertTrue(routeBeads(app).isDisjoint(with: held))
 
+        // A bead card on a station pushes the bead's card, whose back
+        // returns to the route map.
+        let station = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'bead/'")).firstMatch
+        if station.exists {
+            let bead = String(station.identifier.dropFirst("bead/".count))
+            station.tap()
+            XCTAssertTrue(app.navigationBars[bead].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.buttons["bead-ask"].exists)
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 5))
+        }
+
         // The system's back returns to the overview, the tabs with it.
         app.navigationBars.buttons.element(boundBy: 0).tap()
         XCTAssertTrue(transit.waitForExistence(timeout: 5))
@@ -133,6 +148,86 @@ final class LineScreenTests: XCTestCase {
             let quiet = chip.label
             chip.tap()
             XCTAssertTrue(app.navigationBars[quiet].waitForExistence(timeout: 5))
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            XCTAssertTrue(transit.waitForExistence(timeout: 5))
+        }
+    }
+
+    // A bead id on a line card pushes the bead's card, under the system's
+    // back with the tab bar gone and the id in the bar. Ask yardmaster
+    // lands in the yardmaster's conversation with the id first in the
+    // field, and the Lines tab holds the card it left; Open in web view
+    // leaves for the phone's browser. A row of Elsewhere or No line pushes
+    // the same card where the yard has one.
+    @MainActor
+    func testABeadOpensItsCardWithAskAndTheWebView() {
+        let app = XCUIApplication()
+        app.launch()
+        let lines = app.tabBars.buttons["Lines"]
+        XCTAssertTrue(lines.waitForExistence(timeout: 10), "pair the simulator with a yard first")
+        lines.tap()
+        let transit = app.buttons["filter-all"]
+        XCTAssertTrue(transit.waitForExistence(timeout: 30))
+        let id = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'bead-id/'")).firstMatch
+        XCTAssertTrue(id.exists, "pair a yard with a line that has a bead on its card")
+        let bead = String(id.identifier.dropFirst("bead-id/".count))
+        id.tap()
+        XCTAssertTrue(app.navigationBars[bead].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.tabBars.buttons["Lines"].isHittable)
+        XCTAssertFalse(transit.exists)
+        let ask = app.buttons["bead-ask"]
+        let web = app.buttons["bead-open-web"]
+        XCTAssertTrue(ask.exists)
+        XCTAssertTrue(web.exists)
+        let card = XCTAttachment(screenshot: app.screenshot())
+        card.name = "Bead card"
+        card.lifetime = .keepAlways
+        add(card)
+
+        // Ask yardmaster: the crew place on the yardmaster's conversation,
+        // the bead's id the first words of its field.
+        ask.tap()
+        XCTAssertTrue(app.navigationBars["yardmaster"].waitForExistence(timeout: 5))
+        let field = app.descendants(matching: .any)["conversation-field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitFor { ((field.value as? String) ?? "").hasPrefix("\(bead) ") })
+        let asked = XCTAttachment(screenshot: app.screenshot())
+        asked.name = "Ask yardmaster"
+        asked.lifetime = .keepAlways
+        add(asked)
+
+        // The back returns to the crew rows; the Lines tab still holds the
+        // card it left.
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.tabBars.buttons["Lines"].tap()
+        XCTAssertTrue(app.navigationBars[bead].waitForExistence(timeout: 5))
+
+        // Open in web view: the phone's browser comes to the front, and
+        // nothing comes back.
+        let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
+        app.buttons["bead-open-web"].tap()
+        XCTAssertTrue(safari.wait(for: .runningForeground, timeout: 15))
+        let browser = XCTAttachment(screenshot: safari.screenshot())
+        browser.name = "Open in web view"
+        browser.lifetime = .keepAlways
+        add(browser)
+        app.activate()
+        XCTAssertTrue(app.navigationBars[bead].waitForExistence(timeout: 5))
+
+        // The card's back returns to the overview; a row of Elsewhere or
+        // No line pushes its card too.
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(transit.waitForExistence(timeout: 5))
+        let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'bead-row/'")).firstMatch
+        if row.exists {
+            let held = String(row.identifier.dropFirst("bead-row/".count))
+            row.tap()
+            XCTAssertTrue(app.navigationBars[held].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.buttons["bead-ask"].exists)
+            let rowCard = XCTAttachment(screenshot: app.screenshot())
+            rowCard.name = "Bead card of a row"
+            rowCard.lifetime = .keepAlways
+            add(rowCard)
             app.navigationBars.buttons.element(boundBy: 0).tap()
             XCTAssertTrue(transit.waitForExistence(timeout: 5))
         }
@@ -157,12 +252,10 @@ final class LineScreenTests: XCTestCase {
         return true
     }
 
-    /// The beads named on line cards, each card's value.
+    /// The beads named on line cards, each its own button.
     @MainActor
     private func cardBeadIDs(_ app: XCUIApplication) -> Set<String> {
-        let cards = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'line/'"))
-        return Set(cards.allElementsBoundByIndex.flatMap {
-            (($0.value as? String) ?? "").split(whereSeparator: \.isWhitespace).map(String.init)
-        })
+        let ids = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'bead-id/'"))
+        return Set(ids.allElementsBoundByIndex.map { String($0.identifier.dropFirst("bead-id/".count)) })
     }
 }

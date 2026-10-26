@@ -4,8 +4,9 @@ import SwiftUI
 // from top to bottom on a rail, the track under each coloured by its
 // state and dashed where people handle it, the bead cards hanging at
 // theirs, and the backlog folded to a count until it is tapped open.
-// Pushed onto the lines stack, with the system's back. Read-only: the
-// bead cards hold no tap yet. Pull to refresh reads the board again.
+// Pushed onto the lines stack, with the system's back. Read-only: a
+// bead card pushes the bead's card. Pull to refresh reads the board
+// again.
 struct RouteMapScreen: View {
     @Bindable var model: LineModel
     var route: LineRoute
@@ -16,9 +17,12 @@ struct RouteMapScreen: View {
             LazyVStack(alignment: .leading, spacing: 0) {
                 if let map {
                     ForEach(Array(map.stations.enumerated()), id: \.element.name) { index, station in
-                        StationView(station: station, last: index == map.stations.count - 1) {
-                            model.toggleBacklog(depot: map.depot, flow: map.flow, stage: station.name)
-                        }
+                        StationView(
+                            station: station,
+                            last: index == map.stations.count - 1,
+                            toggle: { model.toggleBacklog(depot: map.depot, flow: map.flow, stage: station.name) },
+                            openBead: { model.openBead($0) }
+                        )
                     }
                 }
             }
@@ -48,6 +52,7 @@ private struct StationView: View {
     var station: Station
     var last: Bool
     var toggle: () -> Void
+    var openBead: (String) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -56,7 +61,7 @@ private struct StationView: View {
             } else {
                 head
                 ForEach(station.beads, id: \.id) { bead in
-                    StationBeadCard(bead: bead)
+                    StationBeadCard(bead: bead) { openBead(bead.id) }
                 }
             }
         }
@@ -183,51 +188,56 @@ private struct TrackRail: View {
 }
 
 /// One bead at its station: its id and title, who works it and its
-/// stay, and its remark faint where it has one. The card reads as one
-/// element.
+/// stay, and its remark faint where it has one; a tap pushes its card.
+/// The card reads as one element.
 private struct StationBeadCard: View {
     var bead: StationBead
+    var open: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .lastTextBaseline, spacing: 8) {
-                Text(bead.id)
-                    .themeType(.code)
-                    .foregroundStyle(ThemeColor.textPrimary.color)
-                    .lineLimit(1)
-                    .layoutPriority(1)
-                if !bead.title.isEmpty {
-                    Text(bead.title)
-                        .themeType(.label)
+        Button(action: open) {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .lastTextBaseline, spacing: 8) {
+                    Text(bead.id)
+                        .themeType(.code)
                         .foregroundStyle(ThemeColor.textPrimary.color)
                         .lineLimit(1)
+                        .layoutPriority(1)
+                    if !bead.title.isEmpty {
+                        Text(bead.title)
+                            .themeType(.label)
+                            .foregroundStyle(ThemeColor.textPrimary.color)
+                            .lineLimit(1)
+                    }
                 }
-            }
-            if bead.working {
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(ThemeColor.statusRunning.color)
-                        .frame(width: 8, height: 8)
-                    Text(workerWords(bead))
+                if bead.working {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(ThemeColor.statusRunning.color)
+                            .frame(width: 8, height: 8)
+                        Text(workerWords(bead))
+                            .themeType(.meta)
+                            .foregroundStyle(ThemeColor.textSecondary.color)
+                    }
+                    .padding(.top, 4)
+                }
+                if let meta = beadMeta(bead) {
+                    Text(meta)
                         .themeType(.meta)
                         .foregroundStyle(ThemeColor.textSecondary.color)
+                        .padding(.top, bead.working ? 2 : 4)
                 }
-                .padding(.top, 4)
             }
-            if let meta = beadMeta(bead) {
-                Text(meta)
-                    .themeType(.meta)
-                    .foregroundStyle(ThemeColor.textSecondary.color)
-                    .padding(.top, bead.working ? 2 : 4)
-            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(ThemeColor.surfaceRaised.color, in: RoundedRectangle(cornerRadius: 8))
+            .overlay { RoundedRectangle(cornerRadius: 8).strokeBorder(ThemeColor.borderSubtle.color, lineWidth: 1) }
+            .contentShape(RoundedRectangle(cornerRadius: 8))
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(ThemeColor.surfaceRaised.color, in: RoundedRectangle(cornerRadius: 8))
-        .overlay { RoundedRectangle(cornerRadius: 8).strokeBorder(ThemeColor.borderSubtle.color, lineWidth: 1) }
+        .buttonStyle(.plain)
         .padding(.top, 8)
-        .accessibilityElement(children: .combine)
+        .accessibilityHint("Opens the bead's card")
         .accessibilityIdentifier("bead/\(bead.id)")
     }
 }

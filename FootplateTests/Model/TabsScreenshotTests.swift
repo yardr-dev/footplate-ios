@@ -6,10 +6,12 @@ import XCTest
 // The tabs rendered in the simulator against fake-followed state
 // (design 3.5, the bead's screenshots): the Crew, Decide and Lines
 // tabs, one pushed conversation and one pushed route map, the backlog
-// shut and open, at phone and pad size. Hand-run for the bead note;
-// the gate runs it too, and it only asserts that each tab renders
-// non-empty at each size. PNGs land in `NAV_SHOTS_DIR`, or the
-// temporary directory's `nav-shots` where that names none.
+// shut and open, and the bead cards pushed from it (a worked bead on
+// its line, one held in Elsewhere, the Ask landing in the
+// yardmaster's conversation), at phone and pad size. Hand-run for
+// the bead note; the gate runs it too, and it only asserts that each
+// tab renders non-empty at each size. PNGs land in `NAV_SHOTS_DIR`, or
+// the temporary directory's `nav-shots` where that names none.
 @MainActor
 final class TabsScreenshotTests: XCTestCase {
     private let phone = CGSize(width: 402, height: 874)
@@ -46,7 +48,10 @@ final class TabsScreenshotTests: XCTestCase {
         let conversation = ConversationModel(mailroom: mailroom, now: { now }, zone: { zone })
         let decisions = DecisionsModel(records: records, mailroom: mailroom, nav: nav, now: { now }, zone: { zone })
         let decision = DecisionModel(mailroom: mailroom, records: records, nav: nav, unlock: FakeUnlock(), now: { now }, zone: { zone })
-        let line = LineModel(followers: { ["": home, "laptop": laptop] }, nav: nav, now: { now })
+        let line = LineModel(
+            followers: { ["": home, "laptop": laptop] }, nav: nav,
+            conversation: conversation, origin: fake.origin, now: { now }
+        )
         let pair = PairModel(pairer: pairer, records: records, nav: nav)
         let signIn = SignInModel(pairer: pairer, records: records, nav: nav)
         let notifier = Notifier(mailroom: mailroom, records: records, allowed: { true }, tell: { _ in })
@@ -90,13 +95,52 @@ final class TabsScreenshotTests: XCTestCase {
         try await render(tabs(), scene: scene, size: pad, to: dir.appendingPathComponent("lines-ipad.png"))
         // One line pushed: its route map with the backlog shut, then open.
         nav.openLine(yard: "", depot: "yard", flow: "default")
-        XCTAssertEqual(line.routeMap(for: nav.linesPath[0])?.stations.map(\.name), ["backlog", "new", "review", "decide", "landed"])
+        XCTAssertEqual(
+            line.routeMap(for: LineRoute(yard: "", depot: "yard", flow: "default"))?.stations.map(\.name),
+            ["backlog", "new", "review", "decide", "landed"]
+        )
         try await render(tabs(), scene: scene, size: phone, to: dir.appendingPathComponent("route-iphone.png"))
         try await render(tabs(), scene: scene, size: pad, to: dir.appendingPathComponent("route-ipad.png"))
         line.toggleBacklog(depot: "yard", flow: "default", stage: "backlog")
         try await render(tabs(), scene: scene, size: phone, to: dir.appendingPathComponent("route-open-iphone.png"))
         line.toggleBacklog(depot: "yard", flow: "default", stage: "backlog")
+
+        // A station's bead pushed as its card on the route map: the
+        // worked bead on its line's strip with its stage marked, and what
+        // is happening now.
+        line.openBead("yd-train")
+        XCTAssertEqual(nav.linesPath.count, 2)
+        XCTAssertEqual(
+            line.card(for: BeadRoute(yard: "", bead: "yd-train"))?.head,
+            "yard · default · new for 2h · expected 11–25m"
+        )
+        try await render(tabs(), scene: scene, size: phone, to: dir.appendingPathComponent("bead-iphone.png"))
+        try await render(tabs(), scene: scene, size: pad, to: dir.appendingPathComponent("bead-ipad.png"))
+        // A bead held in Elsewhere: no strip, only the line's name in
+        // the head, and its remark under Now.
         nav.linesPath = []
+        line.openBead("yd-fence")
+        XCTAssertEqual(line.card(for: BeadRoute(yard: "", bead: "yd-fence"))?.head, "yard · Elsewhere")
+        try await render(tabs(), scene: scene, size: phone, to: dir.appendingPathComponent("bead-elsewhere-iphone.png"))
+
+        // Ask yardmaster on the card: the crew place on the yardmaster's
+        // conversation, its field started with the bead's id.
+        nav.linesPath = []
+        line.openBead("yd-train")
+        line.askYardmaster(about: "yd-train")
+        XCTAssertEqual(nav.place, .crew)
+        XCTAssertEqual(nav.crewPath, [ConversationRoute(yard: "", with: "yardmaster")])
+        // The screen's open starts the draft; the test makes it, as the
+        // pushed conversation below is opened, so nothing waits on the
+        // screen to appear.
+        conversation.open(yard: "", with: "yardmaster")
+        XCTAssertEqual(conversation.state.draft, "yd-train ")
+        try await render(tabs(), scene: scene, size: phone, to: dir.appendingPathComponent("ask-iphone.png"))
+        conversation.draft("")
+        conversation.leave()
+        nav.crewPath = []
+        nav.linesPath = []
+        nav.place = .crew
 
         nav.place = .crew
         nav.openConversation(yard: "", with: "yardmaster")

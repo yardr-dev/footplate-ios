@@ -137,12 +137,15 @@ struct ConversationScreen: View {
                         .accessibilityLabel("Attach a picture")
                         TextField("Write back", text: $field, axis: .vertical)
                             .lineLimit(1...5)
+                            .accessibilityIdentifier("conversation-field")
                             .themeType(.body)
                             .padding(.horizontal, 12)
                             .frame(minHeight: 48)
                             .background(ThemeColor.surfaceRaised.color, in: RoundedRectangle(cornerRadius: 6))
                             .overlay { RoundedRectangle(cornerRadius: 6).strokeBorder(ThemeColor.borderStrong.color, lineWidth: 1) }
-                            .onChange(of: field) { _, text in model.draft(text) }
+                            .onChange(of: field) { _, text in
+                                if text != model.draftText { model.draft(text) }
+                            }
                             .onChange(of: state.draft) { _, draft in
                                 if draft.isEmpty { field = "" }
                             }
@@ -178,7 +181,12 @@ struct ConversationScreen: View {
             }
         }
         .toolbar(.hidden, for: .tabBar)
-        .onAppear { model.open(yard: yard, with: with) }
+        .onAppear {
+            model.open(yard: yard, with: with)
+            // The model's draft is the field's: one kept across a leave,
+            // or one the bead card's Ask started with the bead's id.
+            field = model.draftText
+        }
         .onDisappear { model.leave() }
         .photosPicker(isPresented: $showGallery, selection: $pickerItem, matching: .images)
         .onChange(of: pickerItem) { _, item in
