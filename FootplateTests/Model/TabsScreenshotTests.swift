@@ -5,11 +5,11 @@ import XCTest
 
 // The tabs rendered in the simulator against fake-followed state
 // (design 3.5, the bead's screenshots): the Crew, Decide and Lines
-// tabs and one pushed conversation, at phone and pad size. Hand-run
-// for the bead note; the gate runs it too, and it only asserts that
-// each tab renders non-empty at each size. PNGs land in
-// `NAV_SHOTS_DIR`, or the temporary directory's `nav-shots` where
-// that names none.
+// tabs, one pushed conversation and one pushed route map, the backlog
+// shut and open, at phone and pad size. Hand-run for the bead note;
+// the gate runs it too, and it only asserts that each tab renders
+// non-empty at each size. PNGs land in `NAV_SHOTS_DIR`, or the
+// temporary directory's `nav-shots` where that names none.
 @MainActor
 final class TabsScreenshotTests: XCTestCase {
     private let phone = CGSize(width: 402, height: 874)
@@ -46,7 +46,7 @@ final class TabsScreenshotTests: XCTestCase {
         let conversation = ConversationModel(mailroom: mailroom, now: { now }, zone: { zone })
         let decisions = DecisionsModel(records: records, mailroom: mailroom, nav: nav, now: { now }, zone: { zone })
         let decision = DecisionModel(mailroom: mailroom, records: records, nav: nav, unlock: FakeUnlock(), now: { now }, zone: { zone })
-        let line = LineModel(followers: { ["": home, "laptop": laptop] })
+        let line = LineModel(followers: { ["": home, "laptop": laptop] }, nav: nav, now: { now })
         let pair = PairModel(pairer: pairer, records: records, nav: nav)
         let signIn = SignInModel(pairer: pairer, records: records, nav: nav)
         let notifier = Notifier(mailroom: mailroom, records: records, allowed: { true }, tell: { _ in })
@@ -61,7 +61,7 @@ final class TabsScreenshotTests: XCTestCase {
             Letter(seq: 14, at: "2026-10-08T09:31:00Z", from: "yardmaster", to: "jo", text: "Or after Friday?"),
             Letter(seq: 36, at: "2026-10-08T09:32:00Z", from: "jo", to: "yardmaster", text: "On the train. Land the shed when it is green."),
         ], more: false)
-        home.board = try cannedBoard()
+        home.board = try routeBoard()
         laptop.state.status = .down(words: "The yard is away: the edge cannot reach it.", short: "yard away")
         line.open(yard: "")
 
@@ -88,6 +88,15 @@ final class TabsScreenshotTests: XCTestCase {
         nav.place = .lines
         try await render(tabs(), scene: scene, size: phone, to: dir.appendingPathComponent("lines-iphone.png"))
         try await render(tabs(), scene: scene, size: pad, to: dir.appendingPathComponent("lines-ipad.png"))
+        // One line pushed: its route map with the backlog shut, then open.
+        nav.openLine(yard: "", depot: "yard", flow: "default")
+        XCTAssertEqual(line.routeMap(for: nav.linesPath[0])?.stations.map(\.name), ["backlog", "new", "review", "decide", "landed"])
+        try await render(tabs(), scene: scene, size: phone, to: dir.appendingPathComponent("route-iphone.png"))
+        try await render(tabs(), scene: scene, size: pad, to: dir.appendingPathComponent("route-ipad.png"))
+        line.toggleBacklog(depot: "yard", flow: "default", stage: "backlog")
+        try await render(tabs(), scene: scene, size: phone, to: dir.appendingPathComponent("route-open-iphone.png"))
+        line.toggleBacklog(depot: "yard", flow: "default", stage: "backlog")
+        nav.linesPath = []
 
         nav.place = .crew
         nav.openConversation(yard: "", with: "yardmaster")
@@ -123,6 +132,29 @@ final class TabsScreenshotTests: XCTestCase {
         try png.write(to: file)
         XCTAssertGreaterThan(png.count, 10000, "the rendered screen looks blank")
         window.isHidden = true
+    }
+
+    /// The canned board with what the route map draws besides: a range
+    /// on the worked bead, a bead standing for a seat on a full stage,
+    /// waits on the reader at the review, at the person's own stage and
+    /// in the backlog, and a landed stage so the person's stage has
+    /// track under it.
+    private func routeBoard() throws -> Flows {
+        var board = try cannedBoard()
+        var stages = board.depots[0].flows[0].stages
+        XCTAssertEqual(stages.map(\.stage), ["new", "review", "decide", "backlog"])
+        stages[0].beads[1].expected = "11–25m"
+        stages[0].taken = 4
+        stages[0].beads.append(FlowBead(bead: "yd-bolt", title: "Oil the points", expected: "5h–8h"))
+        stages[1].beads[0].remark = "waits for jo"
+        stages[2].lamp = "turn"
+        stages[2].beads[0].remark = "waits for jo"
+        for index in 0..<3 {
+            stages[3].beads[index].remark = "waits for jo"
+        }
+        stages.insert(FlowStage(stage: "landed", group: "muse-landers", terminal: true, limit: 1, taken: 0), at: 3)
+        board.depots[0].flows[0].stages = stages
+        return board
     }
 
     /// The fake yard's board, as Canned serves it: two depots.

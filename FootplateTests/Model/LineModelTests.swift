@@ -6,26 +6,30 @@ import XCTest
 // LineModelTest): the overview with its stats, cards and quiet chips,
 // a stat filtering it, the board drawn with its head words, a failed
 // read said and cleared, an unreadable depot in the yard's own words,
-// the place following a yard switch, and the backlog opening and
-// shutting.
+// the place following a yard switch, the backlog opening and
+// shutting, and a line pushed as its route map.
 @MainActor
 final class LineModelTests: XCTestCase {
     private var home: FakeFollowed!
     private var laptop: FakeFollowed!
+    private var nav: Nav!
     private var model: LineModel!
 
     override func setUp() {
         super.setUp()
         home = FakeFollowed()
         laptop = FakeFollowed()
+        nav = Nav(place: .lines)
+        let now = parseInstant("2026-10-08T10:11:00Z")!
         model = LineModel(followers: { [home, laptop] in
             ["": home!, "laptop": laptop!]
-        })
+        }, nav: nav, now: { now })
     }
 
     override func tearDown() {
         model.leave()
         model = nil
+        nav = nil
         home = nil
         laptop = nil
         super.tearDown()
@@ -101,10 +105,15 @@ final class LineModelTests: XCTestCase {
         model.open(yard: "")
         try await waitRead()
 
+        // The route map's backlog station opens and shuts with it.
+        let route = LineRoute(yard: "", depot: "yard", flow: "default")
+        XCTAssertEqual(model.routeMap(for: route)?.stations.first?.open, false)
         model.toggleBacklog(depot: "yard", flow: "default", stage: "backlog")
         XCTAssertTrue(model.state.depots[0].flows[0].stages[3].open)
+        XCTAssertEqual(model.routeMap(for: route)?.stations.first?.open, true)
         model.toggleBacklog(depot: "yard", flow: "default", stage: "backlog")
         XCTAssertFalse(model.state.depots[0].flows[0].stages[3].open)
+        XCTAssertEqual(model.routeMap(for: route)?.stations.first?.open, false)
     }
 
     func testAFailedReadSaysWhyAndTheNextReadClearsIt() async throws {
@@ -270,6 +279,163 @@ final class LineModelTests: XCTestCase {
         XCTAssertEqual(model.state.filter, .all)
     }
 
+    func testALineOpensAsARouteMap() async throws {
+        home.up(loaded())
+        // The backlog is served last here and drawn first.
+        var rich = richBoard()
+        let served = rich.depots[0].flows[0].stages.removeFirst()
+        rich.depots[0].flows[0].stages.append(served)
+        home.board = rich
+        model.open(yard: "")
+        try await waitRead()
+
+        model.openLine(depot: "yard", flow: "default")
+        let route = LineRoute(yard: "", depot: "yard", flow: "default")
+        XCTAssertEqual(nav.linesPath, [route])
+        model.openLine(depot: "yard", flow: "default")
+        XCTAssertEqual(nav.linesPath, [route], "opening what is pushed pushes nothing more")
+
+        let map = try XCTUnwrap(model.routeMap(for: route))
+        XCTAssertEqual(map.title, "yard · default")
+        XCTAssertEqual(map.head, "4 in transit")
+        XCTAssertEqual(map.stations.map(\.name), ["backlog", "new", "review", "decide"])
+        XCTAssertEqual(map.stations.map(\.state), [.none, .broken, .yourTurn, .none])
+        XCTAssertEqual(map.stations.map(\.human), [false, false, false, true])
+        XCTAssertEqual(
+            map.stations.map(\.words),
+            [
+                "no route matches", "muse-builders · 2 of 4 seats", "muse-reviewers · 1 of 2 seats",
+                "mckean · waiting on a person · 0 of 1 seats",
+            ]
+        )
+        // The backlog stands shut: its count and the waits on the reader
+        // are what its row says, its beads what it opens on.
+        let backlog = map.stations[0]
+        XCTAssertTrue(backlog.backlog)
+        XCTAssertFalse(backlog.open)
+        XCTAssertEqual(backlog.beads.map(\.id), ["yd-draft-1", "yd-draft-2", "yd-draft-3"])
+        XCTAssertEqual(backlog.waits, 2)
+        let new = map.stations[1]
+        XCTAssertFalse(new.backlog)
+        XCTAssertEqual(new.beads.map(\.id), ["yd-gate", "yd-train"])
+        XCTAssertEqual(new.beads[0].remark, "blocked by yd-train")
+        XCTAssertFalse(new.beads[0].waitsSeat)
+        let train = new.beads[1]
+        XCTAssertEqual(
+            train,
+            StationBead(
+                id: "yd-train", title: "Release train", working: true, worker: "train-new",
+                workedBy: "worked by muse-builders · claude/opus", stay: "41m", expected: "11–25m"
+            )
+        )
+        // The worker words name the session and the stay; the longer
+        // words stand in where the yard names no session.
+        XCTAssertEqual(workerWords(train), "train-new · 41m")
+        XCTAssertEqual(beadMeta(train), "expected 11–25m")
+        var unnamed = train
+        unnamed.worker = ""
+        XCTAssertEqual(workerWords(unnamed), "muse-builders · claude/opus · 41m")
+        unnamed.workedBy = nil
+        unnamed.stay = ""
+        XCTAssertEqual(workerWords(unnamed), "")
+        // The wait on the reader reads `you`.
+        XCTAssertEqual(map.stations[2].beads.map(\.remark), ["waits for you"])
+        XCTAssertEqual(beadMeta(map.stations[2].beads[0]), "waits for you")
+        XCTAssertNil(beadMeta(map.stations[3].beads[0]))
+        XCTAssertEqual(
+            beadMeta(StationBead(id: "yd-late", title: "", remark: "late by 40m", expected: "5h–8h", waitsSeat: true)),
+            "late by 40m · waits for a seat · expected 5h–8h"
+        )
+
+        // The whole line, whatever filter the overview holds.
+        model.filter(.late)
+        let filtered = try XCTUnwrap(model.routeMap(for: route))
+        XCTAssertEqual(filtered, map)
+        model.filter(.all)
+
+        // The backlog opens where it shut and shuts where it opened.
+        model.toggleBacklog(depot: "yard", flow: "default", stage: "backlog")
+        XCTAssertEqual(model.routeMap(for: route)?.stations.map(\.open), [true, false, false, false])
+        model.toggleBacklog(depot: "yard", flow: "default", stage: "backlog")
+        XCTAssertEqual(model.routeMap(for: route)?.stations.map(\.open), [false, false, false, false])
+    }
+
+    func testAFullStageNamesWaitsForASeatAndNoOtherReason() async throws {
+        home.up(loaded())
+        home.board = richBoard()
+        model.open(yard: "")
+        try await waitRead()
+
+        // The plain bead on the full stage waits for a seat; the late
+        // mark waits too, but its remark says why instead.
+        let map = try XCTUnwrap(model.routeMap(for: LineRoute(yard: "", depot: "drafts", flow: "default")))
+        XCTAssertEqual(map.head, "2 in transit")
+        XCTAssertEqual(map.stations.map(\.name), ["new", "shipped"])
+        XCTAssertEqual(map.stations[0].beads.map(\.waitsSeat), [true, true])
+        XCTAssertEqual(map.stations[0].beads[1].remark, "late by 40m")
+        XCTAssertEqual(beadMeta(map.stations[0].beads[0]), "waits for a seat")
+        // A stage nobody stands in is still a station.
+        XCTAssertEqual(map.stations[1].beads, [])
+        XCTAssertEqual(map.stations[1].state, .none)
+        XCTAssertTrue(map.stations[1].human)
+
+        let full = FlowStage(stage: "new", limit: 1, taken: 1)
+        let room = FlowStage(stage: "new", limit: 2, taken: 1)
+        let unrouted = FlowStage(stage: "new")
+        let plain = FlowBead(bead: "yd-plain")
+        XCTAssertTrue(waitsForSeat(plain, in: full))
+        XCTAssertTrue(waitsForSeat(FlowBead(bead: "yd-late", remark: "late by 40m", tone: "amber"), in: full))
+        XCTAssertFalse(waitsForSeat(FlowBead(bead: "yd-work", working: true), in: full))
+        XCTAssertFalse(waitsForSeat(FlowBead(bead: "yd-held", remark: "held by jo", tone: "red"), in: full))
+        XCTAssertFalse(waitsForSeat(FlowBead(bead: "yd-stall", remark: "stalled", tone: "red"), in: full))
+        XCTAssertFalse(waitsForSeat(FlowBead(bead: "yd-block", remark: "blocked by yd-train", tone: "amber"), in: full))
+        XCTAssertFalse(waitsForSeat(FlowBead(bead: "yd-wait", remark: "waits for jo", tone: "amber"), in: full))
+        XCTAssertFalse(waitsForSeat(plain, in: room))
+        XCTAssertFalse(waitsForSeat(plain, in: unrouted))
+        XCTAssertFalse(waitsForSeat(plain, in: FlowStage(stage: "new", limit: 0, taken: 0)))
+    }
+
+    func testThePushedLineLeavesWithItsYardAndItsFlow() async throws {
+        home.up(loaded())
+        laptop.up(loaded())
+        home.board = board()
+        laptop.board = board()
+        // No yard shown yet: a tap has nowhere to push.
+        model.openLine(depot: "yard", flow: "default")
+        XCTAssertEqual(nav.linesPath, [])
+        model.open(yard: "")
+        try await waitRead()
+
+        // Nothing maps where no depot or flow is, or the yard is another's.
+        let now = parseInstant("2026-10-08T10:11:00Z")!
+        XCTAssertNil(lineRoute(board: board(), me: "jo", depot: "nope", flow: "default", now: now, expanded: []))
+        XCTAssertNil(lineRoute(board: board(), me: "jo", depot: "yard", flow: "nope", now: now, expanded: []))
+        XCTAssertNil(model.routeMap(for: LineRoute(yard: "", depot: "nope", flow: "default")))
+        XCTAssertNil(model.routeMap(for: LineRoute(yard: "laptop", depot: "yard", flow: "default")))
+
+        // A line the board no longer holds leaves for the overview on
+        // the next read; the lines it still holds stay.
+        model.openLine(depot: "yard", flow: "default")
+        model.openLine(depot: "drafts", flow: "default")
+        XCTAssertEqual(nav.linesPath.map(\.depot), ["yard", "drafts"])
+        var without = board()
+        without.depots.removeLast()
+        home.board = without
+        await model.refresh()
+        XCTAssertEqual(nav.linesPath.map(\.depot), ["yard"])
+
+        // The other yard's line is none of the yard switched to.
+        model.open(yard: "laptop")
+        try await waitFor("the laptop's board") { [model] in model?.state.read == true }
+        XCTAssertEqual(nav.linesPath, [])
+        model.openLine(depot: "yard", flow: "default")
+        XCTAssertEqual(nav.linesPath, [LineRoute(yard: "laptop", depot: "yard", flow: "default")])
+        // The tab left and come back to the same yard keeps the line.
+        model.leave()
+        model.open(yard: "laptop")
+        XCTAssertEqual(nav.linesPath.count, 1)
+    }
+
     func testStageStatesReadLampAndWork() {
         let plain = FlowBead(bead: "yd-plain")
         let worked = FlowBead(bead: "yd-worked", working: true)
@@ -309,6 +475,9 @@ final class LineModelTests: XCTestCase {
         XCTAssertEqual(youFirst(remark: "waits for jo, yardmaster", me: "jo"), "waits for you, yardmaster")
         XCTAssertEqual(youFirst(remark: "waits for yardmaster", me: "jo"), "waits for yardmaster")
         XCTAssertEqual(youFirst(remark: "stalled", me: "jo"), "stalled")
+        XCTAssertEqual(workerSession("herdr train-new"), "train-new")
+        XCTAssertEqual(workerSession("exec 12"), "exec 12")
+        XCTAssertEqual(workerSession(""), "")
     }
 
     func testStaysReadTheYardsClock() {
@@ -502,16 +671,17 @@ final class LineModelTests: XCTestCase {
         )
     }
 
-    /// The board with every state the overview draws: a fault, a wait
-    /// on the reader, a late bead, and a quiet line.
+    /// The board with every state the overview and the route map draw:
+    /// a fault, waits on the reader, a late bead, and a quiet line.
     private func richBoard() -> Flows {
         var rich = board()
         // The new stage faults; the worked bead carries its range.
         rich.depots[0].flows[0].stages[1].lamp = "fault"
         rich.depots[0].flows[0].stages[1].beads[1].expected = "11–25m"
         rich.depots[0].flows[0].stages[1].beads[1].enteredStageAt = "2026-10-08T09:30:00Z"
-        // The review waits on the reader.
+        // The review waits on the reader, and so do two of the backlog.
         rich.depots[0].flows[0].stages[2].beads[0].remark = "waits for jo"
+        rich.depots[0].flows[0].stages[0].beads[0].remark = "waits for jo"
         // Drafts fills its seats and runs a bead late.
         rich.depots[1].flows[0].stages[0].limit = 1
         rich.depots[1].flows[0].stages[0].taken = 1

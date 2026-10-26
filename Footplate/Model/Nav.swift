@@ -4,7 +4,8 @@ import Foundation
 // TabView, one stack of pushed screens per place that pushes any, and
 // the Pair and Sign in covers. The views read it through TabView
 // selection and NavigationStack paths, so the tab bar, the titles,
-// the back button and the swipe back are the system's own.
+// the back button and the swipe back are the system's own. The Lines
+// stack pushes a route map per line, which design 3.5 first left out.
 
 /// The three places of the tab bar.
 enum Place: Hashable, Sendable {
@@ -28,6 +29,14 @@ struct DecisionRoute: Hashable, Sendable {
     var ask: Int64
 }
 
+/// A line pushed onto the lines stack as its route map: the flow `flow`
+/// of the depot `depot` of the yard named `yard`.
+struct LineRoute: Hashable, Sendable {
+    var yard: String
+    var depot: String
+    var flow: String
+}
+
 /// A Sign in cover, over the Pair screen or the tabs; `again` when the
 /// session ran out or was revoked, and only the password is asked.
 struct SignInRequest: Hashable, Sendable {
@@ -44,6 +53,8 @@ final class Nav {
     var crewPath: [ConversationRoute]
     /// The decisions pushed onto the decide stack.
     var decidePath: [DecisionRoute]
+    /// The lines pushed onto the lines stack.
+    var linesPath: [LineRoute]
     /// Pair another yard, over the tabs. The Pair root, shown while no
     /// yard is paired, is the records', not this.
     var pairing: Bool
@@ -54,6 +65,7 @@ final class Nav {
         self.place = place
         self.crewPath = []
         self.decidePath = []
+        self.linesPath = []
         self.pairing = false
         self.signIn = nil
     }
@@ -70,6 +82,21 @@ final class Nav {
         let route = DecisionRoute(yard: yard, bead: bead, ask: ask)
         guard decidePath.last != route else { return }
         decidePath.append(route)
+    }
+
+    /// Pushes the line's route map, unless it is the one pushed already.
+    func openLine(yard: String, depot: String, flow: String) {
+        let route = LineRoute(yard: yard, depot: depot, flow: flow)
+        guard linesPath.last != route else { return }
+        linesPath.append(route)
+    }
+
+    /// Pops the pushed lines for which `gone` holds: a yard switched
+    /// away from, or a flow the board no longer holds, leaves for the
+    /// overview.
+    func closeLines(where gone: (LineRoute) -> Bool) {
+        guard linesPath.contains(where: gone) else { return }
+        linesPath.removeAll(where: gone)
     }
 
     /// Pops the decision where it is the one pushed: an answered card
@@ -109,6 +136,9 @@ final class Nav {
         if decidePath.contains(where: { $0.yard == name }) {
             decidePath = []
         }
+        if linesPath.contains(where: { $0.yard == name }) {
+            linesPath = []
+        }
     }
 
     /// Every yard forgotten: the stacks are cleared for the Pair root.
@@ -118,5 +148,6 @@ final class Nav {
         place = .crew
         crewPath = []
         decidePath = []
+        linesPath = []
     }
 }

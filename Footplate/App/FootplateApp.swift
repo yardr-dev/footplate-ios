@@ -66,7 +66,7 @@ final class AppServices {
         self.decisionsModel = DecisionsModel(records: records, mailroom: mailroom, nav: nav)
         self.decisionModel = DecisionModel(mailroom: mailroom, records: records, nav: nav, unlock: LAUnlockPrompt())
         self.inboxModel = InboxModel(pairer: pairer, records: records, followers: { [:] }, mailroom: mailroom, nav: nav)
-        self.lineModel = LineModel(followers: { [:] })
+        self.lineModel = LineModel(followers: { [:] }, nav: nav)
         self.notifier = Notifier(
             mailroom: mailroom,
             records: records,

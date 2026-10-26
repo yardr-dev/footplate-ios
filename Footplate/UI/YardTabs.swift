@@ -28,7 +28,7 @@ struct TabsView: View {
             }
             .badge(badge)
             Tab("Lines", systemImage: "list.bullet", value: Place.lines) {
-                LinesScreen(inbox: inbox, records: records, model: line)
+                LinesScreen(inbox: inbox, records: records, model: line, nav: nav)
             }
         }
         .fullScreenCover(isPresented: $nav.pairing, onDismiss: {

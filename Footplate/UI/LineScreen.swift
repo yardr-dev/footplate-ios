@@ -3,17 +3,22 @@ import SwiftUI
 // The lines place (design 3.5): the overview with its stats as
 // filters, a card per moving line and the quiet lines' chips, the
 // Elsewhere rows and the beads with no line, in the place's own
-// stack. Read-only: a line tap does nothing yet, and a card's bead
-// ids are plain text. Pull to refresh reads the board again.
+// stack. Read-only: a card or a quiet chip pushes its line's route
+// map, and a card's bead ids are plain text. Pull to refresh reads
+// the board again.
 struct LinesScreen: View {
     @Bindable var inbox: InboxModel
     @Bindable var records: Records
     @Bindable var model: LineModel
+    @Bindable var nav: Nav
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $nav.linesPath) {
             content(model.state)
                 .yardPlace(inbox: inbox, title: "Lines")
+                .navigationDestination(for: LineRoute.self) { route in
+                    RouteMapScreen(model: model, route: route)
+                }
         }
         .onAppear { openSelected() }
         .onDisappear { model.leave() }
@@ -58,7 +63,13 @@ struct LinesScreen: View {
                             .accessibilityIdentifier("quiet-head")
                         FlowLayout {
                             ForEach(state.quiet, id: \.title) { line in
-                                ChipLabel(text: line.title, selected: false)
+                                Button {
+                                    model.openLine(depot: line.depot, flow: line.flow)
+                                } label: {
+                                    ChipLabel(text: line.title, selected: false)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityIdentifier("quiet/\(line.depot)/\(line.flow)")
                             }
                         }
                         .padding(.horizontal, 20)
@@ -167,40 +178,53 @@ struct LinesScreen: View {
     }
 
     /// One line's card: its lamp, its count, a strip with every stage
-    /// the same width, and its beads' ids as plain text.
+    /// the same width, and its beads' ids as plain text; a tap pushes
+    /// the line's route map. The card reads as one control, its bead
+    /// ids as its value.
     private func lineCard(_ card: LineCard) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                if let dot = lampColor(card.lamp) {
-                    Circle()
-                        .fill(dot)
-                        .frame(width: 8, height: 8)
+        Button {
+            model.openLine(depot: card.depot, flow: card.flow)
+        } label: {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    if let dot = lampColor(card.lamp) {
+                        Circle()
+                            .fill(dot)
+                            .frame(width: 8, height: 8)
+                    }
+                    Text(card.title)
+                        .themeType(.label)
+                        .foregroundStyle(ThemeColor.textPrimary.color)
+                        .lineLimit(1)
+                    Spacer()
+                    Text("\(card.inTransit) · \(card.backlog) backlog")
+                        .themeType(.meta)
+                        .foregroundStyle(ThemeColor.textSecondary.color)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(ThemeColor.textSecondary.color)
                 }
-                Text(card.title)
-                    .themeType(.label)
-                    .foregroundStyle(ThemeColor.textPrimary.color)
-                    .lineLimit(1)
-                Spacer()
-                Text("\(card.inTransit) · \(card.backlog) backlog")
-                    .themeType(.meta)
-                    .foregroundStyle(ThemeColor.textSecondary.color)
+                strip(card.stages)
+                    .padding(.top, 10)
+                if !card.beads.isEmpty {
+                    Text(card.beads.joined(separator: " "))
+                        .themeType(.code)
+                        .foregroundStyle(ThemeColor.textPrimary.color)
+                        .lineLimit(2)
+                        .padding(.top, 8)
+                }
             }
-            strip(card.stages)
-                .padding(.top, 10)
-            if !card.beads.isEmpty {
-                Text(card.beads.joined(separator: " "))
-                    .themeType(.code)
-                    .foregroundStyle(ThemeColor.textPrimary.color)
-                    .lineLimit(2)
-                    .padding(.top, 8)
-                    .accessibilityIdentifier("line-beads/\(card.depot)/\(card.flow)")
-            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(ThemeColor.surfaceRaised.color, in: RoundedRectangle(cornerRadius: 12))
+            .contentShape(RoundedRectangle(cornerRadius: 12))
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(ThemeColor.surfaceRaised.color, in: RoundedRectangle(cornerRadius: 12))
+        .buttonStyle(.plain)
         .padding(.horizontal, 20)
         .padding(.vertical, 6)
+        .accessibilityLabel("\(card.title), \(card.inTransit) in transit, \(card.backlog) backlog")
+        .accessibilityValue(card.beads.joined(separator: " "))
+        .accessibilityHint("Opens the route map")
         .accessibilityIdentifier("line/\(card.depot)/\(card.flow)")
     }
 
@@ -242,17 +266,6 @@ struct LinesScreen: View {
             RoundedRectangle(cornerRadius: 3)
                 .fill(color)
                 .frame(height: 6)
-        }
-    }
-
-    /// A state's colour: moving green, your turn accent, broken red,
-    /// none the faint line.
-    private func stateColor(_ state: StageState) -> Color {
-        switch state {
-        case .moving: return ThemeColor.statusRunning.color
-        case .yourTurn: return ThemeColor.textAccent.color
-        case .broken: return ThemeColor.textError.color
-        case .none: return ThemeColor.borderSubtle.color
         }
     }
 
@@ -299,6 +312,17 @@ struct LinesScreen: View {
         .padding(.leading, 36)
         .padding(.trailing, 20)
         .padding(.vertical, 8)
+    }
+}
+
+/// A state's colour: moving green, your turn accent, broken red,
+/// none the faint line. The strip and the route map's rail share it.
+func stateColor(_ state: StageState) -> Color {
+    switch state {
+    case .moving: return ThemeColor.statusRunning.color
+    case .yourTurn: return ThemeColor.textAccent.color
+    case .broken: return ThemeColor.textError.color
+    case .none: return ThemeColor.borderSubtle.color
     }
 }
 
