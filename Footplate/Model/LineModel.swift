@@ -6,7 +6,8 @@ import Foundation
 // Elsewhere rows and the beads with no line. Read when the place
 // opens, read again on pull-to-refresh and on every stream event
 // that moves it, the way footplate reads Flows again; no polling.
-// A line tap does nothing yet: the route map opens it.
+// A line tap pushes its route map: the whole line as stations from
+// top to bottom, whatever filter the overview holds.
 
 /// One open bead on the line, as its row draws it.
 struct LineBead: Equatable, Sendable {
@@ -100,11 +101,60 @@ struct LineCard: Equatable, Sendable {
     var quiet: Bool
 }
 
-/// A quiet line's chip.
+/// A quiet line's chip: it opens the route map too.
 struct QuietLine: Equatable, Sendable {
     var depot: String
     var flow: String
     var title: String
+}
+
+/// One bead at its station, with who works it and its stay.
+struct StationBead: Equatable, Sendable {
+    var id: String
+    var title: String
+    var remark: String = ""
+    var working: Bool = false
+    /// The claiming session short (`train-new`), empty where none.
+    var worker: String = ""
+    /// Who works it (`worked by <group> · <kind>/<model>`), nil where
+    /// the yard names nobody.
+    var workedBy: String? = nil
+    /// How long it has stood here (`41m`), empty where it has no clock.
+    var stay: String = ""
+    /// The yard's printed range (`5h–8h`), empty where it serves none.
+    var expected: String = ""
+    /// Unclaimed with its group's seats all taken: it stands for a seat.
+    var waitsSeat: Bool = false
+}
+
+/// One station of the route map, from top to bottom.
+struct Station: Equatable, Sendable {
+    var name: String
+    /// Whose group works there (`muse-builders · 2 of 4 seats`).
+    var words: String
+    var state: StageState
+    var human: Bool
+    var beads: [StationBead]
+    /// The backlog: collapsed by default, its count word in place of
+    /// its beads.
+    var backlog: Bool = false
+    /// A collapsed backlog tapped open.
+    var open: Bool = false
+    /// The waits on the reader among a backlog's beads, for its shut row.
+    var waits: Int = 0
+}
+
+/// One line opened as a vertical route map (Android's `LineRoute`; the
+/// nav's `LineRoute` is the pushed line's name).
+struct RouteMap: Equatable, Sendable {
+    var depot: String
+    var flow: String
+    /// `yardr · default`.
+    var title: String
+    /// `4 in transit`.
+    var head: String
+    /// The stations from top to bottom, the backlog first.
+    var stations: [Station]
 }
 
 struct LineState: Equatable, Sendable {
@@ -136,7 +186,7 @@ struct LineState: Equatable, Sendable {
 }
 
 /// One backlog stage's collapse, by depot, flow and stage.
-private struct BacklogKey: Hashable {
+struct BacklogKey: Hashable {
     var depot: String
     var flow: String
     var stage: String
@@ -157,13 +207,21 @@ final class LineModel {
     /// The followed yards by name at the edge; set by the app once
     /// its services stand, since the followers are rebuilt with them.
     var followers: @MainActor () -> [String: any Followed]
+    private let nav: Nav
+    private let now: @Sendable () -> Date
     private var active = false
     private var generation = 0
     private var readGeneration = 0
     private var readTask: Task<Void, Never>? = nil
 
-    init(followers: @escaping @MainActor () -> [String: any Followed]) {
+    init(
+        followers: @escaping @MainActor () -> [String: any Followed],
+        nav: Nav,
+        now: @escaping @Sendable () -> Date = { Date() }
+    ) {
         self.followers = followers
+        self.nav = nav
+        self.now = now
     }
 
     var state: LineState {
@@ -202,6 +260,8 @@ final class LineModel {
             selectedFilter = .all
             lastLoaded = nil
             applied = 0
+            // A line pushed for the yard before is none of this one's.
+            nav.closeLines { $0.yard != yard }
         }
         active = true
         attach(yard)
@@ -235,6 +295,23 @@ final class LineModel {
         } else {
             expanded.insert(key)
         }
+    }
+
+    /// A line tapped: its route map is pushed onto the lines stack.
+    func openLine(depot: String, flow: String) {
+        guard let yard = openedYard else { return }
+        nav.openLine(yard: yard, depot: depot, flow: flow)
+    }
+
+    /// The pushed line as its route map, the whole line whatever filter
+    /// the overview holds; nil where the board is not read, is another
+    /// yard's, or holds no such line.
+    func routeMap(for route: LineRoute) -> RouteMap? {
+        guard let board, openedYard == route.yard else { return nil }
+        let me = followers()[route.yard]?.state.loaded?.me.user ?? ""
+        return lineRoute(
+            board: board, me: me, depot: route.depot, flow: route.flow, now: now(), expanded: expanded
+        )
     }
 
     private func lineDepot(_ depot: FlowDepot, me: String, filter: LineFilter) -> LineDepot {
@@ -327,6 +404,10 @@ final class LineModel {
             // board with the old error.
             errorText = nil
             board = fresh
+            // A line the board no longer holds leaves for the overview.
+            nav.closeLines { route in
+                route.yard == yard && flowStages(fresh, depot: route.depot, flow: route.flow) == nil
+            }
         } catch is CancellationError {
             return
         } catch let error as ApiError {
@@ -522,9 +603,7 @@ func lineCards(board: Flows, me: String, filter: LineFilter) -> (lines: [LineCar
     var quiet: [QuietLine] = []
     for depot in board.depots {
         for flow in depot.flows {
-            // The backlog first; every other stage keeps travel order.
-            let stages = flow.stages.filter { $0.stage == backlogStage }
-                + flow.stages.filter { $0.stage != backlogStage }
+            let stages = backlogFirst(flow.stages)
             let travelling = stages.filter { $0.stage != backlogStage }.flatMap { $0.beads }
             let beads = travelling.filter { matches($0, filter: filter, me: me) }.map { $0.bead }
             let states = stages.map(stageStateOf)
@@ -550,6 +629,113 @@ func lineCards(board: Flows, me: String, filter: LineFilter) -> (lines: [LineCar
         }
     }
     return (lines, quiet)
+}
+
+/// The backlog first; every other stage keeps travel order. The strip
+/// and the route map draw it so, where the board's rows put it last.
+private func backlogFirst(_ stages: [FlowStage]) -> [FlowStage] {
+    stages.filter { $0.stage == backlogStage } + stages.filter { $0.stage != backlogStage }
+}
+
+/// The stages of a depot's flow; nil where the depot or the flow is none.
+private func flowStages(_ board: Flows, depot: String, flow: String) -> [FlowStage]? {
+    board.depots.first { $0.name == depot }?.flows.first { $0.name == flow }?.stages
+}
+
+/// One line as its route map: every stage a station from top to
+/// bottom, the backlog first and the landed stage last. Nil where the
+/// depot or the flow is none. The whole line, whatever filter the
+/// overview holds.
+func lineRoute(
+    board: Flows,
+    me: String,
+    depot: String,
+    flow: String,
+    now: Date,
+    expanded: Set<BacklogKey>
+) -> RouteMap? {
+    guard let stages = flowStages(board, depot: depot, flow: flow) else { return nil }
+    let ordered = backlogFirst(stages)
+    let travelling = ordered.filter { $0.stage != backlogStage }.reduce(0) { $0 + $1.beads.count }
+    return RouteMap(
+        depot: depot,
+        flow: flow,
+        title: "\(depot) · \(flow)",
+        head: "\(travelling) in transit",
+        stations: ordered.map { stage in
+            Station(
+                name: stage.stage,
+                words: groupWords(stage),
+                state: stageStateOf(stage),
+                human: stage.human,
+                beads: stage.beads.map {
+                    stationBead($0, me: me, now: now, waitsSeat: waitsForSeat($0, in: stage))
+                },
+                backlog: stage.stage == backlogStage,
+                open: expanded.contains(BacklogKey(depot: depot, flow: flow, stage: stage.stage)),
+                waits: stage.beads.filter { waitsOnYou(remark: $0.remark, me: me) }.count
+            )
+        }
+    )
+}
+
+private func stationBead(_ bead: FlowBead, me: String, now: Date, waitsSeat: Bool) -> StationBead {
+    StationBead(
+        id: bead.bead,
+        title: bead.title,
+        remark: youFirst(remark: bead.remark, me: me),
+        working: bead.working,
+        worker: workerSession(bead.worker),
+        workedBy: workedBy(bead),
+        stay: stayWords(enteredAt: bead.enteredStageAt, now: now),
+        // The yard prints a dash where it has no range.
+        expected: bead.expected == "—" ? "" : bead.expected,
+        waitsSeat: waitsSeat
+    )
+}
+
+/// The session a worker names: without its runner word where the
+/// runner is herdr, as footplate's `worker_session` has it.
+func workerSession(_ worker: String) -> String {
+    removing(prefix: "herdr ", from: worker)
+}
+
+/// Whether the bead waits for a seat at its stage, as footplate's
+/// `waits_for_seat` has it: unclaimed, its remark naming no held,
+/// blocked or waiting state, and its group's seats all taken.
+func waitsForSeat(_ bead: FlowBead, in stage: FlowStage) -> Bool {
+    if bead.working { return false }
+    if bead.tone == "red"
+        || isHeld(remark: bead.remark)
+        || bead.remark.hasPrefix("blocked by ")
+        || bead.remark.hasPrefix("waits for ")
+    {
+        return false
+    }
+    guard let limit = stage.limit, let taken = stage.taken else { return false }
+    return limit > 0 && taken >= limit
+}
+
+/// Who works the bead with its stay: `train-new · 41m`, the longer
+/// words where the yard names no session.
+func workerWords(_ bead: StationBead) -> String {
+    let who = bead.worker.isEmpty ? removing(prefix: "worked by ", from: bead.workedBy ?? "") : bead.worker
+    return [who, bead.stay].filter { !$0.isEmpty }.joined(separator: " · ")
+}
+
+/// A bead card's faint line: its remark, that it waits for a seat,
+/// and the yard's expected range; nil where there is none.
+func beadMeta(_ bead: StationBead) -> String? {
+    var parts: [String] = []
+    if !bead.remark.isEmpty { parts.append(bead.remark) }
+    if bead.waitsSeat { parts.append("waits for a seat") }
+    if !bead.expected.isEmpty { parts.append("expected \(bead.expected)") }
+    return parts.isEmpty ? nil : parts.joined(separator: " · ")
+}
+
+/// The text without `prefix`, where it starts with it.
+private func removing(prefix: String, from text: String) -> String {
+    text.hasPrefix(prefix) ? String(text.dropFirst(prefix.count)) : text
 }
 
 /// Whether an event of the stream moves the line: every event about a

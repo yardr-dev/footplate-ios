@@ -352,10 +352,19 @@ final class InboxModelTests: XCTestCase {
 
         nav.crewPath = [ConversationRoute(yard: "laptop", with: "yardmaster")]
         nav.decidePath = [DecisionRoute(yard: "", bead: "yd-map", ask: 7)]
+        nav.linesPath = [LineRoute(yard: "laptop", depot: "yard", flow: "default")]
         await model.forget()
         XCTAssertEqual(nav.crewPath, [])
         XCTAssertEqual(nav.decidePath, [DecisionRoute(yard: "", bead: "yd-map", ask: 7)])
+        XCTAssertEqual(nav.linesPath, [])
         XCTAssertEqual(records.kept.yards.map(\.name), [""])
+
+        // The last yard forgotten clears every stack for the Pair root.
+        nav.linesPath = [LineRoute(yard: "", depot: "yard", flow: "default")]
+        await model.forget()
+        XCTAssertEqual(nav.decidePath, [])
+        XCTAssertEqual(nav.linesPath, [])
+        XCTAssertEqual(records.kept.yards.map(\.name), [])
     }
 
     func testSelectionSurvivesARestartOfTheModel() async {

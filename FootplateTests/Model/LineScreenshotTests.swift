@@ -42,7 +42,7 @@ final class LineScreenshotTests: XCTestCase {
         laptop.state.status = .down(words: "The yard is away: the edge cannot reach it.", short: "yard away")
         home.board = try cannedBoard()
 
-        let line = LineModel(followers: { ["": home, "laptop": laptop] })
+        let line = LineModel(followers: { ["": home, "laptop": laptop] }, nav: nav, now: { now })
         line.open(yard: "")
         let deadline = ContinuousClock.now + .seconds(10)
         while !line.state.read, ContinuousClock.now <= deadline {
@@ -56,12 +56,12 @@ final class LineScreenshotTests: XCTestCase {
             .map { URL(fileURLWithPath: $0) }
             ?? FileManager.default.temporaryDirectory.appendingPathComponent("line-shots")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        try await render(LinesScreen(inbox: inbox, records: records, model: line), scene: scene, to: dir.appendingPathComponent("line.png"))
+        try await render(LinesScreen(inbox: inbox, records: records, model: line, nav: nav), scene: scene, to: dir.appendingPathComponent("line.png"))
         // One stat filtering: the yard's card with its moving bead alone.
         line.filter(.moving)
         XCTAssertEqual(line.state.lines.map(\.title), ["yard · default"])
         XCTAssertEqual(line.state.lines[0].beads, ["yd-train"])
-        try await render(LinesScreen(inbox: inbox, records: records, model: line), scene: scene, to: dir.appendingPathComponent("line-filtered.png"))
+        try await render(LinesScreen(inbox: inbox, records: records, model: line, nav: nav), scene: scene, to: dir.appendingPathComponent("line-filtered.png"))
         line.leave()
     }
 
