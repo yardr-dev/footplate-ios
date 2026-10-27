@@ -214,6 +214,13 @@ extension Kept: CustomStringConvertible {
 final class Records {
     private(set) var kept: Kept
 
+    /// The name `nameYardOfItsOwn` moved a yard of its own to when
+    /// these records were read, if it moved one this launch: the app
+    /// clears the delivered notifications the yard left under its old
+    /// name `""` where this is set. Nil where nothing moved — no `""`
+    /// record, an edge-owned `""` yard, or a refused move.
+    private(set) var migratedYardName: String? = nil
+
     private let secret: any Shelf
     private let plain: any Shelf
     private let origin: String
@@ -338,7 +345,7 @@ final class Records {
             plain.write(remove: Array(recordKeys))
             return Kept()
         }
-        nameYardOfItsOwn()
+        migratedYardName = nameYardOfItsOwn()
         var asideSecret: [String] = []
         var asidePlain: [String] = []
         var account: Account? = nil
@@ -393,25 +400,27 @@ final class Records {
     /// changes in one write (the new meta, the old one gone, the
     /// selection with it), and the old secret goes last: a restart in
     /// between finds a record that reads, and moves the rest. Left as it
-    /// is where the name is held by another record already.
-    private func nameYardOfItsOwn() {
+    /// is where the name is held by another record already. Answers
+    /// the name it moved the record to, or nil where nothing moved.
+    private func nameYardOfItsOwn() -> String? {
         guard let json = plain.get(Self.yardMetaPrefix),
               var meta = try? JSONDecoder().decode(StoredYard.self, from: Data(json.utf8)),
               meta.name.isEmpty,
               let stored = secret.get(Self.yardPrefix)
-        else { return }
+        else { return nil }
         // No origin, no name: the account's own yard stays "".
         let name = ownName(readYardSecret(stored).origin)
         let metaKey = Self.yardMetaPrefix + name
         let secretKey = Self.yardPrefix + name
-        guard !name.isEmpty, plain.get(metaKey) == nil, secret.get(secretKey).map({ $0 == stored }) ?? true else { return }
+        guard !name.isEmpty, plain.get(metaKey) == nil, secret.get(secretKey).map({ $0 == stored }) ?? true else { return nil }
         secret.write(put: [secretKey: stored])
-        guard secret.get(secretKey) == stored else { return }
+        guard secret.get(secretKey) == stored else { return nil }
         meta.name = name
         var put = [metaKey: encoded(meta)]
         if plain.get(Self.selectedKey) == "" { put[Self.selectedKey] = name }
         plain.write(put: put, remove: [Self.yardMetaPrefix])
         secret.write(remove: [Self.yardPrefix])
+        return name
     }
 
     private func encoded(_ meta: StoredYard) -> String {

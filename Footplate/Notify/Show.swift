@@ -1,5 +1,5 @@
 import Foundation
-import UserNotifications
+@preconcurrency import UserNotifications
 
 // How a telling is shown: a local notification through
 // `UNUserNotificationCenter`, threaded per yard and row, and the tap
@@ -97,6 +97,35 @@ func applyNotifyTap(yard: String, target: Target, records: Records, nav: Nav) {
     case .decision(let bead, let ask):
         nav.place = .decide
         nav.openDecision(yard: yard, bead: bead, ask: ask)
+    }
+}
+
+/// Whether a delivered notification is the migrated yard's stale one:
+/// its tap carries the yard's old name `""`, read through `targetOf`,
+/// so only ours with a target. Checked where the records report a
+/// migration, when every delivered `""` notification is necessarily
+/// the migrated yard's or a forgotten yard's.
+func isStaleMigrated(_ request: UNNotificationRequest) -> Bool {
+    guard let (yard, _) = targetOf(request.content.userInfo) else { return false }
+    return yard.isEmpty
+}
+
+/// The delivered requests to remove for that migration. Keeping the
+/// selection separate makes the identifiers passed to the system a
+/// plain, testable result of the same tap parser.
+func staleMigratedNotificationIDs(_ requests: [UNNotificationRequest]) -> [String] {
+    requests.filter(isStaleMigrated).map(\.identifier)
+}
+
+/// Clears the migrated yard's stale delivered notifications, once, at
+/// app start where the records report a migration. Nothing is
+/// re-added: a rewritten request would be presented again, and the
+/// conversation the stale one told of is still in the app.
+func clearStaleMigratedNotifications(center: UNUserNotificationCenter = .current()) {
+    center.getDeliveredNotifications { notifications in
+        let stale = staleMigratedNotificationIDs(notifications.map(\.request))
+        guard !stale.isEmpty else { return }
+        center.removeDeliveredNotifications(withIdentifiers: stale)
     }
 }
 

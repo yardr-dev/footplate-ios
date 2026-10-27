@@ -54,6 +54,12 @@ final class AppServices {
         self.edge = edge
         let records = Records.live(origin: edge.origin)
         self.records = records
+        if records.migratedYardName != nil {
+            // A yard of its own just moved from "": its delivered
+            // notifications still tap there, where the tap would be
+            // silently ignored, so they go now, once.
+            clearStaleMigratedNotifications()
+        }
         let pairer = Pairer(edge: edge, records: records)
         self.pairer = pairer
         let nav = Nav()

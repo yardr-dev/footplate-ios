@@ -118,8 +118,11 @@ final class RecordsTests: XCTestCase {
             records.select(selecting)
 
             // Renamed on load, with its token, address and the rest of
-            // its record; the selection follows it where it was on it.
-            let moved = makeRecords(secret: secret, plain: plain).kept
+            // its record; the selection follows it where it was on it,
+            // and the move is reported for this launch.
+            let reread = makeRecords(secret: secret, plain: plain)
+            XCTAssertEqual(name, reread.migratedYardName)
+            let moved = reread.kept
             XCTAssertEqual(moved.yards.map(\.name), ["laptop", name])
             let plantime = moved.yards.first { $0.name == name }
             XCTAssertEqual(plantime?.token, "yardr-dev-plantime-1")
@@ -132,10 +135,12 @@ final class RecordsTests: XCTestCase {
             XCTAssertNil(plain.map["yard-meta:"])
             XCTAssertFalse(plain.map.values.joined().contains("yardr-dev-"), "\(plain.map)")
 
-            // Once: another start moves nothing.
+            // Once: another start moves nothing, and reports nothing.
             let secretAfter = secret.map
             let plainAfter = plain.map
-            XCTAssertEqual(makeRecords(secret: secret, plain: plain).kept, moved)
+            let again = makeRecords(secret: secret, plain: plain)
+            XCTAssertEqual(again.kept, moved)
+            XCTAssertNil(again.migratedYardName)
             XCTAssertEqual(secret.map, secretAfter)
             XCTAssertEqual(plain.map, plainAfter)
 
@@ -154,25 +159,35 @@ final class RecordsTests: XCTestCase {
         let records = makeRecords(secret: secret, plain: plain)
         records.keepYard(PairedYard(name: "", yard: "plantime", user: "mckean", device: "phone", token: "yardr-dev-plantime-1", origin: origin))
         secret.write(put: ["yard:" + name: secret.map["yard:"] ?? ""])
-        let finished = makeRecords(secret: secret, plain: plain).kept
+        let resumed = makeRecords(secret: secret, plain: plain)
+        XCTAssertEqual(name, resumed.migratedYardName)
+        let finished = resumed.kept
         XCTAssertEqual(finished.yards.map(\.name), [name])
         XCTAssertEqual(finished.selected, name)
         XCTAssertNil(secret.map["yard:"])
         XCTAssertNil(plain.map["yard-meta:"])
 
-        // The edge's own yard has no address to name it by: it stays "".
-        let own = makeRecords(secret: MemoryShelf(), plain: MemoryShelf())
+        // The edge's own yard has no address to name it by: it stays "",
+        // and no migration is reported.
+        let ownSecret = MemoryShelf()
+        let ownPlain = MemoryShelf()
+        let own = makeRecords(secret: ownSecret, plain: ownPlain)
         own.keepYard(PairedYard(name: "", yard: "south", user: "mckean", device: "phone", token: "yardr-dev-south-1"))
         XCTAssertEqual(own.kept.yards.map(\.name), [""])
+        let ownAgain = makeRecords(secret: ownSecret, plain: ownPlain)
+        XCTAssertEqual(ownAgain.kept.yards.map(\.name), [""])
+        XCTAssertNil(ownAgain.migratedYardName)
 
         // A name an edge yard holds already is not taken twice: the
-        // record stays as it was.
+        // record stays as it was, and no migration is reported.
         let heldSecret = MemoryShelf()
         let heldPlain = MemoryShelf()
         let held = makeRecords(secret: heldSecret, plain: heldPlain)
         held.keepYard(PairedYard(name: "yard.example.net", yard: "laptop", user: "jo", device: "pixel", token: "yardr-dev-laptop-1"))
         held.keepYard(PairedYard(name: "", yard: "south", user: "jo", device: "phone", token: "yardr-dev-south-1", origin: "https://yard.example.net"))
-        let both = makeRecords(secret: heldSecret, plain: heldPlain).kept
+        let refused = makeRecords(secret: heldSecret, plain: heldPlain)
+        XCTAssertNil(refused.migratedYardName)
+        let both = refused.kept
         XCTAssertEqual(both.yards.map(\.name), ["", "yard.example.net"])
         XCTAssertEqual(both.yards.map(\.origin), ["https://yard.example.net", ""])
     }
