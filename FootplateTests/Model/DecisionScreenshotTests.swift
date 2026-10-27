@@ -5,7 +5,8 @@ import XCTest
 
 // The decision screens rendered in the simulator against
 // fake-followed state (design 3.5, the bead's screenshots): the
-// decisions list, a routine card, a weighty card, a harness login's
+// decisions list, a routine card, a routine card with a bead's details
+// expanded, a weighty card, a harness login's
 // code card with its sign-in link, and an API key's card. Hand-run for
 // the bead note; the gate runs it too, and it only asserts that each
 // screen renders non-empty at phone size. PNGs land in
@@ -58,6 +59,12 @@ final class DecisionScreenshotTests: XCTestCase {
         try await render(
             DecisionScreen(model: decision, yard: "", bead: "yd-links", ask: 3),
             scene: scene, to: dir.appendingPathComponent("routine.png")
+        )
+        await decision.toggleDetails("yd-train")
+        XCTAssertTrue(decision.state.details.first?.expanded == true)
+        try await render(
+            DecisionScreen(model: decision, yard: "", bead: "yd-links", ask: 3),
+            scene: scene, to: dir.appendingPathComponent("details.png")
         )
         decision.leave()
         try await render(
@@ -135,6 +142,11 @@ final class DecisionScreenshotTests: XCTestCase {
                     recommend: 1, why: "the test passed", about: [AboutBead(id: "yd-train", title: "Release train", stage: "new")]
                 ),
             ]),
+            "yd-train": Bead(
+                id: "yd-train", title: "Release train",
+                body: "The release train leaves nightly with what is green. See https://example.com/train for the timetable.",
+                stage: "new", asks: []
+            ),
             "yd-login": Bead(id: "yd-login", asks: [
                 BeadAsk(
                     ask: 34, question: "Paste what Claude Code's sign-in page gave you",

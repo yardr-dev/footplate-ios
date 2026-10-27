@@ -34,6 +34,22 @@ struct Choice: Equatable, Sendable {
     var recommended: Bool = false
 }
 
+/// One bead the ask is about, with its details row's state: shut
+/// until tapped, then the bead's description, read once with the
+/// whole-bead call when first opened.
+struct AboutDetail: Equatable, Sendable {
+    var id: String
+    var title: String
+    var stage: String
+    /// The row is open: the description, its loading or its error shows.
+    var expanded: Bool = false
+    /// The bead's description, read once and kept while the card is open.
+    var body: String? = nil
+    var loading: Bool = false
+    /// Why the description was not read; the card stays usable.
+    var error: String? = nil
+}
+
 struct DecisionState: Equatable, Sendable {
     /// The bead was read: the card can be drawn.
     var read: Bool = false
@@ -43,8 +59,8 @@ struct DecisionState: Equatable, Sendable {
     var weighty: [String] = []
     var question: String = ""
     var context: [String] = []
-    /// The beads it is about, as meta lines: `footplate-5kvt · new`.
-    var about: [String] = []
+    /// The beads it is about, one details row each.
+    var details: [AboutDetail] = []
     var options: [Choice] = []
     /// Why the recommended option, under the list.
     var why: String = ""
@@ -103,6 +119,16 @@ final class DecisionModel {
     private var declining: Bool = false
     private var declineWordsText: String = ""
     private var sending: Bool = false
+    /// The details rows open, the descriptions read and their errors,
+    /// by the bead each row is about. A read description is kept while
+    /// the card is open; a failed row's error is forgotten when the row
+    /// shuts, so opening it again reads anew.
+    private var expandedDetails: Set<String> = []
+    private var detailBodies: [String: String] = [:]
+    /// Identifies the read that owns each loading row, so a stale read
+    /// cannot clear a newer read for the same bead.
+    private var detailReads: [String: UUID] = [:]
+    private var detailErrors: [String: String] = [:]
     /// An answer was refused: the card shows the command instead.
     private var refused: Bool = false
     private var refusal: String? = nil
@@ -166,7 +192,17 @@ final class DecisionModel {
             weighty: weight.map(weightLine),
             question: ask.question,
             context: ask.context,
-            about: ask.about.map { [$0.id, $0.stage].filter { !$0.isEmpty }.joined(separator: " · ") },
+            details: ask.about.map {
+                AboutDetail(
+                    id: $0.id,
+                    title: $0.title,
+                    stage: $0.stage,
+                    expanded: expandedDetails.contains($0.id),
+                    body: detailBodies[$0.id],
+                    loading: detailReads[$0.id] != nil,
+                    error: detailErrors[$0.id]
+                )
+            },
             options: ask.options.enumerated().map { index, option in
                 Choice(number: Int64(index + 1), label: option.label, consequence: option.consequence, recommended: ask.recommend == Int64(index + 1))
             },
@@ -210,6 +246,10 @@ final class DecisionModel {
             declining = false
             declineWordsText = ""
             sending = false
+            expandedDetails = []
+            detailBodies = [:]
+            detailReads = [:]
+            detailErrors = [:]
             refused = false
             refusal = nil
             errorText = nil
@@ -229,6 +269,12 @@ final class DecisionModel {
         readTask?.cancel()
         readTask = nil
         unlocking = nil
+        // A read finishing off-screen is discarded. Shut its empty row
+        // so reopening the card offers a fresh tap instead of a blank one.
+        for id in detailReads.keys where detailBodies[id] == nil {
+            expandedDetails.remove(id)
+        }
+        detailReads = [:]
     }
 
     /// Chooses option `number`; a prompt asked for another is forgotten.
@@ -249,6 +295,48 @@ final class DecisionModel {
 
     func declineWords(_ text: String) {
         declineWordsText = text
+    }
+
+    /// A details row tapped: shut where open, and where shut opened
+    /// with the bead's description, read once with the whole-bead call.
+    /// A description that fails to read shows its error on the row and
+    /// the card stays usable; shutting the row forgets the error, so
+    /// opening it again reads anew. A read description is kept while
+    /// the card is open: opening the row again reads nothing more.
+    func toggleDetails(_ id: String) async {
+        guard let target = screen(), let ask = readAsk else { return }
+        guard ask.about.contains(where: { $0.id == id }) else { return }
+        if expandedDetails.contains(id) {
+            expandedDetails.remove(id)
+            detailErrors.removeValue(forKey: id)
+            return
+        }
+        expandedDetails.insert(id)
+        if detailBodies[id] != nil || detailReads[id] != nil { return }
+        guard let followed = mailroom.followed(target.yard) else {
+            expandedDetails.remove(id)
+            return
+        }
+        let activation = self.activation
+        let read = UUID()
+        detailReads[id] = read
+        detailErrors.removeValue(forKey: id)
+        defer {
+            if detailReads[id] == read {
+                detailReads.removeValue(forKey: id)
+            }
+        }
+        do {
+            let bead = try await followed.bead(id)
+            guard active, self.activation == activation, screen() == target else { return }
+            detailBodies[id] = bead.body
+        } catch let error as ApiError {
+            guard active, self.activation == activation, screen() == target else { return }
+            detailErrors[id] = refusalWords(error)
+        } catch {
+            guard active, self.activation == activation, screen() == target else { return }
+            detailErrors[id] = refusalWords(ApiError.down(why: "an unexpected error"))
+        }
     }
 
     /// Pick: straight to the yard where the pick passes no gate; else

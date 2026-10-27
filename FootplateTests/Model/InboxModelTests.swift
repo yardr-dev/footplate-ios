@@ -708,6 +708,8 @@ final class FakeFollowed: Followed {
     var completedCrewReads = 0
     var beads: [String: Bead] = [:]
     var beadAsked: [String] = []
+    private var heldBeadReads: [String: Int] = [:]
+    private var pendingBeadReads: [String: [CheckedContinuation<Bead, Never>]] = [:]
     /// The board its `flows` reads serve.
     var board: Flows = Flows()
     var flowCalls = 0
@@ -838,7 +840,28 @@ final class FakeFollowed: Followed {
     func bead(_ bead: String) async throws -> Bead {
         beadAsked.append(bead)
         if let refuse { throw refuse }
+        if heldBeadReads[bead, default: 0] > 0 {
+            heldBeadReads[bead, default: 0] -= 1
+            return await withCheckedContinuation { (continuation: CheckedContinuation<Bead, Never>) in
+                pendingBeadReads[bead, default: []].append(continuation)
+            }
+        }
         return beads[bead] ?? Bead(id: bead)
+    }
+
+    func holdBeadReads(_ bead: String, count: Int) {
+        heldBeadReads[bead] = count
+    }
+
+    func pendingBeadReadCount(_ bead: String) -> Int {
+        pendingBeadReads[bead]?.count ?? 0
+    }
+
+    func releaseBeadRead(_ bead: String) {
+        guard var pending = pendingBeadReads[bead], !pending.isEmpty else { return }
+        let continuation = pending.removeFirst()
+        pendingBeadReads[bead] = pending.isEmpty ? nil : pending
+        continuation.resume(returning: beads[bead] ?? Bead(id: bead))
     }
 
     func flows() async throws -> Flows {

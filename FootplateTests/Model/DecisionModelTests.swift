@@ -537,6 +537,104 @@ final class DecisionModelTests: XCTestCase {
         XCTAssertEqual(token.state.done, "declined")
     }
 
+    func testADetailsRowExpandsToTheBeadsDescriptionAndPickStillWorks() async throws {
+        let card = await opened("yd-links", 3)
+        let shut = card.state.details
+        XCTAssertEqual(shut.map(\.id), ["yd-train"])
+        XCTAssertEqual(shut.map(\.title), ["Release train"])
+        XCTAssertFalse(shut[0].expanded)
+
+        let body = "The release train leaves nightly. See https://example.com/train for the timetable."
+        fake.nextFor(yard: "laptop", path: "/user/call/Bead", FakeResponse.json(200, #"{"result": {"id": "yd-train", "title": "Release train", "body": "\#(body)", "stage": "new", "labels": [], "notes": [], "asks": []}}"#))
+        await card.toggleDetails("yd-train")
+        let open = card.state.details
+        XCTAssertTrue(open[0].expanded)
+        XCTAssertFalse(open[0].loading)
+        XCTAssertNil(open[0].error)
+        XCTAssertEqual(open[0].body, body)
+        XCTAssertEqual(calls("Bead").filter { $0["bead"] as? String == "yd-train" }.count, 1)
+        // The web address in the description is a link, as the
+        // context's are.
+        XCTAssertEqual(linked(body).runs.compactMap { $0.link }, [try XCTUnwrap(URL(string: "https://example.com/train"))])
+
+        // A second tap shuts it; opening it again reads nothing more.
+        await card.toggleDetails("yd-train")
+        XCTAssertFalse(card.state.details[0].expanded)
+        await card.toggleDetails("yd-train")
+        XCTAssertTrue(card.state.details[0].expanded)
+        XCTAssertEqual(card.state.details[0].body, body)
+        XCTAssertEqual(calls("Bead").filter { $0["bead"] as? String == "yd-train" }.count, 1, "the description is read once")
+
+        // Pick still works with the row open: the ask carries no
+        // weight, so no unlock stands in the way.
+        card.choose(1)
+        await card.pick()
+        XCTAssertEqual(calls("AnswerAsk").count, 1)
+        XCTAssertEqual(calls("AnswerAsk")[0]["option"] as? Int, 1)
+        XCTAssertEqual(nav.decidePath, [])
+    }
+
+    func testADetailsRowWhoseReadFailsShowsItsErrorAndLeavesTheCardUsable() async {
+        let card = await opened("yd-links", 3)
+        fake.nextFor(yard: "laptop", path: "/user/call/Bead", FakeResponse.json(200, #"{"error": {"code": "error", "message": "the yard is tired"}}"#))
+        await card.toggleDetails("yd-train")
+        let failed = card.state.details
+        XCTAssertTrue(failed[0].expanded)
+        XCTAssertFalse(failed[0].loading)
+        XCTAssertNil(failed[0].body)
+        XCTAssertEqual(failed[0].error, "the yard is tired")
+        XCTAssertNil(card.state.error, "the card itself shows no error")
+
+        // The card still picks with the failed row open.
+        card.choose(3)
+        await card.pick()
+        XCTAssertEqual(calls("AnswerAsk").count, 1)
+        XCTAssertEqual(nav.decidePath, [])
+    }
+
+    func testAnOldDetailsReadCannotClearTheReopenedCardsLoadingRead() async {
+        let followed = FakeFollowed()
+        followed.beads["yd-links"] = Bead(id: "yd-links", asks: [
+            BeadAsk(
+                ask: 3, question: "Move the links?",
+                options: [AskOption(label: "Move")],
+                about: [AboutBead(id: "yd-train", title: "Release train", stage: "new")]
+            ),
+        ])
+        followed.beads["yd-train"] = Bead(id: "yd-train", body: "The train leaves nightly.")
+        let heldMailroom = Mailroom()
+        heldMailroom.setFollowers(["laptop": followed])
+        let now = fixedNow
+        let heldModel = DecisionModel(
+            mailroom: heldMailroom, records: records, nav: Nav(place: .decide), unlock: unlock,
+            now: { now }, zone: { TimeZone(secondsFromGMT: 0)! }
+        )
+        heldModel.open(yard: "laptop", bead: "yd-links", ask: 3)
+        _ = await waitFor("the held card", state: { heldModel.state }) { $0.read }
+
+        followed.holdBeadReads("yd-train", count: 2)
+        let oldRead = Task { @MainActor in await heldModel.toggleDetails("yd-train") }
+        _ = await waitFor("the first bead read", state: { followed.pendingBeadReadCount("yd-train") }) { $0 == 1 }
+
+        heldModel.leave()
+        XCTAssertFalse(heldModel.state.details[0].expanded)
+        XCTAssertFalse(heldModel.state.details[0].loading)
+        heldModel.open(yard: "laptop", bead: "yd-links", ask: 3)
+
+        let currentRead = Task { @MainActor in await heldModel.toggleDetails("yd-train") }
+        _ = await waitFor("the reopened card's bead read", state: { followed.pendingBeadReadCount("yd-train") }) { $0 == 2 }
+        XCTAssertTrue(heldModel.state.details[0].loading)
+
+        followed.releaseBeadRead("yd-train")
+        await oldRead.value
+        XCTAssertTrue(heldModel.state.details[0].loading, "the stale read cannot clear the current read")
+
+        followed.releaseBeadRead("yd-train")
+        await currentRead.value
+        XCTAssertFalse(heldModel.state.details[0].loading)
+        XCTAssertEqual(heldModel.state.details[0].body, "The train leaves nightly.")
+    }
+
     private static func asks(open: [String], decided: [String]) -> String {
         #"{"result": {"open": [\#(open.joined(separator: ","))], "decided": [\#(decided.joined(separator: ","))]}}"#
     }

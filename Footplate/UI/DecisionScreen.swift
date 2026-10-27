@@ -167,10 +167,8 @@ struct DecisionScreen: View {
                 .themeType(.body)
                 .foregroundStyle(ThemeColor.textPrimary.color)
         }
-        ForEach(Array(state.about.enumerated()), id: \.offset) { _, line in
-            Text(line)
-                .themeType(.meta)
-                .foregroundStyle(ThemeColor.textSecondary.color)
+        ForEach(Array(state.details.enumerated()), id: \.offset) { _, detail in
+            detailsRow(detail)
         }
         let picking = state.elsewhere == nil && !state.approvable && !state.givesCode && state.done == nil
         let approving = state.approvable && state.done == nil
@@ -246,6 +244,66 @@ struct DecisionScreen: View {
                 .disabled(state.sending || state.unlocking != nil)
             }
         }
+    }
+
+    /// One bead the ask is about: shut, its row; tapped open, the
+    /// bead's description in place, selectable with its links as the
+    /// context's are, or its loading or its error.
+    private func detailsRow(_ detail: AboutDetail) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button {
+                Task { await model.toggleDetails(detail.id) }
+            } label: {
+                HStack(spacing: 0) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Details of \(detail.id)")
+                            .themeType(.label)
+                            .foregroundStyle(ThemeColor.textPrimary.color)
+                        if !detailsSecond(detail).isEmpty {
+                            Text(detailsSecond(detail))
+                                .themeType(.meta)
+                                .foregroundStyle(ThemeColor.textSecondary.color)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    Spacer(minLength: 8)
+                    Image(systemName: detail.expanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(ThemeColor.textSecondary.color)
+                }
+                .frame(minHeight: 48)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint(detail.expanded ? "Shuts the bead's details" : "Opens the bead's details")
+            .accessibilityIdentifier("details/\(detail.id)")
+            if detail.expanded {
+                if detail.loading {
+                    ProgressView()
+                        .padding(.vertical, 4)
+                } else if let error = detail.error {
+                    Text(error)
+                        .themeType(.body)
+                        .foregroundStyle(ThemeColor.textError.color)
+                } else if let body = detail.body {
+                    if body.isEmpty {
+                        Text("No description.")
+                            .themeType(.body)
+                            .foregroundStyle(ThemeColor.textSecondary.color)
+                    } else {
+                        linkedText(body)
+                            .themeType(.body)
+                            .foregroundStyle(ThemeColor.textPrimary.color)
+                            .textSelection(.enabled)
+                    }
+                }
+            }
+        }
+    }
+
+    /// A details row's second line: the bead's title with its stage.
+    private func detailsSecond(_ detail: AboutDetail) -> String {
+        [detail.title, detail.stage].filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
     private func elsewhere(_ command: String, state: DecisionState) -> some View {
