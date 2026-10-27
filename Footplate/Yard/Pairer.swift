@@ -45,7 +45,8 @@ final class Pairer {
     /// `ApiError.notSignedIn` where no session is kept, or where the
     /// edge refuses the one kept. A code with an address of its own
     /// pairs with no session: the code to `<address>/user/pair`, and
-    /// every later call to `<address>` with the device token alone.
+    /// every later call to `<address>` with the device token alone; the
+    /// yard is kept under the name its address gives it (`ownName`).
     @discardableResult
     func pair(code: PairingCode) async throws -> PairedYard {
         // One name holds one yard: the head line, the followers and the
@@ -53,14 +54,16 @@ final class Pairer {
         // would show one yard's rows and send what is typed to the
         // other. Refused before anything is sent, so the code is not
         // burned. The same yard again, the same name at the same
-        // origin, pairs as before.
-        let name = code.address.isEmpty ? code.yard : ""
+        // origin, pairs as before. A yard of its own is named by its
+        // address, so the clash left for it is an edge yard that
+        // carries that very name.
+        let name = code.address.isEmpty ? code.yard : ownName(code.address)
         let origin = code.address
         if let clash = records.kept.yards.first(where: { $0.name == name && $0.origin != origin }) {
             throw ApiError.nameKept(title: clash.title)
         }
         if !code.address.isEmpty {
-            return try await pairDirect(code: code)
+            return try await pairDirect(code: code, name: name)
         }
         guard let account = records.kept.account else { throw ApiError.notSignedIn }
         let paired = try await edge.pair(code: code.code, session: account.session, yard: code.yard)
@@ -85,7 +88,7 @@ final class Pairer {
         return yard
     }
 
-    private func pairDirect(code: PairingCode) async throws -> PairedYard {
+    private func pairDirect(code: PairingCode, name: String) async throws -> PairedYard {
         // The app's client at the yard's address: the timeouts and what
         // TLS trusts are the client's, the origin the address's.
         let direct: Edge
@@ -95,7 +98,7 @@ final class Pairer {
             throw ApiError.protocol(what: "the pairing: the yard's address cannot be read")
         }
         let paired = try await direct.pairDirect(code: code.code)
-        let kept = PairedYard(name: "", yard: paired.yard, user: paired.user, device: paired.device, token: paired.token, origin: code.address)
+        let kept = PairedYard(name: name, yard: paired.yard, user: paired.user, device: paired.device, token: paired.token, origin: code.address)
         records.keepYard(kept)
         // The pairing stands whatever /user/me answers: the follower
         // asks it again, and says what is wrong where something is.
@@ -106,7 +109,7 @@ final class Pairer {
             return kept
         }
         let yard = PairedYard(
-            name: "",
+            name: name,
             yard: me.yard.isEmpty ? paired.yard : me.yard,
             user: me.user,
             device: me.saidBy.isEmpty ? paired.device : me.saidBy,

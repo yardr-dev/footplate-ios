@@ -100,6 +100,21 @@ func readOwnAddress(_ text: String) -> AddressRead {
     return .address(origin: origin)
 }
 
+/// The name a yard of its own is kept under, from the origin
+/// `readOwnAddress` made of its address: the host, and `:<port>` where
+/// the port is not https's own, so `workshop-mini.tail1a2b3c.ts.net:8446`
+/// stays whole and `https://yard.example.net` is `yard.example.net`.
+/// The origin has one spelling, so one address has one name, and no
+/// name is empty, so none is the account's own yard's. An IPv6 host
+/// keeps its brackets, or its colons would read as a port. Empty where
+/// `origin` names no host.
+func ownName(_ origin: String) -> String {
+    guard let url = URLComponents(string: origin), let host = url.host, !host.isEmpty else { return "" }
+    let shown = host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
+    guard let port = url.port, port != 443 else { return shown }
+    return "\(shown):\(port)"
+}
+
 /// What **Type the code** reads: the yard's name at the edge (empty:
 /// the account's own) and the code, with or without its dash.
 func typedCode(yard: String, code: String) -> CodeRead {

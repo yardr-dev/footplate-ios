@@ -153,8 +153,9 @@ extension Account: CustomStringConvertible {
 /// own, and no `X-Edge-Yard` is sent), `yard` the yard's own name,
 /// `user` whom the device calls as, `device` the device's name at the
 /// yard, `token` the device token, `origin` the yard's own address,
-/// empty for the edge's (a yard of its own has no name at any edge, so
-/// its name is empty too).
+/// empty for the edge's. A yard of its own has no name at any edge, so
+/// the records call it by the name its address gives it (`ownName`),
+/// which no request carries.
 struct PairedYard: Equatable, Sendable {
     var name: String
     var yard: String
@@ -265,8 +266,7 @@ final class Records {
     func keepYard(_ yard: PairedYard) {
         secret.write(put: [Self.yardPrefix + yard.name: yardSecret(token: yard.token, origin: yard.origin)])
         let meta = StoredYard(name: yard.name, yard: yard.yard, user: yard.user, device: yard.device)
-        let encoded = (try? JSONEncoder().encode(meta)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
-        plain.write(put: [Self.yardMetaPrefix + yard.name: encoded, Self.selectedKey: yard.name])
+        plain.write(put: [Self.yardMetaPrefix + yard.name: encoded(meta), Self.selectedKey: yard.name])
         kept.yards = kept.yards.filter { $0.name != yard.name } + [yard]
         kept.selected = yard.name
         publish()
@@ -326,6 +326,7 @@ final class Records {
             plain.write(remove: Array(recordKeys))
             return Kept()
         }
+        nameYardOfItsOwn()
         var asideSecret: [String] = []
         var asidePlain: [String] = []
         var account: Account? = nil
@@ -370,6 +371,39 @@ final class Records {
         let selected = plain.get(Self.selectedKey).flatMap { s in yards.contains { $0.name == s } ? s : nil }
             ?? yards.first?.name
         return Kept(account: account, yards: yards, selected: selected)
+    }
+
+    /// A yard of its own was kept under the name "" before its address
+    /// named it, which is the account's own yard's name: moved to its
+    /// address's name once, so a phone that paired one keeps it, and
+    /// follows it, beside the edge's own. The new secret goes first and
+    /// is read back before anything else moves, then the plain shelf
+    /// changes in one write (the new meta, the old one gone, the
+    /// selection with it), and the old secret goes last: a restart in
+    /// between finds a record that reads, and moves the rest. Left as it
+    /// is where the name is held by another record already.
+    private func nameYardOfItsOwn() {
+        guard let json = plain.get(Self.yardMetaPrefix),
+              var meta = try? JSONDecoder().decode(StoredYard.self, from: Data(json.utf8)),
+              meta.name.isEmpty,
+              let stored = secret.get(Self.yardPrefix)
+        else { return }
+        // No origin, no name: the account's own yard stays "".
+        let name = ownName(readYardSecret(stored).origin)
+        let metaKey = Self.yardMetaPrefix + name
+        let secretKey = Self.yardPrefix + name
+        guard !name.isEmpty, plain.get(metaKey) == nil, secret.get(secretKey).map({ $0 == stored }) ?? true else { return }
+        secret.write(put: [secretKey: stored])
+        guard secret.get(secretKey) == stored else { return }
+        meta.name = name
+        var put = [metaKey: encoded(meta)]
+        if plain.get(Self.selectedKey) == "" { put[Self.selectedKey] = name }
+        plain.write(put: put, remove: [Self.yardMetaPrefix])
+        secret.write(remove: [Self.yardPrefix])
+    }
+
+    private func encoded(_ meta: StoredYard) -> String {
+        (try? JSONEncoder().encode(meta)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
     }
 
     private struct StoredYard: Codable {

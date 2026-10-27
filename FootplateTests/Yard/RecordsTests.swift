@@ -61,31 +61,108 @@ final class RecordsTests: XCTestCase {
         let secret = MemoryShelf()
         let plain = MemoryShelf()
         let records = makeRecords(secret: secret, plain: plain)
-        records.keepYard(PairedYard(name: "", yard: "south", user: "jo", device: "phone", token: "yardr-dev-south-9", origin: "https://yard.example.net"))
+        records.keepYard(PairedYard(name: "yard.example.net", yard: "south", user: "jo", device: "phone", token: "yardr-dev-south-9", origin: "https://yard.example.net"))
         // The address lies beside the token on the secret shelf, never
-        // on the plain one.
-        let stored = secret.map["yard:"] ?? ""
+        // on the plain one: the plain shelf holds the yard's name, its
+        // host, and no request goes to a name.
+        let stored = secret.map["yard:yard.example.net"] ?? ""
         XCTAssertTrue(stored.contains("yardr-dev-south-9"), stored)
         XCTAssertTrue(stored.contains("yard.example.net"), stored)
         let plainText = plain.map.values.joined()
-        XCTAssertFalse(plainText.contains("yard.example.net"), plainText)
+        XCTAssertFalse(plainText.contains("https:"), plainText)
         XCTAssertFalse(plainText.contains("yardr-dev-"), plainText)
         // The app reopens on the kept address.
         let again = makeRecords(secret: secret, plain: plain).kept
+        XCTAssertEqual(again.yards.map(\.name), ["yard.example.net"])
         XCTAssertEqual(again.yards.map(\.origin), ["https://yard.example.net"])
         XCTAssertEqual(again.yards.map(\.token), ["yardr-dev-south-9"])
-        XCTAssertEqual(again.selected, "")
+        XCTAssertEqual(again.selected, "yard.example.net")
         // A record written before, the bare token alone, reads as the
         // edge's yard.
-        secret.write(put: ["yard:": "yardr-dev-south-1"])
+        secret.write(put: ["yard:yard.example.net": "yardr-dev-south-1"])
         let legacy = makeRecords(secret: secret, plain: plain).kept
         XCTAssertEqual(legacy.yards.map(\.origin), [""])
         XCTAssertEqual(legacy.yards.map(\.token), ["yardr-dev-south-1"])
         // Forgetting deletes the address with the token.
-        records.forgetYard("")
-        XCTAssertNil(secret.map["yard:"])
+        records.forgetYard("yard.example.net")
+        XCTAssertNil(secret.map["yard:yard.example.net"])
         XCTAssertTrue(records.kept.yards.isEmpty)
         XCTAssertTrue(makeRecords(secret: secret, plain: plain).kept.yards.isEmpty)
+    }
+
+    func testAYardOfItsOwnKeptNamelessIsNamedByItsAddressOnce() {
+        let name = "workshop-mini.tail1a2b3c.ts.net:8446"
+        let origin = "https://workshop-mini.tail1a2b3c.ts.net:8446"
+        // Kept as a phone kept it before an address named a yard: under
+        // "", which is the account's own yard's name, and selected or
+        // not.
+        for selecting in ["", "laptop"] {
+            let secret = MemoryShelf()
+            let plain = MemoryShelf()
+            let records = makeRecords(secret: secret, plain: plain)
+            records.keepSession(account: "mckean@example.com", handle: "mckean", session: "ory_st_secret")
+            records.keepYard(PairedYard(name: "laptop", yard: "laptop", user: "mckean", device: "pixel", token: "yardr-dev-laptop-1"))
+            records.keepYard(PairedYard(name: "", yard: "plantime", user: "mckean", device: "phone", token: "yardr-dev-plantime-1", origin: origin))
+            records.select(selecting)
+
+            // Renamed on load, with its token, address and the rest of
+            // its record; the selection follows it where it was on it.
+            let moved = makeRecords(secret: secret, plain: plain).kept
+            XCTAssertEqual(moved.yards.map(\.name), ["laptop", name])
+            let plantime = moved.yards.first { $0.name == name }
+            XCTAssertEqual(plantime?.token, "yardr-dev-plantime-1")
+            XCTAssertEqual(plantime?.origin, origin)
+            XCTAssertEqual(plantime.map { "\($0.title) · \($0.yard) · \($0.user) · \($0.device)" }, "\(name) · plantime · mckean · phone")
+            XCTAssertEqual(moved.selected, selecting.isEmpty ? name : "laptop")
+            XCTAssertEqual(plain.map["selected"], moved.selected)
+            // The old keys are gone, and no token reached the plain shelf.
+            XCTAssertNil(secret.map["yard:"])
+            XCTAssertNil(plain.map["yard-meta:"])
+            XCTAssertFalse(plain.map.values.joined().contains("yardr-dev-"), "\(plain.map)")
+
+            // Once: another start moves nothing.
+            let secretAfter = secret.map
+            let plainAfter = plain.map
+            XCTAssertEqual(makeRecords(secret: secret, plain: plain).kept, moved)
+            XCTAssertEqual(secret.map, secretAfter)
+            XCTAssertEqual(plain.map, plainAfter)
+
+            // The account's own yard is paired beside it, as it could
+            // not be while the two shared a name.
+            records.keepYard(PairedYard(name: "", yard: "south", user: "mckean", device: "phone", token: "yardr-dev-south-1"))
+            let beside = makeRecords(secret: secret, plain: plain).kept
+            XCTAssertEqual(beside.yards.map(\.name), ["", "laptop", name])
+            XCTAssertEqual(beside.yards.map(\.origin), ["", "", origin])
+        }
+
+        // A move a restart cut short, the new secret written and the
+        // rest not, is finished by the next start.
+        let secret = MemoryShelf()
+        let plain = MemoryShelf()
+        let records = makeRecords(secret: secret, plain: plain)
+        records.keepYard(PairedYard(name: "", yard: "plantime", user: "mckean", device: "phone", token: "yardr-dev-plantime-1", origin: origin))
+        secret.write(put: ["yard:" + name: secret.map["yard:"] ?? ""])
+        let finished = makeRecords(secret: secret, plain: plain).kept
+        XCTAssertEqual(finished.yards.map(\.name), [name])
+        XCTAssertEqual(finished.selected, name)
+        XCTAssertNil(secret.map["yard:"])
+        XCTAssertNil(plain.map["yard-meta:"])
+
+        // The edge's own yard has no address to name it by: it stays "".
+        let own = makeRecords(secret: MemoryShelf(), plain: MemoryShelf())
+        own.keepYard(PairedYard(name: "", yard: "south", user: "mckean", device: "phone", token: "yardr-dev-south-1"))
+        XCTAssertEqual(own.kept.yards.map(\.name), [""])
+
+        // A name an edge yard holds already is not taken twice: the
+        // record stays as it was.
+        let heldSecret = MemoryShelf()
+        let heldPlain = MemoryShelf()
+        let held = makeRecords(secret: heldSecret, plain: heldPlain)
+        held.keepYard(PairedYard(name: "yard.example.net", yard: "laptop", user: "jo", device: "pixel", token: "yardr-dev-laptop-1"))
+        held.keepYard(PairedYard(name: "", yard: "south", user: "jo", device: "phone", token: "yardr-dev-south-1", origin: "https://yard.example.net"))
+        let both = makeRecords(secret: heldSecret, plain: heldPlain).kept
+        XCTAssertEqual(both.yards.map(\.name), ["", "yard.example.net"])
+        XCTAssertEqual(both.yards.map(\.origin), ["https://yard.example.net", ""])
     }
 
     func testATokenShapedLikeAKeychainSecretReadsAsTheEdgesYard() {

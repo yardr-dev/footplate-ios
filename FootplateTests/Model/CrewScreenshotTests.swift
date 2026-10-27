@@ -6,7 +6,8 @@ import XCTest
 // The crew screens rendered in the simulator against fake-followed
 // state (design 3.5, the bead's screenshots): the inbox with unread
 // rows, one conversation, and the yard switch with two yards, one
-// away. Hand-run for the bead note; the gate runs it too, and it
+// away, and with a yard of its own beside the edge's. Hand-run for the
+// bead note; the gate runs it too, and it
 // only asserts that each screen renders non-empty at phone size.
 // PNGs land in `CREW_SHOTS_DIR`, or the temporary directory's
 // `crew-shots` where that names none.
@@ -90,6 +91,58 @@ final class CrewScreenshotTests: XCTestCase {
         )
         conversation.leave()
         try await render(YardSwitchView(state: inbox.state), scene: scene, to: dir.appendingPathComponent("switch.png"))
+    }
+
+    /// The yard switch with the edge's own yard and a yard of its own
+    /// beside it, the second called by its address (footplate-ios-hj6s).
+    func testYardSwitchNamesAYardOfItsOwnByItsAddress() async throws {
+        let scene = try XCTUnwrap(
+            UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first,
+            "no window scene to render in"
+        )
+        let fake = FakeYard()
+        let records = Records(secret: MemoryShelf(), plain: MemoryShelf(), origin: fake.origin)
+        records.keepSession(account: fake.email, session: fake.session())
+        records.keepYard(PairedYard(name: "", yard: "south", user: "jo", device: "phone", token: "yardr-dev-south-1"))
+        let plantime = "workshop-mini.tail1a2b3c.ts.net:8446"
+        records.keepYard(PairedYard(
+            name: plantime, yard: "plantime", user: "jo", device: "phone", token: "yardr-dev-plantime-1",
+            origin: "https://workshop-mini.tail1a2b3c.ts.net:8446"
+        ))
+        records.select("")
+        let home = FakeFollowed()
+        let own = FakeFollowed()
+        let mailroom = Mailroom()
+        mailroom.setFollowers(["": home, plantime: own])
+        let inbox = InboxModel(
+            pairer: Pairer(edge: try fake.edge(), records: records), records: records,
+            followers: { ["": home, plantime: own] },
+            mailroom: mailroom, nav: Nav()
+        )
+        home.up(loaded())
+        var ownLoaded = loaded()
+        ownLoaded.me = Me(user: "jo", saidBy: "phone", yard: "plantime")
+        ownLoaded.asks = Asks(open: [OpenAsk(bead: "pt-shift", ask: 2, question: "Publish the shift?", asker: "yardmaster")], decided: [])
+        own.up(ownLoaded)
+
+        let deadline = ContinuousClock.now + .seconds(10)
+        while inbox.state.yards.contains(where: { $0.waiting == nil }), ContinuousClock.now <= deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(inbox.state.yards.map(\.title), ["south", plantime])
+        XCTAssertEqual(inbox.state.yards.map(\.waiting), ["2 waiting", "1 waiting"])
+
+        let dir = ProcessInfo.processInfo.environment["CREW_SHOTS_DIR"]
+            .map { URL(fileURLWithPath: $0) }
+            ?? FileManager.default.temporaryDirectory.appendingPathComponent("crew-shots")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try await render(YardSwitchView(state: inbox.state), scene: scene, to: dir.appendingPathComponent("switch-own-address.png"))
+        // A host and its port are long: at the largest text size the
+        // name loses its middle and keeps the port.
+        try await render(
+            YardSwitchView(state: inbox.state).environment(\.dynamicTypeSize, .xxxLarge),
+            scene: scene, to: dir.appendingPathComponent("switch-own-address-xxxl.png")
+        )
     }
 
     private func render(_ view: some View, scene: UIWindowScene, to file: URL) async throws {

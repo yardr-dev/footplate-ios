@@ -61,6 +61,33 @@ final class CodeTests: XCTestCase {
         }
     }
 
+    func testAYardOfItsOwnIsNamedByItsAddress() {
+        // Made of the origin `readOwnAddress` makes, so every spelling
+        // of one address is one name: the host, and the port where it
+        // is not 443.
+        let rows: [(String, String)] = [
+            ("https://yard.example.net", "yard.example.net"),
+            ("  https://yard.example.net/ \n", "yard.example.net"),
+            ("https://YARD.EXAMPLE.NET:443/", "yard.example.net"),
+            ("https://yard.example.net:8446", "yard.example.net:8446"),
+            ("https://workshop-mini.tail1a2b3c.ts.net:8446", "workshop-mini.tail1a2b3c.ts.net:8446"),
+            // A host's colons would read as a port without its brackets.
+            ("https://[::1]:8446", "[::1]:8446"),
+            ("https://[FE80::1]", "[fe80::1]"),
+        ]
+        for (text, want) in rows {
+            guard case .address(let origin) = readOwnAddress(text) else {
+                XCTFail("\(text) is no address")
+                continue
+            }
+            XCTAssertEqual(ownName(origin), want, text)
+        }
+        // Two ports, two yards; the name of none is the account's own.
+        XCTAssertNotEqual(ownName("https://yard.example.net:8446"), ownName("https://yard.example.net:8447"))
+        XCTAssertEqual(ownName(""), "")
+        XCTAssertEqual(ownName("not an origin"), "")
+    }
+
     func testWhatIsNotThisEdgesCodeIsRefusedWithItsReason() {
         let rows: [(String, String)] = [
             // Four parts, and one part alone.

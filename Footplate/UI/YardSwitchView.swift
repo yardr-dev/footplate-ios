@@ -1,10 +1,11 @@
 import SwiftUI
 
-// The yard switch (design 3.5): each paired yard with its waiting
-// count as words or its follow's word, the selected one marked by
-// the rust yard line at its left; an unreachable yard stays
-// selectable. Pair another yard and Forget this yard stand under
-// the rows.
+// The yard switch (design 3.5): each paired yard by its name (the
+// account's own by the yard's own, a yard of its own by its address's
+// host and port) with its waiting count as words or its follow's word,
+// the selected one marked by the rust yard line at its left; an
+// unreachable yard stays selectable. Pair another yard and Forget this
+// yard stand under the rows.
 struct YardSwitchView: View {
     var state: InboxState
     var onSelect: (String) -> Void = { _ in }
@@ -22,9 +23,14 @@ struct YardSwitchView: View {
                             .fill(yard.selected ? ThemeColor.accent.color : ThemeColor.surfaceApp.color)
                             .frame(width: 3)
                         VStack(alignment: .leading, spacing: 2) {
+                            // A yard of its own is called by its address,
+                            // and a long host loses its middle, not the
+                            // port that tells two on one host apart.
                             Text(yard.title)
                                 .themeType(.label)
                                 .foregroundStyle(ThemeColor.textPrimary.color)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
                             Text(yard.user)
                                 .themeType(.meta)
                                 .foregroundStyle(ThemeColor.textSecondary.color)
