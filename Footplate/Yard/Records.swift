@@ -155,7 +155,9 @@ extension Account: CustomStringConvertible {
 /// yard, `token` the device token, `origin` the yard's own address,
 /// empty for the edge's. A yard of its own has no name at any edge, so
 /// the records call it by the name its address gives it (`ownName`),
-/// which no request carries.
+/// which no request carries. A yard of another account, one the account
+/// is a member of, is named `owner/yard` at the edge, which every
+/// request carries as it is (`memberYard`).
 struct PairedYard: Equatable, Sendable {
     var name: String
     var yard: String
@@ -164,8 +166,18 @@ struct PairedYard: Equatable, Sendable {
     var token: String
     var origin: String = ""
 
+    /// The handle of the account the yard belongs to, where it is
+    /// another's; empty for the account's own yard and a yard of its
+    /// own, whose names hold no slash.
+    var owner: String { memberYard(name)?.owner ?? "" }
+
     /// What the head line calls it: its name at the edge, else its own.
-    var title: String { name.isEmpty ? yard : name }
+    /// A yard of another account says so beside its name, so a member
+    /// never takes it for one of their own.
+    var title: String {
+        if let member = memberYard(name) { return "\(member.yard) — member of \(member.owner)'s yard" }
+        return name.isEmpty ? yard : name
+    }
 }
 
 extension PairedYard: CustomStringConvertible {

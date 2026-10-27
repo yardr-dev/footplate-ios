@@ -6,8 +6,9 @@ import XCTest
 // the session would, and the calls a screen makes recorded. The rows
 // newest letter first, unread counted and cleared by an
 // acknowledgement, the events moving them, a conversation read a
-// page at a time and written to, the head row's words, and the yard
-// switch.
+// page at a time and written to, the head row's words, the yard
+// switch, and a yard of another account's labelled with its owner and
+// forgotten, with one sentence, once the owner removed the account.
 @MainActor
 final class InboxModelTests: XCTestCase {
     private var fake: FakeYard!
@@ -438,6 +439,80 @@ final class InboxModelTests: XCTestCase {
         XCTAssertEqual(nav.decidePath, [])
         XCTAssertEqual(nav.linesPath, [])
         XCTAssertEqual(records.kept.yards.map(\.name), [])
+    }
+
+    func testAMemberYardSaysWhoseYardItIsInTheHeadLineAndTheSwitch() {
+        // The account's own yards read as they did; a yard of another
+        // account's has its owner beside its name, and the user the device
+        // calls as after it.
+        records.keepYard(PairedYard(name: "alice/lab", yard: "lab", user: "joe", device: "phone", token: "yardr-dev-lab-1"))
+        let model = inbox()
+        var state = model.state
+        XCTAssertEqual(state.head, "lab — member of alice's yard · joe")
+        XCTAssertEqual(state.yards.map(\.title), ["laptop", "south", "lab — member of alice's yard"])
+        XCTAssertEqual(state.yards.map(\.user), ["jo", "jo", "joe"])
+        XCTAssertEqual(state.yards.map(\.selected), [false, false, true])
+        model.select("")
+        state = model.state
+        XCTAssertEqual(state.head, "south · jo")
+        model.select("laptop")
+        XCTAssertEqual(model.state.head, "laptop · jo")
+    }
+
+    func testAMemberYardTheOwnerRemovedLeavesWithOneSentence() async throws {
+        let sentence = removedWords(owner: "alice", yard: "lab")
+        XCTAssertEqual(sentence, "alice removed your access to lab.")
+        records.keepYard(PairedYard(name: "alice/lab", yard: "lab", user: "joe", device: "phone", token: fake.token(yardName: "alice/lab")))
+        nav.crewPath = [ConversationRoute(yard: "alice/lab", with: "yardmaster")]
+        nav.decidePath = [DecisionRoute(yard: "", bead: "yd-map", ask: 7)]
+        let model = inbox()
+        let requests = fake.requestCount
+
+        await model.removed("alice/lab", sentence)
+        // The yard has left the switch and its screens, and the other
+        // yards stand; the session stays for them, and is not asked about.
+        XCTAssertEqual(model.state.yards.map(\.name), ["laptop", ""])
+        XCTAssertEqual(records.kept.yards.map(\.name), ["laptop", ""])
+        XCTAssertNil(secret.map["yard:alice/lab"])
+        XCTAssertEqual(model.state.head, "laptop · jo")
+        XCTAssertEqual(nav.crewPath, [])
+        XCTAssertEqual(nav.decidePath, [DecisionRoute(yard: "", bead: "yd-map", ask: 7)])
+        XCTAssertEqual(fake.requestCount, requests)
+        // With the one sentence, which the person puts away.
+        XCTAssertEqual(model.state.notice, sentence)
+        // A second refusal from a yard that left says nothing more.
+        model.dismissNotice()
+        await model.removed("alice/lab", sentence)
+        XCTAssertNil(model.state.notice)
+        // Picking another yard puts it away too, and so does pairing one.
+        await model.removed("laptop", "x")
+        XCTAssertEqual(model.state.notice, "x")
+        model.select("")
+        XCTAssertNil(model.state.notice)
+        nav.notice = "y"
+        nav.didPair()
+        XCTAssertNil(nav.notice)
+
+        // Where it was the last yard, the session ends with it, as it
+        // does when the last yard is forgotten, and the Pair screen says
+        // the sentence where the tabs were.
+        let lone = Records(secret: MemoryShelf(), plain: MemoryShelf(), origin: fake.origin)
+        let session = fake.session()
+        lone.keepSession(account: fake.email, session: session)
+        lone.keepYard(PairedYard(name: "alice/lab", yard: "lab", user: "joe", device: "phone", token: fake.token(yardName: "alice/lab")))
+        let loneNav = Nav()
+        let lonePairer = Pairer(edge: try fake.edge(), records: lone)
+        let loneModel = InboxModel(pairer: lonePairer, records: lone, followers: { [:] }, mailroom: Mailroom(), nav: loneNav)
+        let pair = PairModel(pairer: lonePairer, records: lone, nav: loneNav)
+        let before = fake.requestCount
+        await loneModel.removed("alice/lab", sentence)
+        XCTAssertEqual(lone.kept, Kept())
+        let sent = Array(fake.allRequests[before...])
+        XCTAssertEqual(sent.map(\.path), ["/kratos/self-service/logout/api"])
+        XCTAssertEqual(sent.first?.bodyObject()["session_token"] as? String, session)
+        XCTAssertEqual(pair.notice, sentence)
+        pair.dismissNotice()
+        XCTAssertNil(pair.notice)
     }
 
     func testSelectionSurvivesARestartOfTheModel() async {

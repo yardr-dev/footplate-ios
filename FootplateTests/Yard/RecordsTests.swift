@@ -55,6 +55,18 @@ final class RecordsTests: XCTestCase {
         XCTAssertEqual(records.kept.account?.handle, "")
         XCTAssertNil(plain.map["account-handle"])
         XCTAssertEqual(makeRecords(secret: secret, plain: plain).kept.account?.handle, "")
+
+        // A yard of another account is kept under the name the edge
+        // gives it, its owner's handle and its own, which says whose it
+        // is: the head line calls it so, and the own yards are as before.
+        XCTAssertEqual(again.yards.map(\.owner), ["", ""])
+        records.keepYard(PairedYard(name: "alice/lab", yard: "lab", user: "joe", device: "phone", token: "yardr-dev-lab-1"))
+        XCTAssertEqual(secret.map["yard:alice/lab"], "yardr-dev-lab-1")
+        let member = makeRecords(secret: secret, plain: plain).kept.yards.first { $0.name == "alice/lab" }
+        XCTAssertEqual(member?.token, "yardr-dev-lab-1")
+        XCTAssertEqual(member?.owner, "alice")
+        XCTAssertEqual(member?.title, "lab — member of alice's yard")
+        XCTAssertEqual(makeRecords(secret: secret, plain: plain).kept.selected, "alice/lab")
     }
 
     func testAYardOfItsOwnKeepsItsAddressWithItsToken() {

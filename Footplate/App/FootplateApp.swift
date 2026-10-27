@@ -138,6 +138,11 @@ final class AppServices {
         let session = kept.account?.session
         guard !kept.yards.isEmpty, session != nil || kept.yards.contains(where: { !$0.origin.isEmpty }) else { return }
         let following = Yards(foreground: foreground)
+        // A yard whose owner removed the account is forgotten, in a task
+        // of its own: forgetting it follows the yards again.
+        following.onRemoved = { [weak self] name, words in
+            Task { @MainActor in await self?.inboxModel.removed(name, words) }
+        }
         yards = following
         var made: [String: Follower] = [:]
         for yard in kept.yards {

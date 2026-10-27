@@ -39,6 +39,9 @@ struct InboxState: Equatable, Sendable {
     var nothing: String? = nil
     /// Why the last forgetting said something, under the switch.
     var error: String? = nil
+    /// The one sentence of a yard that left on its own: its owner
+    /// removed the account's access.
+    var notice: String? = nil
     /// The selected yard's open asks, for a later place's count.
     var waiting: Int = 0
 }
@@ -81,7 +84,13 @@ final class InboxModel {
     }
 
     func select(_ name: String) {
+        nav.notice = nil
         records.select(name)
+    }
+
+    /// The sentence of a yard that left is put away.
+    func dismissNotice() {
+        nav.notice = nil
     }
 
     /// Opens the row `name` of the selected yard: its conversation,
@@ -117,6 +126,7 @@ final class InboxModel {
     func forget() async {
         guard let name = records.kept.selected else { return }
         forgetError = nil
+        nav.notice = nil
         do {
             try await pairer.forget(name: name)
         } catch let error as ApiError {
@@ -124,6 +134,26 @@ final class InboxModel {
         } catch {
             forgetError = "The edge did not end the session: \(error)"
         }
+        left(name)
+    }
+
+    /// A yard of another account whose owner removed the account's
+    /// access, which its follower found: forgotten as Forget this yard
+    /// forgets one, rather than left standing as a yard that always
+    /// fails, and `words` is the one sentence that says why. Where it
+    /// was the last yard, the session ends with it and the Pair screen
+    /// says the sentence. A logout the edge does not answer changes
+    /// nothing: every record is gone either way.
+    func removed(_ name: String, _ words: String) async {
+        guard records.kept.yards.contains(where: { $0.name == name }) else { return }
+        nav.notice = words
+        try? await pairer.forget(name: name)
+        left(name)
+    }
+
+    /// The screens of a yard no longer paired are put away, and the
+    /// Pair screen is the root where none is left.
+    private func left(_ name: String) {
         if !records.kept.yards.contains(where: { $0.name == name }) {
             nav.didForgetYard(name)
         }
@@ -171,6 +201,7 @@ final class InboxModel {
                 ? "Nothing from \(selected!.title) yet" + (word.map { ": \($0)" } ?? "")
                 : nil,
             error: forgetError,
+            notice: nav.notice,
             waiting: board?.open.count ?? 0
         )
     }

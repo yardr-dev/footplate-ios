@@ -38,6 +38,27 @@ extension View {
     }
 }
 
+/// A sentence the person is told once, with its dismissal: over the
+/// places and the Pair screen.
+struct NoticeRow: View {
+    let text: String
+    var onDismiss: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Text(text)
+                .themeType(.body)
+                .foregroundStyle(ThemeColor.textPrimary.color)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button("Dismiss", action: onDismiss)
+                .themeType(.meta)
+                .foregroundStyle(ThemeColor.textAccent.color)
+                .frame(minWidth: 48, minHeight: 48)
+                .contentShape(Rectangle())
+        }
+    }
+}
+
 /// A label and its value, one row of what was read.
 struct FieldRow: View {
     let label: String

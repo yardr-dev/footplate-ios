@@ -35,6 +35,9 @@ struct PairScreen: View {
                     + Text("yardr user device pair").font(ThemeType.code.font))
                     .themeType(.body)
                     .foregroundStyle(ThemeColor.textSecondary.color)
+                if let notice = model.notice {
+                    NoticeRow(text: notice) { model.dismissNotice() }
+                }
                 content
                 if let error = model.state.error {
                     Text(error)
@@ -126,7 +129,7 @@ struct PairScreen: View {
                     .textInputAutocapitalization(.never)
                     .themeType(.body)
                     .fieldBox()
-                    Text("Empty for the account's own yard")
+                    Text("Empty for the account's own, owner/yard for another's")
                         .themeType(.meta)
                         .foregroundStyle(ThemeColor.textSecondary.color)
                 }

@@ -6,7 +6,8 @@ import XCTest
 // The crew screens rendered in the simulator against fake-followed
 // state (design 3.5, the bead's screenshots): the inbox with unread
 // rows, one conversation, and the yard switch with two yards, one
-// away, and with a yard of its own beside the edge's. Hand-run for the
+// away, with a yard of its own beside the edge's, and with a yard of
+// another account's the account is a member of. Hand-run for the
 // bead note; the gate runs it too, and it
 // only asserts that each screen renders non-empty at phone size.
 // PNGs land in `CREW_SHOTS_DIR`, or the temporary directory's
@@ -143,6 +144,49 @@ final class CrewScreenshotTests: XCTestCase {
             YardSwitchView(state: inbox.state).environment(\.dynamicTypeSize, .xxxLarge),
             scene: scene, to: dir.appendingPathComponent("switch-own-address-xxxl.png")
         )
+    }
+
+    /// The yard switch with the account's own yard and one of another
+    /// account's it is a member of, which says so beside its name
+    /// (footplate-ios-n0vs).
+    func testYardSwitchSaysWhoseYardAMemberYardIs() async throws {
+        let scene = try XCTUnwrap(
+            UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first,
+            "no window scene to render in"
+        )
+        let fake = FakeYard()
+        let records = Records(secret: MemoryShelf(), plain: MemoryShelf(), origin: fake.origin)
+        records.keepSession(account: fake.email, session: fake.session())
+        records.keepYard(PairedYard(name: "", yard: "south", user: "jo", device: "phone", token: "yardr-dev-south-1"))
+        records.keepYard(PairedYard(name: "alice/lab", yard: "lab", user: "joe", device: "phone", token: "yardr-dev-lab-1"))
+        records.select("")
+        let home = FakeFollowed()
+        let lab = FakeFollowed()
+        let mailroom = Mailroom()
+        mailroom.setFollowers(["": home, "alice/lab": lab])
+        let inbox = InboxModel(
+            pairer: Pairer(edge: try fake.edge(), records: records), records: records,
+            followers: { ["": home, "alice/lab": lab] },
+            mailroom: mailroom, nav: Nav()
+        )
+        home.up(loaded())
+        var labLoaded = loaded()
+        labLoaded.me = Me(user: "joe", saidBy: "phone", yard: "lab")
+        labLoaded.asks = Asks(open: [OpenAsk(bead: "al-shift", ask: 2, question: "Publish the shift?", asker: "yardmaster")], decided: [])
+        lab.up(labLoaded)
+
+        let deadline = ContinuousClock.now + .seconds(10)
+        while inbox.state.yards.contains(where: { $0.waiting == nil }), ContinuousClock.now <= deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(inbox.state.yards.map(\.title), ["south", "lab — member of alice's yard"])
+        XCTAssertEqual(inbox.state.yards.map(\.waiting), ["2 waiting", "1 waiting"])
+
+        let dir = ProcessInfo.processInfo.environment["CREW_SHOTS_DIR"]
+            .map { URL(fileURLWithPath: $0) }
+            ?? FileManager.default.temporaryDirectory.appendingPathComponent("crew-shots")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try await render(YardSwitchView(state: inbox.state), scene: scene, to: dir.appendingPathComponent("switch-member.png"))
     }
 
     private func render(_ view: some View, scene: UIWindowScene, to file: URL) async throws {

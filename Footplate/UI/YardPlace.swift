@@ -13,6 +13,11 @@ struct YardPlace: ViewModifier {
     func body(content: Content) -> some View {
         let state = inbox.state
         VStack(spacing: 0) {
+            if let notice = state.notice {
+                NoticeRow(text: notice) { inbox.dismissNotice() }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 4)
+            }
             if let error = state.error {
                 Text(error)
                     .themeType(.body)

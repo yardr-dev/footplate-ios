@@ -7,8 +7,9 @@ import Foundation
 // used; a yard's own address is where the code goes, with no edge.
 
 /// A code to pair with: `code` as yardr shows it (`K7QM-2XPD`), `yard`
-/// the yard's name at the edge, empty for the account's own, and
-/// `address` the yard's own address, empty for the edge's. A code with
+/// the yard's name at the edge, empty for the account's own and
+/// `owner/yard` for a yard of another account the account is a member
+/// of, and `address` the yard's own address, empty for the edge's. A code with
 /// an address pairs with no edge: no sign-in, no session, and the
 /// device token alone from then on.
 struct PairingCode: Equatable, Sendable {
@@ -115,8 +116,19 @@ func ownName(_ origin: String) -> String {
     return "\(shown):\(port)"
 }
 
+/// A yard of another account, one the account is a member of, as the
+/// edge names it in `X-Edge-Yard`: its owner's handle, a slash and the
+/// yard's name. Nil for any other name: the account's own yard's, a
+/// yard of its own's, or a slash with a part missing or a third.
+func memberYard(_ name: String) -> (owner: String, yard: String)? {
+    let parts = name.split(separator: "/", omittingEmptySubsequences: false)
+    guard parts.count == 2, !parts[0].isEmpty, !parts[1].isEmpty else { return nil }
+    return (String(parts[0]), String(parts[1]))
+}
+
 /// What **Type the code** reads: the yard's name at the edge (empty:
-/// the account's own) and the code, with or without its dash.
+/// the account's own; `owner/yard` for a yard of another account) and
+/// the code, with or without its dash.
 func typedCode(yard: String, code: String) -> CodeRead {
     guard let clean = cleanCode(code) else {
         return .refused(why: "That is no code: a code is eight letters and digits, as the yard printed them.")
@@ -124,6 +136,9 @@ func typedCode(yard: String, code: String) -> CodeRead {
     let name = yard.trimmingCharacters(in: .whitespacesAndNewlines)
     if !name.isEmpty, !name.allSatisfy({ $0 >= "!" && $0 <= "~" && $0 != "#" }) {
         return .refused(why: "That is no yard's name: the name is one word, as the yard printed it.")
+    }
+    if name.contains("/"), memberYard(name) == nil {
+        return .refused(why: "That is no yard's name: another account's yard is its owner's handle, a slash and the yard's name.")
     }
     return .code(PairingCode(code: String(clean.prefix(4)) + "-" + String(clean.dropFirst(4)), yard: name))
 }

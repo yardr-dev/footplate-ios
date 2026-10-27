@@ -83,6 +83,10 @@ final class Nav {
     var pairing: Bool
     /// Sign in, over the Pair screen or the tabs.
     var signIn: SignInRequest?
+    /// What the person is told after a yard left on its own, over the
+    /// places and the Pair screen until they dismiss it or move on: the
+    /// one sentence of a membership its owner removed.
+    var notice: String?
 
     init(place: Place = .crew) {
         self.place = place
@@ -91,6 +95,7 @@ final class Nav {
         self.linesPath = []
         self.pairing = false
         self.signIn = nil
+        self.notice = nil
     }
 
     /// Pushes the conversation, unless it is the one pushed already.
@@ -156,6 +161,7 @@ final class Nav {
     func didPair() {
         pairing = false
         place = .crew
+        notice = nil
     }
 
     /// Removes pushed screens for a yard that is no longer paired.

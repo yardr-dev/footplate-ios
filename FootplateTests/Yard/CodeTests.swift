@@ -14,6 +14,7 @@ final class CodeTests: XCTestCase {
 
     private let noAddress = "That is no address: https://yard.example.net, the scheme, the host and the port alone."
     private let plainHttp = "That address is plain http: anyone on the way could read the code and the token. Give the yard's https address."
+    private let noMemberYard = "That is no yard's name: another account's yard is its owner's handle, a slash and the yard's name."
 
     func testAQRReadsAsTheCodeAndTheYard() {
         let rows: [(String, CodeRead)] = [
@@ -27,6 +28,9 @@ final class CodeTests: XCTestCase {
             // The address as yardr prints it, with or without its slash.
             ("https://my.yardr.dev/#K7QM-2XPD", code("K7QM-2XPD")),
             ("  https://MY.yardr.dev:443#K7QM-2XPD#laptop \n", code("K7QM-2XPD", "laptop")),
+            // A yard of another account the account is a member of: its
+            // owner's handle and its name, as the edge names it.
+            ("https://my.yardr.dev#R2VH-6NQD#alice/lab", code("R2VH-6NQD", "alice/lab")),
             // A yard's own address, as `yardr user device pair --url`
             // shows it: the code goes there, with no edge.
             ("https://yard.example.net#K7QM-2XPD", code("K7QM-2XPD", "", "https://yard.example.net")),
@@ -92,6 +96,11 @@ final class CodeTests: XCTestCase {
         let rows: [(String, String)] = [
             // Four parts, and one part alone.
             ("https://my.yardr.dev#K7QM-2XPD#laptop#more", "That is not a pairing's code: yardr user device pair --qr draws one."),
+            // Another account's yard has its owner's handle and its name,
+            // no part missing and no third.
+            ("https://my.yardr.dev#R2VH-6NQD#alice/", noMemberYard),
+            ("https://my.yardr.dev#R2VH-6NQD#/lab", noMemberYard),
+            ("https://my.yardr.dev#R2VH-6NQD#alice/lab/more", noMemberYard),
             ("K7QM-2XPD", "That is not a pairing's code: yardr user device pair --qr draws one."),
             // A yard's own address with a yard's name: a direct pairing
             // takes none.
@@ -115,6 +124,12 @@ final class CodeTests: XCTestCase {
         XCTAssertEqual(typedCode(yard: "", code: "K7QM-2XPD"), code("K7QM-2XPD"))
         XCTAssertEqual(typedCode(yard: " laptop ", code: "k7qm2xpd"), code("K7QM-2XPD", "laptop"))
         XCTAssertEqual(typedCode(yard: "", code: "K7QM 2XPD"), code("K7QM-2XPD"))
+        XCTAssertEqual(typedCode(yard: " alice/lab ", code: "r2vh6nqd"), code("R2VH-6NQD", "alice/lab"))
+        XCTAssertEqual(typedCode(yard: "alice/", code: "R2VH-6NQD"), .refused(why: noMemberYard))
+        XCTAssertEqual(memberYard("alice/lab")?.owner, "alice")
+        XCTAssertEqual(memberYard("alice/lab")?.yard, "lab")
+        XCTAssertNil(memberYard("lab"))
+        XCTAssertNil(memberYard("yard.example.net:8446"))
         XCTAssertEqual(
             typedCode(yard: "", code: "https://other.example#K7QM-2XPD"),
             .refused(why: "That is no code: a code is eight letters and digits, as the yard printed them.")

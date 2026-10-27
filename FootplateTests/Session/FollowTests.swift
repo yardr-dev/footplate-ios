@@ -3,7 +3,8 @@ import Observation
 import XCTest
 
 // Following the yards against the fake yard: the state read, the events
-// reaching it, every refusal retried as 3.1 says, two yards at once, the
+// reaching it, every refusal retried as 3.1 says, two yards at once, a
+// yard of another account the owner removed the account from, the
 // foreground alone, and a network change.
 final class FollowTests: XCTestCase {
     private let fake = FakeYard()
@@ -11,6 +12,7 @@ final class FollowTests: XCTestCase {
     private var session: String!
     private var laptopToken: String!
     private var homeToken: String!
+    private var labToken: String!
     private var yards: Yards?
     private var followers: [Follower] = []
 
@@ -19,6 +21,7 @@ final class FollowTests: XCTestCase {
         session = fake.session()
         laptopToken = fake.token(yardName: "laptop")
         homeToken = fake.token(yardName: "")
+        labToken = fake.token(yardName: "alice/lab")
     }
 
     override func tearDown() async throws {
@@ -45,7 +48,7 @@ final class FollowTests: XCTestCase {
     }
 
     private func follow(_ yards: Yards, yardName: String) async throws -> Follower {
-        let token = yardName.isEmpty ? homeToken! : laptopToken!
+        let token = yardName.isEmpty ? homeToken! : (yardName == "alice/lab" ? labToken! : laptopToken!)
         let client = try fake.edge().yard(device: token, session: session, name: yardName)
         let follower = await MainActor.run { yards.follow(client) }
         followers.append(follower)
@@ -337,6 +340,59 @@ final class FollowTests: XCTestCase {
         _ = try await laptop.waitFor("no-device retry") { $0.status == .up }
     }
 
+    func testAMemberYardTheOwnerRemovedIsToldAndNotAskedAgain() async throws {
+        let yards = await makeYards()
+        let told = Told()
+        await MainActor.run {
+            yards.onRemoved = { name, words in told.add(name, words) }
+        }
+        let home = try await follow(yards, yardName: "")
+        // Not ready for any other reason, the owner's yard building say:
+        // tried again like any yard, and nothing is told.
+        fake.nextFor(yard: "alice/lab", path: "/user/events", .notReady("the yard is building"))
+        let lab = try await follow(yards, yardName: "alice/lab")
+        let building = try await lab.waitFor("not ready") { $0.status.isDown }
+        XCTAssertEqual(downWords(building).short, "yard not ready")
+        XCTAssertEqual(told.all, [])
+        _ = try await waitPending(clock, count: 2)
+
+        // The owner removes the member: the stream's next try is
+        // answered as no yard of the account's, and that is told, once.
+        fake.removeMember("alice/lab")
+        clock.advance(.seconds(30))
+        let gone = try await lab.waitFor("removed") { $0.status.isRemoved }
+        let words = "alice removed your access to lab."
+        XCTAssertEqual(gone.status, .removed(words: words))
+        XCTAssertEqual(told.all, [Told.Item(name: "alice/lab", words: words)])
+        // Not asked again, whatever time passes or the person tries.
+        let fake = self.fake
+        let asked = { fake.allRequests.filter { $0.header("X-Edge-Yard") == "alice/lab" }.count }
+        let count = asked()
+        await lab.retryFromTest()
+        clock.advance(.seconds(60))
+        try await settle(300)
+        XCTAssertEqual(asked(), count)
+        let after = await status(of: lab)
+        XCTAssertEqual(after, .removed(words: words))
+        // The yard's own follower is none the worse.
+        let homeStatus = await status(of: home)
+        XCTAssertEqual(homeStatus, .up)
+
+        // A yard read at the start, its first call refused so, is the
+        // same: the follower is told apart by its name, not by a call.
+        let again = try await follow(yards, yardName: "alice/lab")
+        _ = try await again.waitFor("removed at the start") { $0.status.isRemoved }
+        XCTAssertEqual(told.all.count, 2)
+
+        // A yard of the account's own the edge calls a yard it does not
+        // hold is no membership removed: it is tried again, as it was.
+        fake.nextFor(yard: "laptop", path: "/user/call/Head", .notReady(noYardWhy))
+        let laptop = try await follow(yards, yardName: "laptop")
+        let own = try await laptop.waitFor("own not ready") { $0.status.isDown }
+        XCTAssertEqual(downWords(own).short, "yard not ready")
+        XCTAssertEqual(told.all.count, 2)
+    }
+
     func testTheStreamsCloseInTheBackgroundAndTheStateIsReadAgainInFront() async throws {
         fake.delay("/user/call/GetUser", .milliseconds(250))
         fake.stream(lines: [], hang: true)
@@ -443,5 +499,25 @@ private final class NotifiedBox: @unchecked Sendable {
 
     var isSet: Bool {
         lock.withLock { value }
+    }
+}
+
+/// The yards a `Yards` was asked to forget, with the sentence each was
+/// told with, in the order it asked.
+private final class Told: @unchecked Sendable {
+    struct Item: Equatable {
+        let name: String
+        let words: String
+    }
+
+    private let lock = NSLock()
+    private var items: [Item] = []
+
+    func add(_ name: String, _ words: String) {
+        lock.withLock { items.append(Item(name: name, words: words)) }
+    }
+
+    var all: [Item] {
+        lock.withLock { items }
     }
 }

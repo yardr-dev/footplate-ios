@@ -26,7 +26,7 @@ final class Pairer {
 
     /// The handle the edge names the account's own yard by. Older kept
     /// sessions predate the plain-shelf handle, so read it from Kratos
-    /// once when a web view link needs it.
+    /// once when a web view link or a pairing needs it.
     func accountHandleForWebView() async throws -> String {
         guard let account = records.kept.account else { throw ApiError.notSignedIn }
         if !account.handle.isEmpty { return account.handle }
@@ -57,7 +57,12 @@ final class Pairer {
         // origin, pairs as before. A yard of its own is named by its
         // address, so the clash left for it is an edge yard that
         // carries that very name.
-        let name = code.address.isEmpty ? code.yard : ownName(code.address)
+        let name: String
+        if code.address.isEmpty {
+            name = try await edgeName(code.yard)
+        } else {
+            name = ownName(code.address)
+        }
         let origin = code.address
         if let clash = records.kept.yards.first(where: { $0.name == name && $0.origin != origin }) {
             throw ApiError.nameKept(title: clash.title)
@@ -66,19 +71,22 @@ final class Pairer {
             return try await pairDirect(code: code, name: name)
         }
         guard let account = records.kept.account else { throw ApiError.notSignedIn }
-        let paired = try await edge.pair(code: code.code, session: account.session, yard: code.yard)
-        let kept = PairedYard(name: code.yard, yard: paired.yard, user: paired.user, device: paired.device, token: paired.token)
+        // A yard of another account pairs as an own named yard does: the
+        // member's own session beside the code, and its `owner/yard` in
+        // `X-Edge-Yard`, which is how the edge names it.
+        let paired = try await edge.pair(code: code.code, session: account.session, yard: name)
+        let kept = PairedYard(name: name, yard: paired.yard, user: paired.user, device: paired.device, token: paired.token)
         records.keepYard(kept)
         // The pairing stands whatever /user/me answers: the follower
         // asks it again, and says what is wrong where something is.
         let me: Me
         do {
-            me = try await edge.yard(device: paired.token, session: account.session, name: code.yard).me()
+            me = try await edge.yard(device: paired.token, session: account.session, name: name).me()
         } catch is ApiError {
             return kept
         }
         let yard = PairedYard(
-            name: code.yard,
+            name: name,
             yard: me.yard.isEmpty ? paired.yard : me.yard,
             user: me.user,
             device: me.saidBy.isEmpty ? paired.device : me.saidBy,
@@ -86,6 +94,18 @@ final class Pairer {
         )
         records.keepYard(yard)
         return yard
+    }
+
+    /// The name the edge's yard `yard` is kept under. A yard of another
+    /// account stays `owner/yard`; one spelled with the account's own
+    /// handle is the account's own yard, kept by its bare name, so the
+    /// head line never calls a yard of its own another's. The handle is
+    /// the one kept with the session, or the edge's word for a session
+    /// kept before the handle was, asked once.
+    private func edgeName(_ yard: String) async throws -> String {
+        guard let member = memberYard(yard) else { return yard }
+        let handle = try await accountHandleForWebView()
+        return member.owner == handle ? member.yard : yard
     }
 
     private func pairDirect(code: PairingCode, name: String) async throws -> PairedYard {

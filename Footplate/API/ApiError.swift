@@ -103,6 +103,12 @@ enum Shape: Equatable, Sendable {
 
 private let edgePrefix = "edge:"
 
+/// The edge's sentence, in its 403, for a pick that names no yard the
+/// account holds (the router's `yardState`). A yard of another account
+/// is the account's while its membership is active, so this is also the
+/// answer to a member the owner removed, before any yard is reached.
+let noYardWhy = "the account holds no yard of that name"
+
 func bodyShape(_ body: String) -> Shape {
     guard let data = body.data(using: .utf8),
           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

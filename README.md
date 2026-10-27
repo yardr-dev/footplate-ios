@@ -14,6 +14,12 @@ paired with. The protocol is yardr's `/user/*` API; the yard runs as it
 does. No code is shared with the other footplates: this one is Swift drawn
 with SwiftUI on the same protocol.
 
+A person has one account, and a yard another person owns and made them a
+member of pairs beside their own: from a code that names it `owner/yard`,
+signed in as themselves. The head line and the yard switch call it
+`lab — member of alice's yard`. When its owner removes the membership, the
+yard leaves the phone with one sentence that says so.
+
 One secret crosses the edge: the one-time code a harness's sign-in page
 gives. Its decision card links the page and takes the code behind the
 unlock; API keys and every other secret are answered on the yard's machine.

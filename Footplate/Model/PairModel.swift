@@ -45,6 +45,14 @@ final class PairModel {
     /// The edge the app speaks to: the line **Type the code** shows.
     var edge: String { pairer.origin }
 
+    /// The sentence of the yard that left on its own, which the Pair
+    /// screen says where it was the last (`Nav.notice`).
+    var notice: String? { nav.notice }
+
+    func dismissNotice() {
+        nav.notice = nil
+    }
+
     init(pairer: Pairer, records: Records, nav: Nav) {
         self.pairer = pairer
         self.records = records

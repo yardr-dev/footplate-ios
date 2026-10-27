@@ -32,6 +32,10 @@ enum FollowStatus: Equatable, Sendable {
     /// The edge refuses the session: every yard stops, until the person
     /// signs in and the yards are followed with new clients.
     case signInAgain(words: String)
+    /// The edge no longer lets the account into this yard of another
+    /// account's: its owner removed the membership. Never asked again;
+    /// `Yards.onRemoved` is told, and the yard is forgotten.
+    case removed(words: String)
 }
 
 /// One yard's state, as the models read it: the last state read, whether
@@ -89,6 +93,12 @@ final class Yards {
     /// `signInAgain`.
     private(set) var signedOut = false
 
+    /// Asked, with the yard's name at the edge and the sentence that says
+    /// why, to forget a yard of another account whose owner removed the
+    /// membership: its follower has stopped, and the edge answers a yard
+    /// it will not let the account into the same way for ever.
+    var onRemoved: (@MainActor (_ name: String, _ words: String) -> Void)?
+
     /// How often the app went to the back: a follower reads the state again
     /// when this moved since its last load, however briefly the app was in
     /// the back.
@@ -119,6 +129,11 @@ final class Yards {
     func noteSignedOut() {
         signedOut = true
         pokeAll()
+    }
+
+    /// The edge refused the membership of a yard of another account.
+    func noteRemoved(name: String, words: String) {
+        onRemoved?(name, words)
     }
 
     /// Stops every follower.
@@ -269,6 +284,9 @@ final class Follower {
                 if Task.isCancelled {
                     return
                 }
+                if stopIfRemoved(error) {
+                    return
+                }
                 switch error {
                 case .notSignedIn:
                     yards.noteSignedOut()
@@ -322,6 +340,9 @@ final class Follower {
                     await pause(heard ? followReplacingPause : followRetry, interruptible: true)
                 case .failed(let error):
                     if Task.isCancelled {
+                        return
+                    }
+                    if stopIfRemoved(error) {
                         return
                     }
                     switch error {
@@ -494,6 +515,21 @@ final class Follower {
 
     private func down(_ error: ApiError) {
         update { $0.status = .down(words: words(error), short: short(error)) }
+    }
+
+    /// Where `error` is the edge saying the account holds no such yard,
+    /// of a yard named `owner/yard`, the owner removed the membership:
+    /// the follower says so, tells the yards and is done, true. Any other
+    /// refusal of such a yard (the owner's yard building, say) is the
+    /// loop's, tried again as it is for any yard.
+    private func stopIfRemoved(_ error: ApiError) -> Bool {
+        guard case .notReady(let why) = error, why == noYardWhy, let member = memberYard(client.name) else {
+            return false
+        }
+        let words = removedWords(owner: member.owner, yard: member.yard)
+        update { $0.status = .removed(words: words) }
+        yards.noteRemoved(name: client.name, words: words)
+        return true
     }
 }
 
@@ -686,3 +722,9 @@ private func short(_ error: ApiError) -> String {
 let notLetInWords = "This device is no longer let in: the yard refuses its token. Pair it again."
 let noDeviceWords = "The yard has no device any more. Pair it again."
 let signedOutWords = "The session ran out or was revoked. Sign in again."
+
+/// What the owner's removal of a membership says, once, when the yard
+/// leaves the phone.
+func removedWords(owner: String, yard: String) -> String {
+    "\(owner) removed your access to \(yard)."
+}

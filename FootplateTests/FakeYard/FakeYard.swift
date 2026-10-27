@@ -2,11 +2,13 @@
 import Foundation
 
 // The fake yard of design 3.7: one account at a fake edge, in-process,
-// with Kratos's sign-in and logout, two yards told apart by X-Edge-Yard,
-// a pairing open in each, and a call with no edge headers served as a
-// yard of its own by the home yard; every call of 3.1 answered with
-// docs/api.md's examples, and the edge's and the yard's refusals on
-// demand. It records every request, so a test asserts what a call
+// with Kratos's sign-in and logout, yards told apart by X-Edge-Yard
+// (the account's own two, and one of another account's it is a member
+// of, named `owner/yard` as the edge names it), a pairing open in each,
+// and a call with no edge headers served as a yard of its own by the
+// home yard; every call of 3.1 answered with docs/api.md's examples,
+// and the edge's and the yard's refusals on demand, a removed member's
+// among them. It records every request, so a test asserts what a call
 // carried. It implements the same transport seam as URLSession, so no
 // socket is opened; URLSession's own framing is proved by the loopback
 // smoke test alone.
@@ -167,13 +169,19 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
         }
     }
 
-    /// The yards of the account: the own one (no X-Edge-Yard) and
-    /// laptop.
+    /// The yards of the account: the own one (no X-Edge-Yard), laptop,
+    /// and alice's yard lab, which the account is a member of and acts
+    /// in as the yard user its owner made for it.
     let home = YardState(name: "", user: "jo", device: "phone", yard: "south", code: "K7QM-2XPD")
     let laptop = YardState(name: "laptop", user: "jo", device: "pixel", yard: "laptop", code: "M4TR-9KWE")
+    let lab = YardState(name: "alice/lab", user: "joe", device: "phone", yard: "lab", code: "R2VH-6NQD")
 
     private let lock = NSLock()
-    private var yards: [YardState] { [home, laptop] }
+    /// The yards the edge lets the account into: a member yard whose
+    /// owner removed the membership is none, and is answered as a yard
+    /// the account does not hold.
+    private var yards: [YardState] { [home, laptop, lab].filter { !removed.contains($0.name) } }
+    private var removed: Set<String> = []
     private var sessions: Set<String> = []
     private var minted = 0
     private var expired = 0
@@ -205,6 +213,15 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
         defer { lock.unlock() }
         let yard = yards.first { $0.name == yardName }!
         return mintTokenLocked(yard)
+    }
+
+    /// The owner of the member yard named `name` removes the account's
+    /// membership: from the next request the edge answers it 403, `the
+    /// account holds no yard of that name`, before any yard is asked.
+    func removeMember(_ name: String) {
+        lock.lock()
+        removed.insert(name)
+        lock.unlock()
     }
 
     /// How many of the next submitted login flows the edge has

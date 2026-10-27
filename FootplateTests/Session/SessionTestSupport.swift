@@ -32,6 +32,13 @@ extension FollowStatus {
         }
         return false
     }
+
+    var isRemoved: Bool {
+        if case .removed = self {
+            return true
+        }
+        return false
+    }
 }
 
 extension Follower {

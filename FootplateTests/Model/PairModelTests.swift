@@ -8,7 +8,9 @@ import XCTest
 // the name its address gives it beside the edge's own yard and
 // beside another of its own, a second yard under a kept name refused
 // before anything is sent, a QR of no usable address that sends
-// nothing, and forgetting one yard and then the last.
+// nothing, a yard of another account the account is a member of paired
+// on the session alone and named by its owner, and forgetting one yard
+// and then the last.
 @MainActor
 final class PairModelTests: XCTestCase {
     private struct World {
@@ -136,6 +138,76 @@ final class PairModelTests: XCTestCase {
         XCTAssertEqual(world.records.kept.yards.map(\.name), ["laptop", ""])
         XCTAssertEqual(world.records.kept.selected, "")
         XCTAssertEqual(world.records.kept.selectedYard?.yard, "south")
+
+        // And a yard of another account the account is a member of, the
+        // third: its code names it `owner/yard`, which is how the edge
+        // names it and what every call carries, with the member's own
+        // session beside the code and no device token on the pairing.
+        let beforeMember = world.fake.requestCount
+        world.nav.showPair()
+        world.pair.scanned("\(world.fake.origin)#\(world.fake.lab.code ?? "")#alice/lab")
+        XCTAssertEqual(world.pair.state.step, .read(PairingCode(code: "R2VH-6NQD", yard: "alice/lab")))
+        await world.pair.pair()
+        XCTAssertFalse(world.nav.pairing)
+        let member = Array(world.fake.allRequests[beforeMember...])
+        XCTAssertEqual(member.map(\.path), ["/user/pair", "/user/me"])
+        XCTAssertTrue(member.allSatisfy { $0.header("X-Edge-Token") == session })
+        XCTAssertTrue(member.allSatisfy { $0.header("X-Edge-Yard") == "alice/lab" })
+        XCTAssertNil(member[0].header("Authorization"))
+        XCTAssertEqual(member[0].bodyObject()["code"] as? String, "R2VH-6NQD")
+        XCTAssertEqual(world.records.kept.yards.map(\.name), ["laptop", "", "alice/lab"])
+        let kept = try XCTUnwrap(world.records.kept.selectedYard)
+        XCTAssertEqual(kept.name, "alice/lab")
+        XCTAssertEqual(kept.owner, "alice")
+        XCTAssertEqual(kept.yard, "lab")
+        XCTAssertEqual("\(kept.title) · \(kept.user)", "lab — member of alice's yard · joe")
+        // The yard's calls carry the same name: the client the app
+        // follows it with is made from the record.
+        let yard = try world.edge.yard(device: kept.token, session: session, name: kept.name)
+        _ = try await yard.head()
+        XCTAssertEqual(world.fake.allRequests.last?.header("X-Edge-Yard"), "alice/lab")
+    }
+
+    func testAYardSpelledWithTheAccountsOwnHandleIsKeptAsItsOwn() async throws {
+        let world = try makeWorld()
+        // The account `jo` types its own yard the way another account's
+        // is named: the edge reads it as its own, and so is it kept, by
+        // its bare name, never called a yard of another account's.
+        world.pair.typeCode()
+        world.pair.typed(yard: "jo/laptop", code: world.fake.laptop.code ?? "")
+        world.pair.readTyped()
+        XCTAssertEqual(world.pair.state.step, .read(PairingCode(code: "M4TR-9KWE", yard: "jo/laptop")))
+        await world.pair.pair()
+        await signInAs(world)
+        await waitForYards(world, 1)
+        let pairing = try XCTUnwrap(world.fake.allRequests.first { $0.path == "/user/pair" })
+        XCTAssertEqual(pairing.header("X-Edge-Yard"), "laptop")
+        let kept = try XCTUnwrap(world.records.kept.selectedYard)
+        XCTAssertEqual(kept.name, "laptop")
+        XCTAssertEqual(kept.owner, "")
+        XCTAssertEqual(kept.title, "laptop")
+
+        // A session kept before the handle was has none to compare: the
+        // edge says whose it is, once, and the answer is kept. Its own
+        // yard spelled so is its own, and another account's stays so.
+        let legacy = try makeWorld()
+        legacy.records.keepSession(account: legacy.fake.email, session: legacy.fake.session())
+        XCTAssertEqual(legacy.records.kept.account?.handle, "")
+        legacy.fake.next("/kratos/sessions/whoami", .json(200, #"{"identity": {"traits": {"email": "jo@example.com", "handle": "jo"}}}"#))
+        for (yard, code) in [("jo/laptop", legacy.fake.laptop.code ?? ""), ("alice/lab", legacy.fake.lab.code ?? "")] {
+            legacy.nav.showPair()
+            legacy.pair.typeCode()
+            legacy.pair.typed(yard: yard, code: code)
+            legacy.pair.readTyped()
+            await legacy.pair.pair()
+        }
+        XCTAssertEqual(
+            legacy.fake.allRequests.map(\.path),
+            ["/kratos/sessions/whoami", "/user/pair", "/user/me", "/user/pair", "/user/me"]
+        )
+        XCTAssertEqual(legacy.records.kept.account?.handle, "jo")
+        XCTAssertEqual(legacy.records.kept.yards.map(\.name), ["laptop", "alice/lab"])
+        XCTAssertEqual(legacy.records.kept.yards.map(\.owner), ["", "alice"])
     }
 
     func testAWrongCodeAndAnEndedPairingAreSaid() async throws {
