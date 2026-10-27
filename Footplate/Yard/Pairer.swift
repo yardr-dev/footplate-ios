@@ -20,7 +20,21 @@ final class Pairer {
     /// before. The password is sent and kept nowhere.
     func signIn(email: String, password: String) async throws {
         let signedIn = try await edge.signIn(email: email, password: password)
-        records.keepSession(account: signedIn.account, session: signedIn.session)
+        records.keepSession(account: signedIn.account, handle: signedIn.handle, session: signedIn.session)
+    }
+
+    /// The handle the edge names the account's own yard by. Older kept
+    /// sessions predate the plain-shelf handle, so read it from Kratos
+    /// once when a web view link needs it.
+    func accountHandleForWebView() async throws -> String {
+        guard let account = records.kept.account else { throw ApiError.notSignedIn }
+        if !account.handle.isEmpty { return account.handle }
+        let handle = try await edge.accountHandle(session: account.session)
+        records.keepAccountHandle(handle, for: account.session)
+        guard let current = records.kept.account, current.session == account.session,
+              !current.handle.isEmpty
+        else { throw ApiError.notSignedIn }
+        return current.handle
     }
 
     /// Pairs with `code` under the session kept: the code to

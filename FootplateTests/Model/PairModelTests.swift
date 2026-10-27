@@ -104,6 +104,7 @@ final class PairModelTests: XCTestCase {
         // Both tokens kept, the yard selected, and the head line says it.
         let kept = world.records.kept
         XCTAssertEqual(kept.account?.account, "jo@example.com")
+        XCTAssertEqual(kept.account?.handle, "jo")
         XCTAssertEqual(kept.yards.map(\.name), ["laptop"])
         XCTAssertEqual(kept.selected, "laptop")
         XCTAssertEqual(kept.selectedYard.map { "\($0.title) · \($0.user)" }, "laptop · jo")

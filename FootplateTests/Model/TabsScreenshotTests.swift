@@ -49,7 +49,7 @@ final class TabsScreenshotTests: XCTestCase {
         let decisions = DecisionsModel(records: records, mailroom: mailroom, nav: nav, now: { now }, zone: { zone })
         let decision = DecisionModel(mailroom: mailroom, records: records, nav: nav, unlock: FakeUnlock(), now: { now }, zone: { zone })
         let line = LineModel(
-            followers: { ["": home, "laptop": laptop] }, nav: nav,
+            followers: { ["": home, "laptop": laptop] }, records: records, pairer: pairer, nav: nav,
             conversation: conversation, origin: fake.origin, now: { now }
         )
         let pair = PairModel(pairer: pairer, records: records, nav: nav)

@@ -21,18 +21,23 @@ final class RecordsTests: XCTestCase {
         let plain = MemoryShelf()
         let records = makeRecords(secret: secret, plain: plain)
         records.keepSession(account: "mckean@example.com", session: "ory_st_secret")
+        records.keepAccountHandle("wrong", for: "ory_st_other")
+        XCTAssertEqual(records.kept.account?.handle, "")
+        records.keepAccountHandle("mckean", for: "ory_st_secret")
         records.keepYard(PairedYard(name: "laptop", yard: "laptop", user: "mckean", device: "pixel", token: "yardr-dev-laptop-1"))
         records.keepYard(PairedYard(name: "", yard: "south", user: "mckean", device: "pixel", token: "yardr-dev-south-1"))
         // Neither token lies on the plain shelf in the clear.
         let plainText = plain.map.values.joined()
         XCTAssertFalse(plainText.contains("ory_st_secret"), plainText)
         XCTAssertFalse(plainText.contains("yardr-dev-"), plainText)
-        // The selection is a name on the plain shelf.
+        // The selection and the account's handle are names on the plain shelf.
         XCTAssertEqual(plain.map["selected"], "")
+        XCTAssertEqual(plain.map["account-handle"], "mckean")
 
         let again = makeRecords(secret: secret, plain: plain).kept
         XCTAssertEqual(again.account?.session, "ory_st_secret")
         XCTAssertEqual(again.account?.account, "mckean@example.com")
+        XCTAssertEqual(again.account?.handle, "mckean")
         XCTAssertEqual(again.yards.map(\.name), ["", "laptop"])
         XCTAssertEqual(again.yards.map(\.token), ["yardr-dev-south-1", "yardr-dev-laptop-1"])
         XCTAssertEqual(again.selected, "")
@@ -41,6 +46,15 @@ final class RecordsTests: XCTestCase {
         let described = String(describing: again)
         XCTAssertFalse(described.contains("ory_st"), described)
         XCTAssertFalse(described.contains("yardr-dev"), described)
+
+        // The next sign-in keeps its own handle, and one that answers
+        // none leaves no handle of the account before it.
+        records.keepSession(account: "jo@example.com", handle: "jo", session: "ory_st_next")
+        XCTAssertEqual(makeRecords(secret: secret, plain: plain).kept.account?.handle, "jo")
+        records.keepSession(account: "no@example.com", session: "ory_st_last")
+        XCTAssertEqual(records.kept.account?.handle, "")
+        XCTAssertNil(plain.map["account-handle"])
+        XCTAssertEqual(makeRecords(secret: secret, plain: plain).kept.account?.handle, "")
     }
 
     func testARecordWhoseTokenIsGoneIsSetAside() {
@@ -75,7 +89,7 @@ final class RecordsTests: XCTestCase {
         let secret = MemoryShelf()
         let plain = MemoryShelf()
         let records = makeRecords(secret: secret, plain: plain)
-        records.keepSession(account: "mckean@example.com", session: "ory_st_secret")
+        records.keepSession(account: "mckean@example.com", handle: "mckean", session: "ory_st_secret")
         records.keepYard(PairedYard(name: "laptop", yard: "laptop", user: "mckean", device: "pixel", token: "yardr-dev-laptop-1"))
         let kept = makeRecords(secret: secret, plain: plain, origin: "https://test.yardr.dev").kept
         XCTAssertEqual(kept, Kept())
@@ -87,7 +101,7 @@ final class RecordsTests: XCTestCase {
         let secret = MemoryShelf()
         let plain = MemoryShelf()
         let records = makeRecords(secret: secret, plain: plain)
-        records.keepSession(account: "mckean@example.com", session: "ory_st_secret")
+        records.keepSession(account: "mckean@example.com", handle: "mckean", session: "ory_st_secret")
         records.keepYard(PairedYard(name: "laptop", yard: "laptop", user: "mckean", device: "pixel", token: "yardr-dev-laptop-1"))
         records.keepYard(PairedYard(name: "", yard: "south", user: "mckean", device: "pixel", token: "yardr-dev-south-1"))
         // The notifications permission is asked once: the flag is
@@ -103,7 +117,7 @@ final class RecordsTests: XCTestCase {
         XCTAssertEqual(records.kept, Kept())
         XCTAssertTrue(secret.map.isEmpty, "\(secret.map)")
         let recordKeys = plain.map.keys.filter {
-            $0 == "origin" || $0 == "account" || $0 == "selected" || $0.hasPrefix("yard-meta:")
+            $0 == "origin" || $0 == "account" || $0 == "account-handle" || $0 == "selected" || $0.hasPrefix("yard-meta:")
         }
         XCTAssertTrue(recordKeys.isEmpty, "\(plain.map)")
     }

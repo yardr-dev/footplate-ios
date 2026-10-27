@@ -14,6 +14,9 @@ final class LineModelTests: XCTestCase {
     private var home: FakeFollowed!
     private var laptop: FakeFollowed!
     private var nav: Nav!
+    private var records: Records!
+    private var fake: FakeYard!
+    private var pairer: Pairer!
     private var conversation: ConversationModel!
     private var model: LineModel!
 
@@ -22,6 +25,10 @@ final class LineModelTests: XCTestCase {
         home = FakeFollowed()
         laptop = FakeFollowed()
         nav = Nav(place: .lines)
+        records = Records(secret: MemoryShelf(), plain: MemoryShelf(), origin: "https://edge.example")
+        records.keepSession(account: "jo@example.com", handle: "jo", session: "ory_st_line")
+        fake = FakeYard()
+        pairer = Pairer(edge: try! fake.edge(), records: records)
         let now = parseInstant("2026-10-08T10:11:00Z")!
         let mailroom = Mailroom()
         mailroom.setFollowers(["": home, "laptop": laptop])
@@ -34,7 +41,7 @@ final class LineModelTests: XCTestCase {
         )
         model = LineModel(followers: { [home, laptop] in
             ["": home!, "laptop": laptop!]
-        }, nav: nav, conversation: conversation, origin: "https://edge.example", now: { now })
+        }, records: records, pairer: pairer, nav: nav, conversation: conversation, origin: "https://edge.example", now: { now })
     }
 
     override func tearDown() {
@@ -42,6 +49,9 @@ final class LineModelTests: XCTestCase {
         conversation.leave()
         model = nil
         conversation = nil
+        pairer = nil
+        fake = nil
+        records = nil
         nav = nil
         home = nil
         laptop = nil
@@ -507,8 +517,26 @@ final class LineModelTests: XCTestCase {
         XCTAssertEqual(card.bead.stay, "41m")
         XCTAssertEqual(workerWords(card.bead), "train-new · 41m")
         XCTAssertEqual(beadMeta(card.bead), "expected 11–25m")
-        // The account's own yard needs no yard parameter.
-        XCTAssertEqual(card.webView, "https://edge.example/beads/yd-train")
+        // The account's own yard is named by its handle, so a cookie an
+        // earlier named-yard visit left in the browser picks nothing.
+        XCTAssertEqual(card.webView, "https://edge.example/beads/yd-train?yard=jo")
+
+        // An account saved before handles were kept resolves its handle
+        // with the current session before opening the own-yard page.
+        let legacySession = fake.session()
+        records.keepSession(account: "jo@example.com", session: legacySession)
+        fake.next(
+            "/kratos/sessions/whoami",
+            .json(200, #"{"identity":{"traits":{"handle":"jo"}}}"#)
+        )
+        let maybeResolved = await model.webViewURL(for: route)
+        let resolved = try XCTUnwrap(maybeResolved)
+        XCTAssertEqual(resolved.absoluteString, "https://edge.example/beads/yd-train?yard=jo")
+        XCTAssertEqual(records.kept.account?.handle, "jo")
+        let whoami = fake.taken()
+        XCTAssertEqual(whoami.method, "GET")
+        XCTAssertEqual(whoami.path, "/kratos/sessions/whoami")
+        XCTAssertEqual(whoami.header("X-Edge-Token"), legacySession)
 
         // The whole card, whatever filter the overview holds; a bead in
         // the backlog has its card too, on the same strip.
@@ -526,13 +554,34 @@ final class LineModelTests: XCTestCase {
         XCTAssertTrue(waiting.bead.waitsSeat)
         XCTAssertEqual(beadMeta(waiting.bead), "waits for a seat")
         XCTAssertEqual(waiting.head, "drafts · default · new")
+
+        // A named yard's card names that yard: the handle is the own
+        // yard's alone.
+        laptop.up(loaded())
+        laptop.board = richBoard()
+        model.open(yard: "laptop")
+        try await waitRead()
+        let named = try XCTUnwrap(model.card(for: BeadRoute(yard: "laptop", bead: "yd-train")))
+        XCTAssertEqual(named.webView, "https://edge.example/beads/yd-train?yard=laptop")
+
+        // If an older session cannot identify its handle, do not open an
+        // own-yard link that would silently follow a stale browser cookie.
+        model.open(yard: "")
+        try await waitRead()
+        let unresolvedSession = fake.session()
+        records.keepSession(account: "jo@example.com", session: unresolvedSession)
+        fake.next("/kratos/sessions/whoami", .signedOut())
+        let unresolved = await model.webViewURL(for: route)
+        XCTAssertNil(unresolved)
+        XCTAssertNotNil(model.webViewError)
+        _ = fake.taken()
     }
 
     func testABeadCardNamesItsLineOrNone() throws {
         let now = parseInstant("2026-10-08T10:11:00Z")!
         // Elsewhere: no strip, no stage, still a card.
         let held = try XCTUnwrap(
-            beadCard(board: board(), me: "jo", now: now, origin: "https://edge.example", yard: "north", id: "yd-fence")
+            beadCard(board: board(), me: "jo", now: now, origin: "https://edge.example", yard: "north", handle: "jo", id: "yd-fence")
         )
         XCTAssertEqual(held.line, "yard · Elsewhere")
         XCTAssertEqual(held.stage, "")
@@ -540,19 +589,31 @@ final class LineModelTests: XCTestCase {
         XCTAssertEqual(held.head, "yard · Elsewhere")
         XCTAssertEqual(held.bead.remark, "held by yardmaster")
         XCTAssertFalse(held.bead.waitsSeat)
+        // A named yard keeps its name whatever the account's handle.
         XCTAssertEqual(held.webView, "https://edge.example/beads/yd-fence?yard=north")
         // No line: the same, and no depot to name.
         let bare = try XCTUnwrap(
-            beadCard(board: board(), me: "jo", now: now, origin: "https://edge.example", yard: "", id: "yd-crm")
+            beadCard(board: board(), me: "jo", now: now, origin: "https://edge.example", yard: "", handle: "jo", id: "yd-crm")
         )
         XCTAssertEqual(bare.line, "No line")
         XCTAssertEqual(bare.stage, "")
         XCTAssertEqual(bare.stages, [])
         XCTAssertEqual(bare.head, "No line")
-        XCTAssertEqual(bare.webView, "https://edge.example/beads/yd-crm")
+        // The account's own yard is named by its handle, on a line or off.
+        XCTAssertEqual(bare.webView, "https://edge.example/beads/yd-crm?yard=jo")
+        let onLine = try XCTUnwrap(
+            beadCard(board: board(), me: "jo", now: now, origin: "https://edge.example", yard: "", handle: "jo", id: "yd-train")
+        )
+        XCTAssertEqual(onLine.webView, "https://edge.example/beads/yd-train?yard=jo")
+        // The pure card builder has no network access; the interactive
+        // model resolves a missing handle before opening the link above.
+        let unnamed = try XCTUnwrap(
+            beadCard(board: board(), me: "jo", now: now, origin: "https://edge.example", yard: "", handle: "", id: "yd-crm")
+        )
+        XCTAssertEqual(unnamed.webView, "https://edge.example/beads/yd-crm")
         // The board holds no such bead.
-        XCTAssertNil(beadCard(board: board(), me: "jo", now: now, origin: "https://edge.example", yard: "", id: "yd-nope"))
-        XCTAssertNil(beadCard(board: Flows(), me: "jo", now: now, origin: "https://edge.example", yard: "", id: "yd-crm"))
+        XCTAssertNil(beadCard(board: board(), me: "jo", now: now, origin: "https://edge.example", yard: "", handle: "jo", id: "yd-nope"))
+        XCTAssertNil(beadCard(board: Flows(), me: "jo", now: now, origin: "https://edge.example", yard: "", handle: "jo", id: "yd-crm"))
     }
 
     func testACardsHeadSaysItsStayAndItsRange() {
@@ -573,27 +634,39 @@ final class LineModelTests: XCTestCase {
 
     func testABeadIdNeverShapesItsWebViewUrl() throws {
         XCTAssertEqual(
-            webViewUrl(origin: "https://edge.example", yard: "a+b", bead: "yd-gate"),
+            webViewUrl(origin: "https://edge.example", yard: "a+b", handle: "jo", bead: "yd-gate"),
             "https://edge.example/beads/yd-gate?yard=a%2Bb"
         )
         // The id arrives from the yard: slashes, queries and fragments in
-        // it stay one path segment, never the URL's shape.
-        let hostile = webViewUrl(origin: "https://edge.example", yard: "", bead: "yd-../../x?yard=other#frag")
-        XCTAssertEqual(hostile, "https://edge.example/beads/yd-..%2F..%2Fx%3Fyard%3Dother%23frag")
+        // it stay one path segment, never the URL's shape, and the one
+        // parameter is the own yard's handle.
+        let hostile = webViewUrl(origin: "https://edge.example", yard: "", handle: "jo", bead: "yd-../../x?yard=other#frag")
+        XCTAssertEqual(hostile, "https://edge.example/beads/yd-..%2F..%2Fx%3Fyard%3Dother%23frag?yard=jo")
         let parts = try XCTUnwrap(URLComponents(string: hostile))
         XCTAssertEqual(parts.host, "edge.example")
         XCTAssertEqual(parts.percentEncodedPath.split(separator: "/").map(String.init), ["beads", "yd-..%2F..%2Fx%3Fyard%3Dother%23frag"])
-        XCTAssertNil(parts.query)
+        XCTAssertEqual(parts.queryItems, [URLQueryItem(name: "yard", value: "jo")])
         XCTAssertNil(parts.fragment)
+        // The pure URL helper adds no yard parameter when no handle is
+        // supplied; LineModel resolves it before an interactive open.
+        let unnamed = webViewUrl(origin: "https://edge.example", yard: "", handle: "", bead: "yd-../../x?yard=other#frag")
+        XCTAssertEqual(unnamed, "https://edge.example/beads/yd-..%2F..%2Fx%3Fyard%3Dother%23frag")
+        let unnamedParts = try XCTUnwrap(URLComponents(string: unnamed))
+        XCTAssertNil(unnamedParts.query)
+        XCTAssertNil(unnamedParts.fragment)
         XCTAssertEqual(
-            webViewUrl(origin: "https://edge.example", yard: "north", bead: "a b"),
+            webViewUrl(origin: "https://edge.example", yard: "north", handle: "jo", bead: "a b"),
             "https://edge.example/beads/a%20b?yard=north"
         )
         // What is not ASCII is percent-encoded as UTF-8, and the yard's
-        // name is a value as the id is a segment.
+        // name, the handle too, is a value as the id is a segment.
         XCTAssertEqual(
-            webViewUrl(origin: "https://edge.example", yard: "café&x=1", bead: "yd-é"),
+            webViewUrl(origin: "https://edge.example", yard: "café&x=1", handle: "jo", bead: "yd-é"),
             "https://edge.example/beads/yd-%C3%A9?yard=caf%C3%A9%26x%3D1"
+        )
+        XCTAssertEqual(
+            webViewUrl(origin: "https://edge.example", yard: "", handle: "jo&x=1", bead: "yd-é"),
+            "https://edge.example/beads/yd-%C3%A9?yard=jo%26x%3D1"
         )
     }
 

@@ -27,8 +27,8 @@ against its bead, then for security alone.
 Open `Footplate.xcodeproj` in Xcode 26.3 and run the shared `Footplate`
 scheme. The app supports iOS 18 and later on iPhone and iPad. It pairs
 with a yard by a scanned or typed code and signs in at the edge; after
-pairing it opens an empty crew place. The crew, decide and line places are
-built.
+pairing it opens an empty crew place.
+The crew, decide and lines places are built.
 The project uses platform frameworks only and needs no generator or package
 installation. For a physical device, select your signing team in Xcode.
 

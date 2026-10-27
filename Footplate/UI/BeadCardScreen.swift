@@ -53,6 +53,12 @@ struct BeadCardScreen: View {
         }
         now(card.bead)
         actions(card)
+        if let error = model.webViewError {
+            Text(error)
+                .themeType(.body)
+                .foregroundStyle(ThemeColor.textError.color)
+                .padding(.top, 8)
+        }
     }
 
     /// What is happening now: who works the bead and its stay, and its
@@ -93,11 +99,11 @@ struct BeadCardScreen: View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 8) {
                 ask(card)
-                web(card)
+                web()
             }
             VStack(spacing: 8) {
                 ask(card)
-                web(card)
+                web()
             }
         }
         .padding(.top, 16)
@@ -116,11 +122,14 @@ struct BeadCardScreen: View {
 
     /// The bead's page at the yard's web view, in the phone's browser:
     /// nothing comes back.
-    private func web(_ card: BeadCard) -> some View {
+    private func web() -> some View {
         Button("Open in web view") {
-            if let url = URL(string: card.webView) { openURL(url) }
+            Task {
+                if let url = await model.webViewURL(for: route) { openURL(url) }
+            }
         }
         .buttonStyle(FootplateButtonStyle(primary: false))
+        .disabled(model.resolvingWebView == route)
         .accessibilityHint("Opens the bead's page in the browser")
         .accessibilityIdentifier("bead-open-web")
     }

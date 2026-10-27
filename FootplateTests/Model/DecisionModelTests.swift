@@ -509,10 +509,32 @@ final class DecisionModelTests: XCTestCase {
         XCTAssertEqual(calls("DeclineAsk").count, 1)
         XCTAssertEqual(calls("DeclineAsk")[0]["words"] as? String, "ask me on Monday")
         XCTAssertTrue(list.state.open.contains { $0.bead == "yd-map" }, "not moved before its event")
-        await noted(153, "yd-map", Self.asks(open: [Self.links, Self.tidy], decided: [Self.mapDeclined, Self.greetDeclined]))
+        // The yard asks for a secret meanwhile.
+        await noted(153, "yd-map", Self.asks(open: [Self.links, Self.tidy, Self.token], decided: [Self.mapDeclined, Self.greetDeclined]))
         let declined = await waitFor("yd-map declined", state: { list.state }) { s in !s.open.contains { $0.bead == "yd-map" } }
         XCTAssertEqual(declined.decided.first { $0.bead == "yd-map" }?.what, "declined")
         XCTAssertEqual(map.state.done, "declined")
+        map.leave()
+
+        // A secret card is declined at the first press, with no words and
+        // no field for why: the yard refuses words on a secret ask, since
+        // they may be the secret. It moves when the event comes, as the
+        // others do.
+        XCTAssertTrue(declined.open.contains { $0.bead == "yd-token" })
+        let token = await opened("yd-token", 18)
+        await token.decline()
+        XCTAssertFalse(token.state.declining, "no field for why")
+        let declines = calls("DeclineAsk")
+        XCTAssertEqual(declines.count, 2)
+        XCTAssertEqual(declines.last?["bead"] as? String, "yd-token")
+        XCTAssertEqual(declines.last?["ask"] as? Int, 18)
+        XCTAssertEqual(declines.last?["words"] as? String, "")
+        XCTAssertNil(token.state.error)
+        XCTAssertTrue(list.state.open.contains { $0.bead == "yd-token" }, "not moved before its event")
+        await noted(154, "yd-token", Self.asks(open: [Self.links, Self.tidy], decided: [Self.tokenDeclined, Self.mapDeclined, Self.greetDeclined]))
+        let tokenDeclined = await waitFor("yd-token declined", state: { list.state }) { s in !s.open.contains { $0.bead == "yd-token" } }
+        XCTAssertEqual(tokenDeclined.decided.first { $0.bead == "yd-token" }?.what, "declined")
+        XCTAssertEqual(token.state.done, "declined")
     }
 
     private static func asks(open: [String], decided: [String]) -> String {
@@ -523,8 +545,10 @@ final class DecisionModelTests: XCTestCase {
     private static let tidy = #"{"bead": "yd-tidy", "bead_title": "Tidy the sidings", "ask": 9, "question": "Remove the merged worktrees now?", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "run": {"command": "yardr depot tidy --merged"}}"#
     private static let links = #"{"bead": "yd-links", "bead_title": "Move the links", "ask": 3, "question": "Move this yard's links to the declared source now?", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z"}"#
     private static let login = #"{"bead": "yd-login", "bead_title": "Claude Code sign-in", "ask": 34, "question": "Paste what Claude Code's sign-in page gave you", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "secret": {"source": "", "env": ["INPUT"], "login": "claude-ab12", "line": "a secret: INPUT, for the waiting login claude-ab12"}, "weight": [{"class": "credential", "line": "INPUT, for the waiting login claude-ab12"}]}"#
+    private static let token = #"{"bead": "yd-token", "bead_title": "The callback token", "ask": 18, "question": "What is the callback token?", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "secret": {"source": "crm", "env": ["CRM_UPDATE_TOKEN"], "line": "the token the yard calls back with"}, "weight": [{"class": "credential", "line": "gives a credential or an address to the yard"}]}"#
     private static let linksAside = #"{"bead": "yd-links", "bead_title": "Move the links", "ask": 3, "question": "Move this yard's links to the declared source now?", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "state": "put aside", "return_at": "2026-10-08T12:00:00Z"}"#
     private static let mapDeclined = #"{"bead": "yd-map", "bead_title": "Who wrote in", "ask": 7, "question": "Who is U024BE7LH on slack?", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "state": "declined", "words": "ask me on Monday", "identity": {"source": "slack", "sender": "U024BE7LH"}, "weight": [{"class": "as-user", "line": "writes who a sender is"}]}"#
+    private static let tokenDeclined = #"{"bead": "yd-token", "bead_title": "The callback token", "ask": 18, "question": "What is the callback token?", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "state": "declined", "secret": {"source": "crm", "env": ["CRM_UPDATE_TOKEN"], "line": "the token the yard calls back with"}, "weight": [{"class": "credential", "line": "gives a credential or an address to the yard"}]}"#
     private static let greetDeclined = #"{"bead": "yd-greet", "bead_title": "The greeting", "ask": 5, "question": "What should the tone of the greeting be?", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "state": "declined", "words": "the greeting can wait"}"#
 }
 

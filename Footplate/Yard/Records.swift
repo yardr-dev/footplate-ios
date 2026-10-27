@@ -4,8 +4,8 @@ import Security
 // The records of design 3.2: one for the account and its session, one
 // per paired yard and its device token, and the selected yard's name.
 // Both tokens live in the Keychain (ThisDeviceOnly, never
-// synchronised); the origin, the names, the account and the selection
-// are not secret and live on the plain shelf.
+// synchronised); the origin, the names, the account with its handle
+// and the selection are not secret and live on the plain shelf.
 
 /// Where a few strings lie, by key. The app's secret shelf is the
 /// Keychain and its plain shelf is `UserDefaults`; the tests hold a
@@ -134,11 +134,14 @@ final class UserDefaultsShelf: Shelf, @unchecked Sendable {
 }
 
 /// The account signed in at the edge: `origin` the edge it was signed
-/// in at, `account` the email or handle it signed in as, `session`
-/// the token Kratos answered.
+/// in at, `account` the email or handle it signed in as, `handle` the
+/// name the edge gives the account's own yard (empty for a session
+/// kept before the handle was, until it is read from whoami or sign-in),
+/// `session` the token Kratos answered.
 struct Account: Equatable, Sendable {
     var origin: String
     var account: String
+    var handle: String
     var session: String
 }
 
@@ -230,11 +233,28 @@ final class Records {
         for observer in observers.values { observer(kept) }
     }
 
-    /// Keeps the session of a sign-in, in place of any before it.
-    func keepSession(account: String, session: String) {
+    /// Keeps the session of a sign-in, in place of any before it. The
+    /// handle of an earlier sign-in is not kept beside another's.
+    func keepSession(account: String, handle: String = "", session: String) {
         secret.write(put: [Self.accountKey: session])
-        plain.write(put: [Self.originKey: origin, Self.accountNameKey: account])
-        kept.account = Account(origin: origin, account: account, session: session)
+        var put = [Self.originKey: origin, Self.accountNameKey: account]
+        if !handle.isEmpty { put[Self.accountHandleKey] = handle }
+        plain.write(put: put, remove: handle.isEmpty ? [Self.accountHandleKey] : [])
+        kept.account = Account(origin: origin, account: account, handle: handle, session: session)
+        publish()
+    }
+
+    /// Adds the handle resolved for an existing session, but only while
+    /// that same session is still the account kept here.
+    func keepAccountHandle(_ handle: String, for session: String) {
+        guard !handle.isEmpty,
+              var account = kept.account,
+              account.session == session,
+              account.handle.isEmpty
+        else { return }
+        plain.write(put: [Self.accountHandleKey: handle])
+        account.handle = handle
+        kept.account = account
         publish()
     }
 
@@ -277,7 +297,7 @@ final class Records {
     /// The notifications-asked flag stays: it was asked once.
     func forgetAll() {
         secret.write(remove: Array(secret.keys()))
-        var plainRemove = [Self.originKey, Self.accountNameKey, Self.selectedKey]
+        var plainRemove = [Self.originKey, Self.accountNameKey, Self.accountHandleKey, Self.selectedKey]
         plainRemove += plain.keys().filter { $0.hasPrefix(Self.yardMetaPrefix) }
         plain.write(remove: plainRemove)
         kept = Kept()
@@ -297,8 +317,8 @@ final class Records {
         if let storedOrigin, storedOrigin != origin {
             secret.write(remove: Array(secret.keys()))
             let recordKeys = plain.keys().filter {
-                $0 == Self.originKey || $0 == Self.accountNameKey || $0 == Self.selectedKey
-                    || $0.hasPrefix(Self.yardMetaPrefix)
+                $0 == Self.originKey || $0 == Self.accountNameKey || $0 == Self.accountHandleKey
+                    || $0 == Self.selectedKey || $0.hasPrefix(Self.yardMetaPrefix)
             }
             plain.write(remove: Array(recordKeys))
             return Kept()
@@ -311,7 +331,10 @@ final class Records {
         if accountName != nil || session != nil || storedOrigin != nil {
             if let accountName, !accountName.isEmpty, storedOrigin == origin {
                 if let session, isToken(session) {
-                    account = Account(origin: origin, account: accountName, session: session)
+                    account = Account(
+                        origin: origin, account: accountName,
+                        handle: plain.get(Self.accountHandleKey) ?? "", session: session
+                    )
                 } else if session != nil {
                     // Keep the account name so sign-in again can still
                     // ask for only its password.
@@ -356,6 +379,7 @@ final class Records {
     private static let yardPrefix = "yard:"
     private static let originKey = "origin"
     private static let accountNameKey = "account"
+    private static let accountHandleKey = "account-handle"
     private static let selectedKey = "selected"
     private static let askedKey = "notifications-asked"
     private static let yardMetaPrefix = "yard-meta:"

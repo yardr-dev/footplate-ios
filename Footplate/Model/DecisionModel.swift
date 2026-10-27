@@ -19,8 +19,10 @@ private func refusalWords(_ error: ApiError) -> String { words(error) }
 // carries, a harness login's one-time code: that card takes the code in
 // a field that does not echo and gives it with Give, always behind the
 // gate, with `weighed`, and a giving the yard refuses is shown as an
-// approval it refused. What was sent leaves the card; the list moves it
-// to Decided when the yard's `noted` event comes.
+// approval it refused. Decline asks why in a field and sends at the next
+// press; on a secret card it sends at the first, with no words and no
+// field, since the yard takes none there. What was sent leaves the card;
+// the list moves it to Decided when the yard's `noted` event comes.
 
 /// One option of a card, numbered from 1, `you decide` last.
 struct Choice: Equatable, Sendable {
@@ -323,14 +325,22 @@ final class DecisionModel {
     }
 
     /// Decline: the first press opens the field for why, the next sends.
+    /// A secret ask takes no words in a decline (the yard refuses any, as
+    /// they may be the secret), so its first press sends with none, and no
+    /// field opens.
     func decline() async {
         guard let screen = screen(), !sending, unlocking == nil else { return }
-        if !declining {
-            declining = true
-            return
+        let why: String
+        if readAsk?.secret != nil {
+            why = ""
+        } else {
+            if !declining {
+                declining = true
+                return
+            }
+            why = declineWordsText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if why.isEmpty { return }
         }
-        let why = declineWordsText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if why.isEmpty { return }
         await call(target: screen, failed: "Not declined") { followed in
             try await followed.decline(bead: screen.bead, ask: screen.ask, words: why)
         }

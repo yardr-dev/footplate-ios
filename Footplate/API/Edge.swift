@@ -1,10 +1,10 @@
 import Foundation
 
 // The edge the app was built for, and the one origin every request goes
-// to (design 3.2): Kratos's sign-in and logout, the pairing, and through
-// `yard(device:session:name:)` every /user/* call and the stream. Nothing
-// typed or scanned changes it, and no redirect is followed, so the
-// password and the tokens reach this origin alone.
+// to (design 3.2): Kratos's sign-in, logout and session identity lookup,
+// the pairing, and through `yard(device:session:name:)` every /user/*
+// call and the stream. Nothing typed or scanned changes it, and no
+// redirect is followed, so the password and the tokens reach this origin.
 
 let clientHeaderName = "X-Yardr-Client"
 let edgeTokenHeader = "X-Edge-Token"
@@ -110,6 +110,37 @@ final class Edge: Sendable {
         throw edgeOr(answer) {
             ApiError.refused(code: "no_logout", message: "The edge did not end the session: status \(answer.status).")
         }
+    }
+
+    /// The handle of an already-kept session, for accounts saved before
+    /// the app began keeping it beside the display name. The token goes
+    /// only to this edge, as it does on every /user call.
+    func accountHandle(session: String) async throws -> String {
+        try requireToken(session)
+        var request = makeRequest(path: "/kratos/sessions/whoami")
+        request.httpMethod = "GET"
+        request.setValue(jsonContentType, forHTTPHeaderField: "Accept")
+        request.setValue(session, forHTTPHeaderField: edgeTokenHeader)
+        let answer = try await exchange(request)
+        guard answer.status == 200 else {
+            throw edgeOr(answer) {
+                ApiError.refused(code: "no_account_handle", message: "The edge did not identify the account.")
+            }
+        }
+        guard let identity = jsonObject(answer.body)?["identity"] as? [String: Any],
+              let traits = identity["traits"] as? [String: Any],
+              let raw = traits["handle"] as? String
+        else {
+            throw ApiError.protocol(what: "the edge's account identity has no handle")
+        }
+        let handle = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .first.map(String.init)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !handle.isEmpty else {
+            throw ApiError.protocol(what: "the edge's account identity has no handle")
+        }
+        return handle
     }
 
     /// Redeems a pairing code at the yard named `yard` (empty: the
@@ -244,20 +275,20 @@ final class Edge: Sendable {
             throw noSignIn("an answer with no session token")
         }
         let traits = ((answered["session"] as? [String: Any])?["identity"] as? [String: Any])?["traits"] as? [String: Any]
-        var account = email
-        for key in ["email", "handle"] {
-            if let raw = traits?[key] as? String {
-                let first = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-                    .split(separator: "\n", omittingEmptySubsequences: false)
-                    .first.map(String.init)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                if !first.isEmpty {
-                    account = first
-                    break
-                }
-            }
+        // A trait's first line, trimmed; empty where it is no string or says nothing.
+        func trait(_ key: String) -> String {
+            guard let raw = traits?[key] as? String else { return "" }
+            return raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                .split(separator: "\n", omittingEmptySubsequences: false)
+                .first.map(String.init)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         }
-        return SignedIn(session: session, account: account)
+        // The account is named by its email, else its handle, else what
+        // was typed; the handle is kept apart too, since the edge names
+        // the account's own yard by it.
+        let handle = trait("handle")
+        let account = [trait("email"), handle].first { !$0.isEmpty } ?? email
+        return SignedIn(session: session, account: account, handle: handle)
     }
 
     private func noSignIn(_ why: String) -> ApiError {

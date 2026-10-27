@@ -23,21 +23,27 @@ simulator run is by hand.
 Under `Footplate/`:
 
 - `App/`: app entry point and shared scene composition.
-- `API/`: the edge (Kratos sign-in and logout, pairing), one paired yard's
-  client and events stream, the wire types and the refusal reading, over a
-  transport seam that `URLSession` implements; `FootplateTests/FakeYard/`
-  implements the same seam in the tests.
+- `API/`: the edge (Kratos sign-in, logout and session identity lookup,
+  pairing), one paired yard's client and events stream, the wire types and
+  the refusal reading, over a transport seam that `URLSession` implements;
+  `FootplateTests/FakeYard/` implements the same seam in the tests.
 - `Session/`: one follower per paired yard, with `load`, the stream after
   the head, the retries, the clock and the network watch, and the
   `Followed` seam the screen models read a followed yard through;
   `FootplateTests/Session/` follows the fake yard.
 - `Model/`: screen models and navigation (`Nav`, `PairModel`,
   `SignInModel`, `InboxModel`, `ConversationModel`, `DecisionsModel`,
-  `DecisionModel`), the inbox board (`Board`) and the boards' keeping
-  (`Mailroom`).
+  `DecisionModel`, `LineModel`), the inbox board (`Board`) and the
+  boards' keeping (`Mailroom`). `LineModel` holds the Lines place: the
+  overview, a line's route map and a bead's card with its web view
+  link. The conversation's pictures (`Images` shrinks one for a letter,
+  `Pictures` keeps the ones shown, by hash) and `Links` (the web
+  addresses in a card's words) stand beside them.
 - `UI/`: SwiftUI screens (Pair, Sign in, Crew, Decide, Decision,
-  Conversation), the scanner, theme and resources (catalogue, Plex
-  fonts and licence).
+  Conversation, and the Lines place's Lines, Route map and Bead card),
+  the tabs (`YardTabs`) and the chrome the places share (`YardPlace`,
+  `YardSwitchView`), the shared controls, the scanner, theme and
+  resources (catalogue, Plex fonts and licence).
 - `Unlock/`: which picks pass the gate and its reasons as plain
   functions, and the `LAContext` prompt behind its protocol.
 - `Notify/`: what is told of as plain functions with the 3-second

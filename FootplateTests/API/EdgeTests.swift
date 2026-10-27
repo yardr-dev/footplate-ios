@@ -16,6 +16,9 @@ final class EdgeTests: XCTestCase {
         let edge = try makeEdge()
         let signedIn = try await edge.signIn(email: fake.email, password: fake.password)
         XCTAssertEqual(signedIn.account, "jo@example.com")
+        // The handle trait is kept beside the display name: the edge
+        // names the account's own yard by it.
+        XCTAssertEqual(signedIn.handle, "jo")
         XCTAssertTrue(signedIn.session.hasPrefix("ory_st_"))
         let flow = fake.taken()
         XCTAssertEqual(flow.method, "GET")
@@ -28,10 +31,40 @@ final class EdgeTests: XCTestCase {
         // Neither carries a device token or a session.
         XCTAssertNil(submit.header("Authorization"))
         XCTAssertNil(submit.header("X-Edge-Token"))
+
+        // An older kept session can recover its handle from the edge
+        // before the own-yard web view is opened.
+        fake.next("/kratos/sessions/whoami", .json(200, #"{"identity":{"traits":{"handle":"jo"}}}"#))
+        let recoveredHandle = try await edge.accountHandle(session: signedIn.session)
+        XCTAssertEqual(recoveredHandle, "jo")
+        let whoami = fake.taken()
+        XCTAssertEqual(whoami.method, "GET")
+        XCTAssertEqual(whoami.path, "/kratos/sessions/whoami")
+        XCTAssertEqual(whoami.header("X-Edge-Token"), signedIn.session)
+        XCTAssertNil(whoami.header("Authorization"))
+
         // The session signs the calls in.
         let yard = try edge.yard(device: fake.token(yardName: "laptop"), session: signedIn.session, name: "laptop")
         let head = try await yard.head()
         XCTAssertEqual(head, 151)
+
+        // The account is its email, else its handle, else what was typed;
+        // the handle is kept apart, and empty where the answer holds none.
+        func answer(traits: String) -> FakeResponse {
+            FakeResponse.json(200, #"{"session_token": "ory_st_x", "session": {"identity": {"traits": \#(traits)}}}"#)
+        }
+        fake.next("/kratos/self-service/login", answer(traits: #"{"handle": " jo \nsecond line"}"#))
+        let handleOnly = try await edge.signIn(email: fake.email, password: fake.password)
+        XCTAssertEqual(handleOnly.account, "jo")
+        XCTAssertEqual(handleOnly.handle, "jo")
+        fake.next("/kratos/self-service/login", answer(traits: #"{"email": "jo@example.com"}"#))
+        let emailOnly = try await edge.signIn(email: "typed@example.com", password: fake.password)
+        XCTAssertEqual(emailOnly.account, "jo@example.com")
+        XCTAssertEqual(emailOnly.handle, "")
+        fake.next("/kratos/self-service/login", answer(traits: "{}"))
+        let neither = try await edge.signIn(email: "typed@example.com", password: fake.password)
+        XCTAssertEqual(neither.account, "typed@example.com")
+        XCTAssertEqual(neither.handle, "")
     }
 
     func testAnExpiredFlowOpensOneMoreAndASecondExpiryIsSaid() async throws {

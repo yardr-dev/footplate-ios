@@ -223,10 +223,15 @@ final class LineModel {
     private var lastLoaded: Loaded? = nil
     private var applied: Int64 = 0
     private var observed: (followed: any Followed, id: UUID)? = nil
+    private(set) var webViewError: String? = nil
+    private(set) var resolvingWebView: BeadRoute? = nil
 
     /// The followed yards by name at the edge; set by the app once
     /// its services stand, since the followers are rebuilt with them.
     var followers: @MainActor () -> [String: any Followed]
+    /// The account, whose handle names its own yard in a web view link.
+    private let records: Records
+    private let pairer: Pairer
     private let nav: Nav
     private let conversation: ConversationModel
     /// The edge's origin, whose web view serves a bead's page.
@@ -239,12 +244,16 @@ final class LineModel {
 
     init(
         followers: @escaping @MainActor () -> [String: any Followed],
+        records: Records,
+        pairer: Pairer,
         nav: Nav,
         conversation: ConversationModel,
         origin: String,
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.followers = followers
+        self.records = records
+        self.pairer = pairer
         self.nav = nav
         self.conversation = conversation
         self.origin = origin
@@ -345,6 +354,7 @@ final class LineModel {
     /// onto the lines stack.
     func openBead(_ id: String) {
         guard let yard = openedYard else { return }
+        webViewError = nil
         nav.openBead(yard: yard, bead: id)
     }
 
@@ -355,8 +365,42 @@ final class LineModel {
         guard let board, openedYard == route.yard else { return nil }
         let me = followers()[route.yard]?.state.loaded?.me.user ?? ""
         return beadCard(
-            board: board, me: me, now: now(), origin: origin, yard: route.yard, id: route.bead
+            board: board, me: me, now: now(), origin: origin, yard: route.yard,
+            handle: records.kept.account?.handle ?? "", id: route.bead
         )
+    }
+
+    /// Opens this card in the edge's web view. A pre-upgrade account has
+    /// no saved handle, so resolve it before forming the own-yard URL;
+    /// never fall back to a browser cookie that may name another yard.
+    func webViewURL(for route: BeadRoute) async -> URL? {
+        guard resolvingWebView != route, card(for: route) != nil else { return nil }
+        webViewError = nil
+        let handle: String
+        if route.yard.isEmpty {
+            resolvingWebView = route
+            defer {
+                if resolvingWebView == route { resolvingWebView = nil }
+            }
+            do {
+                handle = try await pairer.accountHandleForWebView()
+            } catch let error as ApiError {
+                webViewError = "Could not open the web view: \(words(error))"
+                return nil
+            } catch {
+                webViewError = "Could not open the web view: \(words(ApiError.down(why: "an unexpected error")))"
+                return nil
+            }
+        } else {
+            handle = records.kept.account?.handle ?? ""
+        }
+        guard let latest = card(for: route) else { return nil }
+        let link = webViewUrl(origin: origin, yard: route.yard, handle: handle, bead: latest.bead.id)
+        guard let url = URL(string: link) else {
+            webViewError = "Could not open the web view: the address is invalid."
+            return nil
+        }
+        return url
     }
 
     /// The card's Ask: the yardmaster's conversation is pushed onto the
@@ -775,9 +819,10 @@ func beadCard(
     now: Date,
     origin: String,
     yard: String,
+    handle: String,
     id: String
 ) -> BeadCard? {
-    let webView = webViewUrl(origin: origin, yard: yard, bead: id)
+    let webView = webViewUrl(origin: origin, yard: yard, handle: handle, bead: id)
     for depot in board.depots {
         for flow in depot.flows {
             for stage in flow.stages {
@@ -822,12 +867,18 @@ func cardHead(line: String, stage: String, bead: StationBead) -> String {
 
 /// The yard's web view URL for one bead: the edge serves the yard's
 /// pages, `?yard=` picking the yard (edge.md), and a bead's page is
-/// `/beads/<id>` (web.md). The account's own yard, named `""`, needs no
-/// parameter. The id arrives from the yard: it stays one path segment
-/// whatever it holds, never the URL's shape.
-func webViewUrl(origin: String, yard: String, bead: String) -> String {
+/// `/beads/<id>` (web.md). The parameter is always sent: without it the
+/// edge serves the yard its browser's `edge_yard` cookie names, which an
+/// earlier visit to a named yard left, and only a browser with no cookie
+/// gets the account's own. The account's own yard, named `""`, is named
+/// by the account's `handle`, as the edge takes it. A session kept
+/// before the handle was resolves it before the card opens this link.
+/// The id arrives from the yard: it stays one path segment whatever it
+/// holds, never the URL's shape.
+func webViewUrl(origin: String, yard: String, handle: String, bead: String) -> String {
     let page = "\(origin)/beads/\(urlEscaped(bead))"
-    return yard.isEmpty ? page : "\(page)?yard=\(urlEscaped(yard))"
+    let name = yard.isEmpty ? handle : yard
+    return name.isEmpty ? page : "\(page)?yard=\(urlEscaped(name))"
 }
 
 /// Percent-encoded but for the unreserved characters of RFC 3986.

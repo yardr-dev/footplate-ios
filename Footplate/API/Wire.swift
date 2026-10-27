@@ -113,16 +113,18 @@ extension Paired: CustomStringConvertible {
     }
 }
 
-/// What signing in at the edge answers: the session token, and the
-/// account it signed in as.
+/// What signing in at the edge answers: the session token, the account
+/// it signed in as, and the account's handle, which the edge names its
+/// own yard by (empty where the answer holds none).
 struct SignedIn: Equatable, Sendable {
     var session: String
     var account: String
+    var handle: String
 }
 
 extension SignedIn: CustomStringConvertible {
     var description: String {
-        "SignedIn(session=<token>, account=\(account))"
+        "SignedIn(session=<token>, account=\(account), handle=\(handle))"
     }
 }
 
