@@ -207,6 +207,42 @@ final class YardClientTests: XCTestCase {
         }
     }
 
+    func testAYardOfItsOwnCarriesTheDeviceTokenAlone() async throws {
+        let f = try fixtures()
+        let edge = try fake.edge()
+        let direct = try edge.yardDirect(device: f.homeToken)
+        let head = try await direct.head()
+        XCTAssertEqual(head, 151)
+        let call = fake.taken()
+        XCTAssertEqual(call.path, "/user/call/Head")
+        XCTAssertEqual(call.header("Authorization"), "Bearer \(f.homeToken)")
+        XCTAssertNil(call.header("X-Edge-Token"))
+        XCTAssertNil(call.header("X-Edge-Yard"))
+        XCTAssertTrue((call.header("X-Yardr-Client") ?? "").hasPrefix("footplate-ios/"))
+        // A yard of its own has no name at the edge.
+        let named = await raised(InvalidValueError.self) {
+            _ = try edge.yard(device: f.homeToken, session: "", name: "laptop")
+        }
+        XCTAssertTrue(String(describing: named).contains("no name at the edge"), String(describing: named))
+        // The stream too, and a token the yard refuses is pair again,
+        // with no edge in it.
+        fake.stream(lines: [#"{"seq": 152, "kind": "mail"}"#])
+        var seqs: [Int64] = []
+        for try await event in direct.events(after: 151) {
+            seqs.append(event.seq)
+        }
+        XCTAssertEqual(seqs, [152])
+        let stream = fake.taken()
+        XCTAssertEqual(stream.path, "/user/events?after=151")
+        XCTAssertEqual(stream.header("Authorization"), "Bearer \(f.homeToken)")
+        XCTAssertNil(stream.header("X-Edge-Token"))
+        XCTAssertNil(stream.header("X-Edge-Yard"))
+        let refused = await raisedApiError {
+            _ = try await edge.yardDirect(device: "yardr-dev-unknown").head()
+        }
+        XCTAssertEqual(refused, .notLetIn)
+    }
+
     func testTheAccountsOwnYardIsCalledWithoutXEdgeYard() async throws {
         let f = try fixtures()
         let head = try await f.home.head()

@@ -380,6 +380,26 @@ final class InboxModelTests: XCTestCase {
         }
     }
 
+    func testAYardOfItsOwnIsNeverSignedOut() {
+        // No account kept: the edge yard asks to sign in, the direct
+        // yard has no session to run out of.
+        let secret = MemoryShelf()
+        let plain = MemoryShelf()
+        let direct = Records(secret: secret, plain: plain, origin: fake.origin)
+        direct.keepYard(PairedYard(name: "laptop", yard: "laptop", user: "jo", device: "pixel", token: "yardr-dev-laptop-1"))
+        direct.keepYard(PairedYard(name: "", yard: "south", user: "jo", device: "phone", token: "yardr-dev-south-1", origin: "https://yard.example.net"))
+        laptop.state.status = .up
+        home.state.status = .up
+        let model = inbox(records: direct)
+        let state = model.state
+        XCTAssertEqual(state.head, "south · jo")
+        XCTAssertNil(state.word)
+        XCTAssertNil(state.action)
+        let rows = Dictionary(uniqueKeysWithValues: state.yards.map { ($0.name, $0) })
+        XCTAssertEqual(rows["laptop"]?.word, "sign in again")
+        XCTAssertNil(rows[""]?.word)
+    }
+
     func testSwitchSaysWhatWaitsAndForgettingClearsOnlyThatYardsRoutes() async {
         home.up(loaded())
         laptop.state.status = .down(words: "The yard is away: the edge cannot reach it.", short: "yard away")

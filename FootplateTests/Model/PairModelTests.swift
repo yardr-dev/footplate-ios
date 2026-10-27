@@ -3,9 +3,11 @@ import XCTest
 
 // The Pair and Sign in models against the fake yard (design 3.2):
 // a pairing end to end, a second yard on the session the first
-// left, the pairing's and the sign-in's refusals, a QR of another
-// origin that sends nothing, and forgetting one yard and then the
-// last.
+// left, the pairing's and the sign-in's refusals, a yard of its own
+// paired with no sign-in from a typed address or its QR, a second
+// yard under a kept name refused before anything is sent, a QR of no
+// usable address that sends nothing, and forgetting one yard and then
+// the last.
 @MainActor
 final class PairModelTests: XCTestCase {
     private struct World {
@@ -231,12 +233,133 @@ final class PairModelTests: XCTestCase {
         XCTAssertTrue(restartedSignIn.state.again)
     }
 
-    func testAQRNamingAnotherOriginSendsNothingAnywhere() async throws {
+    func testAYardOfItsOwnPairsWithNoSignInAndReopensOnIt() async throws {
         let world = try makeWorld()
-        world.pair.scanned("https://other.example#\(world.fake.laptop.code ?? "")#laptop")
+        world.pair.typeCode()
+        world.pair.addressed("https://yard.example.net/")
+        world.pair.typed(yard: "", code: "k7qm2xpd")
+        world.pair.readTyped()
+        XCTAssertEqual(
+            world.pair.state.step,
+            .read(PairingCode(code: "K7QM-2XPD", yard: "", address: "https://yard.example.net"))
+        )
+        // Reading the address and the code sent nothing.
+        XCTAssertEqual(world.fake.requestCount, 0)
+
+        // No session, and none asked for: the code goes to the yard's
+        // address with no edge's headers.
+        await world.pair.pair()
+        XCTAssertNil(world.nav.signIn)
+        XCTAssertEqual(world.pair.state, PairState())
+        let requests = world.fake.allRequests
+        XCTAssertEqual(requests.map(\.path), ["/user/pair", "/user/me"])
+        XCTAssertTrue(requests.allSatisfy { $0.header("X-Edge-Token") == nil }, "\(requests)")
+        XCTAssertTrue(requests.allSatisfy { $0.header("X-Edge-Yard") == nil }, "\(requests)")
+        XCTAssertNil(requests[0].header("Authorization"))
+        XCTAssertEqual(requests[0].bodyObject()["code"] as? String, "K7QM-2XPD")
+        let token = try XCTUnwrap(world.records.kept.yards.first?.token)
+        XCTAssertEqual(requests[1].header("Authorization"), "Bearer \(token)")
+
+        // No account kept, the yard selected, and the head line says it.
+        let kept = world.records.kept
+        XCTAssertNil(kept.account)
+        XCTAssertEqual(kept.yards.map(\.origin), ["https://yard.example.net"])
+        XCTAssertEqual(kept.selected, "")
+        XCTAssertEqual(kept.selectedYard.map { "\($0.title) · \($0.user)" }, "south · jo")
+
+        // The app reopens on the kept address.
+        let reopened = Records(secret: world.secret, plain: world.plain, origin: world.fake.origin).kept
+        XCTAssertEqual(reopened.yards.map(\.origin), ["https://yard.example.net"])
+        XCTAssertEqual(reopened.selected, "")
+    }
+
+    func testAQROfAYardsOwnAddressPairsDirect() async throws {
+        let world = try makeWorld()
+        world.pair.scanned("https://yard.example.net#\(world.fake.home.code ?? "")")
+        XCTAssertEqual(
+            world.pair.state.step,
+            .read(PairingCode(code: "K7QM-2XPD", yard: "", address: "https://yard.example.net"))
+        )
+        await world.pair.pair()
+        XCTAssertNil(world.nav.signIn)
+        XCTAssertEqual(world.records.kept.yards.map(\.origin), ["https://yard.example.net"])
+        XCTAssertEqual(world.fake.allRequests.map(\.path), ["/user/pair", "/user/me"])
+    }
+
+    func testASecondYardUnderAKeptNameIsRefusedBeforeAnythingIsSent() async throws {
+        let kept = "south is paired already. Forget it first to pair another yard of the same name."
+        let world = try makeWorld()
+        // The edge's own yard first, through the sign-in.
+        world.pair.typeCode()
+        world.pair.typed(yard: "", code: "k7qm2xpd")
+        world.pair.readTyped()
+        await world.pair.pair()
+        try await signInAs(world)
+        await waitForYards(world, 1)
+        let sent = world.fake.requestCount
+
+        // A yard of its own under the same nameless name: refused, and
+        // nothing sent, so the code is not burned.
+        world.nav.showPair()
+        world.pair.typeCode()
+        world.pair.addressed("https://yard.example.net")
+        world.pair.typed(yard: "", code: "AAAA-BBBB")
+        world.pair.readTyped()
+        await world.pair.pair()
+        XCTAssertEqual(world.pair.state.error, kept)
+        XCTAssertEqual(world.fake.requestCount, sent)
+        XCTAssertEqual(world.records.kept.yards.map(\.name), [""])
+        XCTAssertEqual(world.records.kept.yards.map(\.origin), [""])
+
+        // And the other way round: a direct yard kept, the edge's own
+        // refused.
+        let other = try makeWorld()
+        other.pair.typeCode()
+        other.pair.addressed("https://YARD.EXAMPLE.NET:443/")
+        other.pair.typed(yard: "", code: other.fake.home.code ?? "")
+        other.pair.readTyped()
+        await other.pair.pair()
+        XCTAssertEqual(other.records.kept.yards.count, 1)
+        other.records.keepSession(account: other.fake.email, session: other.fake.session())
+        let otherSent = other.fake.requestCount
+        other.nav.showPair()
+        other.pair.typeCode()
+        other.pair.typed(yard: "", code: "AAAA-BBBB")
+        other.pair.readTyped()
+        await other.pair.pair()
+        XCTAssertEqual(other.pair.state.error, kept)
+        XCTAssertEqual(other.fake.requestCount, otherSent)
+
+        // The same yard again pairs as before: past the guard, to the
+        // yard's answer (its pairing is used up).
+        other.pair.typeCode()
+        other.pair.addressed("https://yard.example.net")
+        other.pair.typed(yard: "", code: "AAAA-BBBB")
+        other.pair.readTyped()
+        await other.pair.pair()
+        XCTAssertTrue(other.pair.state.error?.hasPrefix("No pairing is open at this yard") == true, other.pair.state.error ?? "")
+        XCTAssertEqual(other.fake.requestCount, otherSent + 1)
+    }
+
+    func testAPlainHttpAddressIsRefusedWithWhy() async throws {
+        let world = try makeWorld()
+        world.pair.typeCode()
+        world.pair.addressed("http://yard.example.net")
+        world.pair.typed(yard: "", code: "K7QM-2XPD")
+        world.pair.readTyped()
         XCTAssertEqual(
             world.pair.state.error,
-            "This code is for https://other.example. footplate speaks to \(world.fake.origin) alone."
+            "That address is plain http: anyone on the way could read the code and the token. Give the yard's https address."
+        )
+        XCTAssertEqual(world.fake.requestCount, 0)
+    }
+
+    func testAQRNamingNoUsableAddressSendsNothingAnywhere() async throws {
+        let world = try makeWorld()
+        world.pair.scanned("https://other.example/kratos#\(world.fake.laptop.code ?? "")")
+        XCTAssertEqual(
+            world.pair.state.error,
+            "That is no address: https://yard.example.net, the scheme, the host and the port alone."
         )
         XCTAssertEqual(world.pair.state.step, .choose)
         await world.pair.pair()

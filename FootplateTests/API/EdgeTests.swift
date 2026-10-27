@@ -152,6 +152,67 @@ final class EdgeTests: XCTestCase {
         XCTAssertNil(fake.taken().header("X-Edge-Yard"))
     }
 
+    func testPairingDirectSendsTheCodeWithNoEdgeHeaders() async throws {
+        let edge = try makeEdge()
+        let paired = try await edge.pairDirect(code: "k7qm-2xpd")
+        XCTAssertEqual(paired.user, "jo")
+        XCTAssertEqual(paired.device, "phone")
+        XCTAssertEqual(paired.yard, "south")
+        let request = fake.taken()
+        XCTAssertEqual(request.method, "POST")
+        XCTAssertEqual(request.path, "/user/pair")
+        assertBody(request, #"{"code":"k7qm-2xpd"}"#)
+        XCTAssertNil(request.header("Authorization"))
+        XCTAssertNil(request.header("X-Edge-Token"))
+        XCTAssertNil(request.header("X-Edge-Yard"))
+        XCTAssertTrue((request.header("X-Yardr-Client") ?? "").hasPrefix("footplate-ios/"))
+        // The token it answered is the device's from then on, carried alone.
+        let me = try await edge.yardDirect(device: paired.token).me()
+        XCTAssertEqual(me.yard, "south")
+        let meRequest = fake.taken()
+        XCTAssertEqual(meRequest.header("Authorization"), "Bearer \(paired.token)")
+        XCTAssertNil(meRequest.header("X-Edge-Token"))
+        XCTAssertNil(meRequest.header("X-Edge-Yard"))
+    }
+
+    func testPairingDirectSaysTheYardsRefusalsInTheYardsWords() async throws {
+        let edge = try makeEdge()
+        let wrong = await raisedApiError {
+            _ = try await edge.pairDirect(code: "AAAA-BBBB")
+        }
+        guard case .refused(let wrongCode, let wrongMessage) = wrong else {
+            return XCTFail("expected refused, got \(wrong)")
+        }
+        XCTAssertEqual(wrongCode, "wrong_code")
+        XCTAssertTrue(wrongMessage.hasPrefix("That is not the code."), wrongMessage)
+        // Once used, no pairing is open: the yard's 401, with no edge in it.
+        _ = try await edge.pairDirect(code: "K7QM-2XPD")
+        let none = await raisedApiError {
+            _ = try await edge.pairDirect(code: "K7QM-2XPD")
+        }
+        guard case .refused(let noneCode, let noneMessage) = none else {
+            return XCTFail("expected refused, got \(none)")
+        }
+        XCTAssertEqual(noneCode, "no_pairing")
+        XCTAssertTrue(noneMessage.hasPrefix("No pairing is open at this yard"), noneMessage)
+        // The yard's own error object elsewhere is the yard's, and an
+        // edge's shape, were one ever answered here, is not read as
+        // the edge's: the `edge: ` prefix does not apply with no edge.
+        fake.next("/user/pair", .json(500, #"{"error": {"code": "broken", "message": "the yard is broken"}}"#))
+        let broken = await raisedApiError {
+            _ = try await edge.pairDirect(code: "K7QM-2XPD")
+        }
+        guard case .refused(let brokenCode, _) = broken else {
+            return XCTFail("expected refused, got \(broken)")
+        }
+        XCTAssertEqual(brokenCode, "broken")
+        fake.next("/user/pair", .notReady())
+        let notEdge = await raisedApiError {
+            _ = try await edge.pairDirect(code: "K7QM-2XPD")
+        }
+        XCTAssertEqual(notEdge, .down(why: "status 403"))
+    }
+
     func testPairingTellsTheEdgesRefusalsFromTheYards() async throws {
         let edge = try makeEdge()
         let session = fake.session()

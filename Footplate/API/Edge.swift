@@ -1,10 +1,13 @@
 import Foundation
 
-// The edge the app was built for, and the one origin every request goes
-// to (design 3.2): Kratos's sign-in, logout and session identity lookup,
-// the pairing, and through `yard(device:session:name:)` every /user/*
-// call and the stream. Nothing typed or scanned changes it, and no
-// redirect is followed, so the password and the tokens reach this origin.
+// One origin every request through it goes to (design 3.2): the edge
+// the app was built for, with Kratos's sign-in, logout and session
+// identity lookup, the pairing, and through
+// `yard(device:session:name:)` every /user/* call and the stream; or a
+// yard of its own, at the address typed, with `pairDirect` and
+// `yardDirect` and no edge's headers. Nothing scanned changes it, and
+// no redirect is followed, so the password and the tokens reach this
+// origin alone.
 
 let clientHeaderName = "X-Yardr-Client"
 let edgeTokenHeader = "X-Edge-Token"
@@ -166,21 +169,65 @@ final class Edge: Sendable {
             throw refusal(status: answer.status, edgeRefusal: answer.edgeRefusal, retryAfterHeader: answer.retryAfter, body: answer.body)
                 ?? ApiError.protocol(what: "the pairing: status \(answer.status)")
         }
-        if let refused = (jsonObject(answer.body)?["refused"] as? String) {
+        return try paired(answer)
+    }
+
+    /// Redeems a pairing code at a yard of its own, with no edge: the
+    /// code to `<address>/user/pair`, with neither a session nor a
+    /// yard's name beside it, and no device token. What refuses speaks
+    /// of the yard, as the yard's answers do.
+    func pairDirect(code: String) async throws -> Paired {
+        var request = makeRequest(path: "/user/pair")
+        request.httpMethod = "POST"
+        request.setValue(jsonContentType, forHTTPHeaderField: "Content-Type")
+        request.httpBody = try jsonBody(["code": code])
+        let answer = try await exchange(request)
+        // No edge stands in front: the yard's `refused` and its
+        // statuses alone, and an `error` object of its own elsewhere.
+        if let refused = pairRefused(answer.body) {
             throw pairingRefused(refused)
         }
         switch answer.status {
         case 200:
-            let paired: Paired
-            do {
-                paired = try JSONDecoder().decode(Paired.self, from: answer.data)
-            } catch {
-                throw ApiError.protocol(what: "the pairing: \(String(describing: type(of: error)))")
+            return try decodePaired(answer.data)
+        case 400:
+            throw pairingRefused("no_code")
+        case 409:
+            throw pairingRefused("not_added")
+        case 401, 404:
+            throw pairingRefused("no_pairing")
+        default:
+            if case .yard(let yardCode, let message) = bodyShape(answer.body) {
+                throw ApiError.refused(code: yardCode, message: message)
             }
-            guard isToken(paired.token) else {
-                throw ApiError.protocol(what: "the pairing: no token in the answer")
-            }
-            return paired
+            throw ApiError.down(why: "status \(answer.status)")
+        }
+    }
+
+    /// The calls of one paired yard, as its device: `device` is the
+    /// token the pairing answered, `session` the edge's, `name` the
+    /// yard's name at the edge (empty: the account's own yard, and no
+    /// `X-Edge-Yard` is sent).
+    func yard(device: String, session: String, name: String = "") throws -> YardClient {
+        try YardClient(edge: self, device: device, session: session, name: name)
+    }
+
+    /// The calls of one paired yard of its own, as its device:
+    /// `device` the token the pairing answered, carried alone, with
+    /// no edge's headers.
+    func yardDirect(device: String) throws -> YardClient {
+        try YardClient(edge: self, device: device, session: "", name: "")
+    }
+
+    /// A pairing's answer read, past the edge's answers: the yard's
+    /// `refused`, its four statuses, and anywhere else the table.
+    private func paired(_ answer: Answer) throws -> Paired {
+        if let refused = pairRefused(answer.body) {
+            throw pairingRefused(refused)
+        }
+        switch answer.status {
+        case 200:
+            return try decodePaired(answer.data)
         case 400:
             throw pairingRefused("no_code")
         case 409:
@@ -193,12 +240,21 @@ final class Edge: Sendable {
         }
     }
 
-    /// The calls of one paired yard, as its device: `device` is the
-    /// token the pairing answered, `session` the edge's, `name` the
-    /// yard's name at the edge (empty: the account's own yard, and no
-    /// `X-Edge-Yard` is sent).
-    func yard(device: String, session: String, name: String = "") throws -> YardClient {
-        try YardClient(edge: self, device: device, session: session, name: name)
+    private func pairRefused(_ body: String) -> String? {
+        jsonObject(body)?["refused"] as? String
+    }
+
+    private func decodePaired(_ data: Data) throws -> Paired {
+        let paired: Paired
+        do {
+            paired = try JSONDecoder().decode(Paired.self, from: data)
+        } catch {
+            throw ApiError.protocol(what: "the pairing: \(String(describing: type(of: error)))")
+        }
+        guard isToken(paired.token) else {
+            throw ApiError.protocol(what: "the pairing: no token in the answer")
+        }
+        return paired
     }
 
     /// A request to `path` under the origin, with the client's name.

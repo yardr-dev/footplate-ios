@@ -20,6 +20,7 @@ final class SecrecyTests: XCTestCase {
             String(describing: signedIn),
             String(describing: paired),
             String(describing: yard),
+            String(describing: try edge.yardDirect(device: paired.token)),
         ]
         // Every error, as the fake makes it with the tokens in the
         // request.
@@ -62,7 +63,7 @@ final class SecrecyTests: XCTestCase {
         said.append(String(describing: logoutError))
         // And the errors made without a request.
         let made: [ApiError] = [
-            .notSignedIn, .notLetIn, .noDevice, .away,
+            .notSignedIn, .notLetIn, .noDevice, .nameKept(title: "x"), .away,
             .busy(retryAfter: .seconds(5)), .notReady(why: "x"), .edgeDown(why: "x"), .slow,
             .refused(code: "c", message: "m"), .down(why: "x"), .protocol(what: "x"),
         ]

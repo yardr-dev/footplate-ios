@@ -234,8 +234,9 @@ final class LineModel {
     private let pairer: Pairer
     private let nav: Nav
     private let conversation: ConversationModel
-    /// The edge's origin, whose web view serves a bead's page.
-    private let origin: String
+    /// Each yard's origin, the edge's or the yard's own, whose web
+    /// view serves a bead's page.
+    private let origins: @MainActor (String) -> String
     private let now: @Sendable () -> Date
     private var active = false
     private var generation = 0
@@ -248,7 +249,7 @@ final class LineModel {
         pairer: Pairer,
         nav: Nav,
         conversation: ConversationModel,
-        origin: String,
+        origins: @escaping @MainActor (String) -> String,
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.followers = followers
@@ -256,7 +257,7 @@ final class LineModel {
         self.pairer = pairer
         self.nav = nav
         self.conversation = conversation
-        self.origin = origin
+        self.origins = origins
         self.now = now
     }
 
@@ -364,20 +365,33 @@ final class LineModel {
     func card(for route: BeadRoute) -> BeadCard? {
         guard let board, openedYard == route.yard else { return nil }
         let me = followers()[route.yard]?.state.loaded?.me.user ?? ""
+        // A yard of its own serves its pages itself, at its own
+        // address, with no yard named: the handle is the edge's own
+        // yard's alone.
+        let direct = isDirect(route.yard)
         return beadCard(
-            board: board, me: me, now: now(), origin: origin, yard: route.yard,
-            handle: records.kept.account?.handle ?? "", id: route.bead
+            board: board, me: me, now: now(), origin: origins(route.yard),
+            yard: direct ? "" : route.yard,
+            handle: direct ? "" : (records.kept.account?.handle ?? ""), id: route.bead
         )
     }
 
-    /// Opens this card in the edge's web view. A pre-upgrade account has
-    /// no saved handle, so resolve it before forming the own-yard URL;
-    /// never fall back to a browser cookie that may name another yard.
+    /// Whether the yard named `name` is a yard of its own, serving its
+    /// pages itself at its own address.
+    private func isDirect(_ name: String) -> Bool {
+        records.kept.yards.first { $0.name == name }.map { !$0.origin.isEmpty } ?? false
+    }
+
+    /// Opens this card in the yard's web view: the edge's, or a yard of
+    /// its own's. A pre-upgrade account has no saved handle, so resolve
+    /// it before forming the own-yard URL; never fall back to a browser
+    /// cookie that may name another yard.
     func webViewURL(for route: BeadRoute) async -> URL? {
         guard resolvingWebView != route, card(for: route) != nil else { return nil }
         webViewError = nil
+        let direct = isDirect(route.yard)
         let handle: String
-        if route.yard.isEmpty {
+        if route.yard.isEmpty && !direct {
             resolvingWebView = route
             defer {
                 if resolvingWebView == route { resolvingWebView = nil }
@@ -392,10 +406,10 @@ final class LineModel {
                 return nil
             }
         } else {
-            handle = records.kept.account?.handle ?? ""
+            handle = direct ? "" : (records.kept.account?.handle ?? "")
         }
         guard let latest = card(for: route) else { return nil }
-        let link = webViewUrl(origin: origin, yard: route.yard, handle: handle, bead: latest.bead.id)
+        let link = webViewUrl(origin: origins(route.yard), yard: direct ? "" : route.yard, handle: handle, bead: latest.bead.id)
         guard let url = URL(string: link) else {
             webViewError = "Could not open the web view: the address is invalid."
             return nil
@@ -873,8 +887,9 @@ func cardHead(line: String, stage: String, bead: StationBead) -> String {
 /// gets the account's own. The account's own yard, named `""`, is named
 /// by the account's `handle`, as the edge takes it. A session kept
 /// before the handle was resolves it before the card opens this link.
-/// The id arrives from the yard: it stays one path segment whatever it
-/// holds, never the URL's shape.
+/// A yard of its own serves its pages itself, at its own address, with
+/// no yard named. The id arrives from the yard: it stays one path
+/// segment whatever it holds, never the URL's shape.
 func webViewUrl(origin: String, yard: String, handle: String, bead: String) -> String {
     let page = "\(origin)/beads/\(urlEscaped(bead))"
     let name = yard.isEmpty ? handle : yard

@@ -652,7 +652,7 @@ func words(_ error: ApiError) -> String {
         return "The yard took too long to answer."
     case .down(let why):
         return "Nothing answers: \(why)."
-    case .refused, .protocol, .notSignedIn, .notLetIn, .noDevice:
+    case .refused, .protocol, .notSignedIn, .notLetIn, .noDevice, .nameKept:
         return error.message
     }
 }
@@ -674,6 +674,10 @@ private func short(_ error: ApiError) -> String {
         return "nothing answers"
     case .refused, .protocol, .notSignedIn, .notLetIn, .noDevice:
         return "cannot be read"
+    case .nameKept:
+        // Thrown before anything is sent, never from a follow; said
+        // whole where the pairing says it.
+        return "paired already"
     }
 }
 

@@ -67,7 +67,13 @@ final class AppServices {
         self.decisionsModel = DecisionsModel(records: records, mailroom: mailroom, nav: nav)
         self.decisionModel = DecisionModel(mailroom: mailroom, records: records, nav: nav, unlock: LAUnlockPrompt())
         self.inboxModel = InboxModel(pairer: pairer, records: records, followers: { [:] }, mailroom: mailroom, nav: nav)
-        self.lineModel = LineModel(followers: { [:] }, records: records, pairer: pairer, nav: nav, conversation: conversation, origin: pairer.origin)
+        self.lineModel = LineModel(
+            followers: { [:] }, records: records, pairer: pairer, nav: nav, conversation: conversation,
+            origins: { [records, edge] name in
+                let own = records.kept.yards.first { $0.name == name }?.origin ?? ""
+                return own.isEmpty ? edge.origin : own
+            }
+        )
         self.notifier = Notifier(
             mailroom: mailroom,
             records: records,
@@ -116,7 +122,7 @@ final class AppServices {
     private func signature() -> String {
         let kept = records.kept
         let session = kept.account?.session ?? ""
-        let yardsPart = kept.yards.map { "\($0.name)=\($0.token)" }.joined(separator: ",")
+        let yardsPart = kept.yards.map { "\($0.name)=\($0.token)@\($0.origin)" }.joined(separator: ",")
         return session + "|" + yardsPart
     }
 
@@ -129,12 +135,28 @@ final class AppServices {
         followers = [:]
         mailroom.setFollowers([:])
         let kept = records.kept
-        guard let session = kept.account?.session, !kept.yards.isEmpty else { return }
+        let session = kept.account?.session
+        guard !kept.yards.isEmpty, session != nil || kept.yards.contains(where: { !$0.origin.isEmpty }) else { return }
         let following = Yards(foreground: foreground)
         yards = following
         var made: [String: Follower] = [:]
         for yard in kept.yards {
-            if let client = try? edge.yard(device: yard.token, session: session, name: yard.name) {
+            // An edge yard without a session is followed nowhere: the
+            // inbox asks for the sign-in, and the yards are followed
+            // again with new clients once it is kept. A yard of its
+            // own needs no session.
+            let client: YardClient?
+            if !yard.origin.isEmpty {
+                // A yard of its own is the app's client at its
+                // address: the timeouts and what TLS trusts are the
+                // client's.
+                client = try? Edge(origin: yard.origin, transport: edge.transport).yardDirect(device: yard.token)
+            } else if let session {
+                client = try? edge.yard(device: yard.token, session: session, name: yard.name)
+            } else {
+                client = nil
+            }
+            if let client {
                 made[yard.name] = following.follow(client)
             }
         }

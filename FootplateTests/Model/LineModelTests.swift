@@ -41,7 +41,7 @@ final class LineModelTests: XCTestCase {
         )
         model = LineModel(followers: { [home, laptop] in
             ["": home!, "laptop": laptop!]
-        }, records: records, pairer: pairer, nav: nav, conversation: conversation, origin: "https://edge.example", now: { now })
+        }, records: records, pairer: pairer, nav: nav, conversation: conversation, origins: { _ in "https://edge.example" }, now: { now })
     }
 
     override func tearDown() {
@@ -575,6 +575,37 @@ final class LineModelTests: XCTestCase {
         XCTAssertNil(unresolved)
         XCTAssertNotNil(model.webViewError)
         _ = fake.taken()
+    }
+
+    func testAYardOfItsOwnServesItsCardsPagesItself() async throws {
+        let directRecords = Records(secret: MemoryShelf(), plain: MemoryShelf(), origin: "https://edge.example")
+        directRecords.keepYard(PairedYard(name: "", yard: "south", user: "jo", device: "phone", token: "yardr-dev-south-1", origin: "https://yard.example.net"))
+        let now = parseInstant("2026-10-08T10:11:00Z")!
+        model = LineModel(
+            followers: { [home] in ["": home!] },
+            records: directRecords,
+            pairer: Pairer(edge: try fake.edge(), records: directRecords),
+            nav: nav, conversation: conversation,
+            origins: { name in
+                let own = directRecords.kept.yards.first { $0.name == name }?.origin ?? ""
+                return own.isEmpty ? "https://edge.example" : own
+            },
+            now: { now }
+        )
+        home.up(loaded())
+        home.board = richBoard()
+        model.open(yard: "")
+        try await waitRead()
+
+        let route = BeadRoute(yard: "", bead: "yd-train")
+        let card = try XCTUnwrap(model.card(for: route))
+        XCTAssertEqual(card.webView, "https://yard.example.net/beads/yd-train")
+        // No account, no handle resolved: the link opens as it stands.
+        let maybeLink = await model.webViewURL(for: route)
+        let link = try XCTUnwrap(maybeLink)
+        XCTAssertEqual(link.absoluteString, "https://yard.example.net/beads/yd-train")
+        XCTAssertNil(model.webViewError)
+        XCTAssertEqual(fake.requestCount, 0)
     }
 
     func testABeadCardNamesItsLineOrNone() throws {

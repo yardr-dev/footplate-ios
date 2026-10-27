@@ -3,15 +3,19 @@ import Foundation
 // The Pair screen's model (design 3.2): a code read from a scan or
 // typed, then paired with under the session kept. Where no session
 // is kept, or the edge refuses it, the Sign in screen is shown, and
-// the pairing goes on by itself once a session is kept.
+// the pairing goes on by itself once a session is kept. A code with an
+// address of its own pairs with no session, and the Sign in screen is
+// never shown for it.
 
 /// Where the Pair screen is.
 enum PairStep: Equatable, Sendable {
     /// **Scan**, and **Type the code**.
     case choose
-    /// **Type the code**: the yard's name at the edge and the code,
-    /// and no address: the edge is the build's, shown as a line of text.
-    case typing(yard: String, code: String)
+    /// **Type the code**: the yard's name at the edge and the code, or,
+    /// with `address`, the code at a yard's own address, and no yard's
+    /// name: the edge is the build's, shown as a line of text, until
+    /// **Use your own address** opens the field (nil: shut).
+    case typing(yard: String, code: String, address: String? = nil)
     /// What a scan or the typed fields read, and **Pair**.
     case read(PairingCode)
 }
@@ -71,14 +75,44 @@ final class PairModel {
     }
 
     func typed(yard: String, code: String) {
-        state.step = .typing(yard: yard, code: code)
+        let address: String?
+        if case .typing(_, _, let open) = state.step {
+            address = open
+        } else {
+            address = nil
+        }
+        state.step = .typing(yard: yard, code: code, address: address)
         state.error = nil
     }
 
-    /// Reads the typed fields as a code.
+    /// The own address typed, nil where **Use your own address** is
+    /// shut: `""` opens the field.
+    func addressed(_ address: String?) {
+        guard case .typing(let yard, let code, _) = state.step else { return }
+        state.step = .typing(yard: yard, code: code, address: address)
+        state.error = nil
+    }
+
+    /// Reads the typed fields as a code: at the yard's own address,
+    /// with no yard's name, where one is given.
     func readTyped() {
-        guard case .typing(let yard, let code) = state.step else { return }
-        read(typedCode(yard: yard, code: code))
+        guard case .typing(let yard, let code, let address) = state.step else { return }
+        guard let address else {
+            read(typedCode(yard: yard, code: code))
+            return
+        }
+        switch readOwnAddress(address) {
+        case .refused(let why):
+            read(.refused(why: why))
+        case .address(let origin):
+            let read = typedCode(yard: "", code: code)
+            switch read {
+            case .code(let code):
+                self.read(.code(PairingCode(code: code.code, yard: "", address: origin)))
+            case .refused:
+                self.read(read)
+            }
+        }
     }
 
     /// Back to **Scan** and **Type the code**; false where it is there.
@@ -98,9 +132,14 @@ final class PairModel {
     }
 
     /// Pairs with the code read: at once under the session kept, or
-    /// after the Sign in screen where there is none.
+    /// after the Sign in screen where there is none; a code with an
+    /// address of its own pairs at once, with no sign-in.
     func pair() async {
         guard case .read(let code) = state.step, !state.busy else { return }
+        if !code.address.isEmpty {
+            await run(code)
+            return
+        }
         if records.kept.account == nil {
             signInFirst(code: code, session: nil, again: false)
             return

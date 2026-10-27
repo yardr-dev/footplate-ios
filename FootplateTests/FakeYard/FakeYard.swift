@@ -3,12 +3,13 @@ import Foundation
 
 // The fake yard of design 3.7: one account at a fake edge, in-process,
 // with Kratos's sign-in and logout, two yards told apart by X-Edge-Yard,
-// a pairing open in each, every call of 3.1 answered with docs/api.md's
-// examples, and the edge's and the yard's refusals on demand. It
-// records every request, so a test asserts what a call carried. It
-// implements the same transport seam as URLSession, so no socket is
-// opened; URLSession's own framing is proved by the loopback smoke
-// test alone.
+// a pairing open in each, and a call with no edge headers served as a
+// yard of its own by the home yard; every call of 3.1 answered with
+// docs/api.md's examples, and the edge's and the yard's refusals on
+// demand. It records every request, so a test asserts what a call
+// carried. It implements the same transport seam as URLSession, so no
+// socket is opened; URLSession's own framing is proved by the loopback
+// smoke test alone.
 
 struct RecordedRequest: Sendable {
     let method: String
@@ -521,7 +522,12 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
     /// The gates of a stream, with the lock held: a response where
     /// the stream is refused before it opens, nil where it opens.
     private func streamGateLocked(recorded: RecordedRequest) -> FakeResponse? {
-        guard let session = recorded.header("X-Edge-Token"), sessions.contains(session) else {
+        // A stream with no edge headers is a yard of its own, reached
+        // directly: the home yard, with its device tokens.
+        guard let session = recorded.header("X-Edge-Token") else {
+            return directStreamGateLocked(recorded: recorded)
+        }
+        guard sessions.contains(session) else {
             return FakeResponse.signedOut()
         }
         let named = recorded.header("X-Edge-Yard") ?? ""
@@ -537,6 +543,28 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
         if let handler = alwaysHandlers[named + "\u{1}" + path] {
             return handler()
         }
+        return tokenGateLocked(yard: yard, recorded: recorded)
+    }
+
+    private func directStreamGateLocked(recorded: RecordedRequest) -> FakeResponse? {
+        if recorded.header("X-Edge-Yard") != nil {
+            return FakeResponse(status: 400, text: "no edge is spoken to here\n")
+        }
+        let path = "/user/events"
+        if var queue = yardOverrides["\u{1}" + path], !queue.isEmpty {
+            let response = queue.removeFirst()
+            yardOverrides["\u{1}" + path] = queue
+            return response
+        }
+        if let handler = alwaysHandlers["\u{1}" + path] {
+            return handler()
+        }
+        return tokenGateLocked(yard: home, recorded: recorded)
+    }
+
+    /// The yard's gate, with the lock held: the device token, or the
+    /// refusal where it is missing or the yard knows it not.
+    private func tokenGateLocked(yard: YardState, recorded: RecordedRequest) -> FakeResponse? {
         guard let authorization = recorded.header("Authorization"), authorization.hasPrefix("Bearer ") else {
             return FakeResponse(status: 401, text: "Unauthorized\n")
         }
@@ -548,15 +576,31 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
     }
 
     private func userLocked(path: String, recorded: RecordedRequest) -> FakeResponse {
+        // A call with no edge headers is a yard of its own, reached
+        // directly: the home yard, with its pairing and its device tokens.
+        guard let session = recorded.header("X-Edge-Token") else {
+            return directLocked(path: path, recorded: recorded)
+        }
         // The edge's gate first: a session Kratos knows, then the
         // yard the account names by X-Edge-Yard.
-        guard let session = recorded.header("X-Edge-Token"), sessions.contains(session) else {
+        guard sessions.contains(session) else {
             return FakeResponse.signedOut()
         }
         let named = recorded.header("X-Edge-Yard") ?? ""
         guard let yard = yards.first(where: { $0.name == named }) else {
             return FakeResponse.notReady("the account holds no yard of that name")
         }
+        return serveLocked(yard: yard, named: named, path: path, recorded: recorded)
+    }
+
+    private func directLocked(path: String, recorded: RecordedRequest) -> FakeResponse {
+        if recorded.header("X-Edge-Yard") != nil {
+            return FakeResponse(status: 400, text: "no edge is spoken to here\n")
+        }
+        return serveLocked(yard: home, named: "", path: path, recorded: recorded)
+    }
+
+    private func serveLocked(yard: YardState, named: String, path: String, recorded: RecordedRequest) -> FakeResponse {
         if var queue = yardOverrides[named + "\u{1}" + path], !queue.isEmpty {
             let response = queue.removeFirst()
             yardOverrides[named + "\u{1}" + path] = queue
@@ -569,12 +613,8 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
             return pairLocked(yard: yard, recorded: recorded)
         }
         // Then the yard's: the device token.
-        guard let authorization = recorded.header("Authorization"), authorization.hasPrefix("Bearer ") else {
-            return FakeResponse(status: 401, text: "Unauthorized\n")
-        }
-        let token = String(authorization.dropFirst("Bearer ".count))
-        guard yard.tokens.contains(token) else {
-            return FakeResponse(status: 401, text: "Unauthorized\n")
+        if let gated = tokenGateLocked(yard: yard, recorded: recorded) {
+            return gated
         }
         if path.hasPrefix("/user/blobs/") {
             let hash = String(path.dropFirst("/user/blobs/".count))

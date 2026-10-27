@@ -57,6 +57,53 @@ final class RecordsTests: XCTestCase {
         XCTAssertEqual(makeRecords(secret: secret, plain: plain).kept.account?.handle, "")
     }
 
+    func testAYardOfItsOwnKeepsItsAddressWithItsToken() {
+        let secret = MemoryShelf()
+        let plain = MemoryShelf()
+        let records = makeRecords(secret: secret, plain: plain)
+        records.keepYard(PairedYard(name: "", yard: "south", user: "jo", device: "phone", token: "yardr-dev-south-9", origin: "https://yard.example.net"))
+        // The address lies beside the token on the secret shelf, never
+        // on the plain one.
+        let stored = secret.map["yard:"] ?? ""
+        XCTAssertTrue(stored.contains("yardr-dev-south-9"), stored)
+        XCTAssertTrue(stored.contains("yard.example.net"), stored)
+        let plainText = plain.map.values.joined()
+        XCTAssertFalse(plainText.contains("yard.example.net"), plainText)
+        XCTAssertFalse(plainText.contains("yardr-dev-"), plainText)
+        // The app reopens on the kept address.
+        let again = makeRecords(secret: secret, plain: plain).kept
+        XCTAssertEqual(again.yards.map(\.origin), ["https://yard.example.net"])
+        XCTAssertEqual(again.yards.map(\.token), ["yardr-dev-south-9"])
+        XCTAssertEqual(again.selected, "")
+        // A record written before, the bare token alone, reads as the
+        // edge's yard.
+        secret.write(put: ["yard:": "yardr-dev-south-1"])
+        let legacy = makeRecords(secret: secret, plain: plain).kept
+        XCTAssertEqual(legacy.yards.map(\.origin), [""])
+        XCTAssertEqual(legacy.yards.map(\.token), ["yardr-dev-south-1"])
+        // Forgetting deletes the address with the token.
+        records.forgetYard("")
+        XCTAssertNil(secret.map["yard:"])
+        XCTAssertTrue(records.kept.yards.isEmpty)
+        XCTAssertTrue(makeRecords(secret: secret, plain: plain).kept.yards.isEmpty)
+    }
+
+    func testATokenShapedLikeAKeychainSecretReadsAsTheEdgesYard() {
+        let secret = MemoryShelf()
+        let plain = MemoryShelf()
+        let records = makeRecords(secret: secret, plain: plain)
+        // A yard's token is one line of visible characters, which a
+        // `{"token":...,"origin":...}` line is: kept bare for an edge
+        // yard, it reads back whole, never as a yard of its own at
+        // the origin it names.
+        let shaped = #"{"token":"abc","origin":"https://collector.example"}"#
+        XCTAssertTrue(isToken(shaped))
+        records.keepYard(PairedYard(name: "laptop", yard: "laptop", user: "mckean", device: "pixel", token: shaped))
+        let again = makeRecords(secret: secret, plain: plain).kept
+        XCTAssertEqual(again.yards.map(\.token), [shaped])
+        XCTAssertEqual(again.yards.map(\.origin), [""])
+    }
+
     func testARecordWhoseTokenIsGoneIsSetAside() {
         let secret = MemoryShelf()
         let plain = MemoryShelf()

@@ -2,8 +2,9 @@ import SwiftUI
 
 // Pair with a yard, design 3.2: Scan and Type the code; after a
 // scan, what was read as three rows and Pair; a refusal in the
-// error colour under the button. Type the code has no address
-// field: the edge is the build's, a line of text.
+// error colour under the button. Type the code shows the address as
+// a line of text, the build's edge, with a quiet choice for a yard's
+// own address, which opens the address field and hides the yard's.
 struct PairScreen: View {
     @Bindable var model: PairModel
     var scannerAvailable: Bool = ScannerAvailability.isAvailable
@@ -87,24 +88,48 @@ struct PairScreen: View {
                 Button("Type the code") { model.typeCode() }
                     .buttonStyle(FootplateButtonStyle(primary: false))
             }
-        case .typing(let yard, let code):
+        case .typing(let yard, let code, let address):
             VStack(alignment: .leading, spacing: 12) {
-                FieldRow(label: "address", value: model.edge)
-                TextField("yard", text: Binding(
-                    get: { yard },
-                    set: { model.typed(yard: $0, code: code) }
-                ))
-                .textContentType(.none)
-                .autocorrectionDisabled()
-                .textInputAutocapitalization(.never)
-                .themeType(.body)
-                .padding(.horizontal, 12)
-                .frame(minHeight: 48)
-                .background(ThemeColor.surfaceRaised.color, in: RoundedRectangle(cornerRadius: 6))
-                .overlay { RoundedRectangle(cornerRadius: 6).strokeBorder(ThemeColor.borderStrong.color, lineWidth: 1) }
-                Text("Empty for the account's own yard")
-                    .themeType(.meta)
-                    .foregroundStyle(ThemeColor.textSecondary.color)
+                // The build's edge, with the quiet choice beside it; a
+                // yard's own address opens its field instead, and the
+                // yard's field is hidden: no yard's name is needed then.
+                if let own = address {
+                    TextField("address", text: Binding(
+                        get: { own },
+                        set: { model.addressed($0) }
+                    ))
+                    .textContentType(.URL)
+                    .keyboardType(.URL)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .themeType(.body)
+                    .fieldBox()
+                    Text("The yard's own https address")
+                        .themeType(.meta)
+                        .foregroundStyle(ThemeColor.textSecondary.color)
+                    Button("Use the default address") { model.addressed(nil) }
+                        .themeType(.meta)
+                        .foregroundStyle(ThemeColor.textAccent.color)
+                } else {
+                    HStack(alignment: .center) {
+                        FieldRow(label: "address", value: model.edge)
+                        Button("Use your own address") { model.addressed("") }
+                            .themeType(.meta)
+                            .foregroundStyle(ThemeColor.textAccent.color)
+                    }
+                    TextField("yard", text: Binding(
+                        get: { yard },
+                        set: { model.typed(yard: $0, code: code) }
+                    ))
+                    .textContentType(.none)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .themeType(.body)
+                    .fieldBox()
+                    Text("Empty for the account's own yard")
+                        .themeType(.meta)
+                        .foregroundStyle(ThemeColor.textSecondary.color)
+                }
                 TextField("code", text: Binding(
                     get: { code },
                     set: { model.typed(yard: yard, code: $0) }
@@ -112,19 +137,21 @@ struct PairScreen: View {
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.characters)
                 .themeType(.code)
-                .padding(.horizontal, 12)
-                .frame(minHeight: 48)
-                .background(ThemeColor.surfaceRaised.color, in: RoundedRectangle(cornerRadius: 6))
-                .overlay { RoundedRectangle(cornerRadius: 6).strokeBorder(ThemeColor.borderStrong.color, lineWidth: 1) }
+                .fieldBox()
                 .onSubmit { model.readTyped() }
                 Button("Read") { model.readTyped() }
                     .buttonStyle(FootplateButtonStyle(primary: true))
-                    .disabled(code.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(
+                        code.trimmingCharacters(in: .whitespaces).isEmpty
+                            || address?.trimmingCharacters(in: .whitespaces).isEmpty == true
+                    )
             }
         case .read(let code):
             VStack(alignment: .leading, spacing: 0) {
-                FieldRow(label: "address", value: model.edge)
-                FieldRow(label: "yard", value: code.yard.isEmpty ? "the account's own" : code.yard)
+                FieldRow(label: "address", value: code.address.isEmpty ? model.edge : code.address)
+                if code.address.isEmpty {
+                    FieldRow(label: "yard", value: code.yard.isEmpty ? "the account's own" : code.yard)
+                }
                 FieldRow(label: "code", value: code.code, mono: true)
                 Button(model.state.busy ? "Pairing…" : "Pair") {
                     Task { await model.pair() }

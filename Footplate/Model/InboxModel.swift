@@ -138,10 +138,9 @@ final class InboxModel {
         let follows = followers()
         let boards = mailroom.boards
         func followWord(_ yard: PairedYard) -> (String?, HeadAction?) {
-            // Every yard here is an edge yard: all of them share the
-            // one session, so a signed-out phone asks to sign in on
-            // each (Android's own-yard exception has no iOS yard).
-            if signedOut { return ("sign in again", .signInAgain) }
+            // Only an edge yard is signed out: a yard of its own has
+            // no session to run out of.
+            if signedOut && yard.origin.isEmpty { return ("sign in again", .signInAgain) }
             switch follows[yard.name]?.state.status {
             case .down(_, let short): return (short, nil)
             case .pairAgain: return ("pair again", .pairAgain)

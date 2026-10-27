@@ -13,6 +13,10 @@ enum ApiError: Error, Equatable, Sendable {
     case notLetIn
     /// The yard has no device at all: 404 to a call. Pair again.
     case noDevice
+    /// A yard is kept under the pairing's name already (`title` what the
+    /// head line calls it): forget it first. Thrown by the pairer before
+    /// anything is sent, never read from an answer.
+    case nameKept(title: String)
     /// The connected yard's link is down (503 `away`), or a hosted yard's
     /// container did not answer (the edge's 502).
     case away
@@ -42,6 +46,7 @@ enum ApiError: Error, Equatable, Sendable {
         case .notSignedIn: return "this session is no longer signed in"
         case .notLetIn: return "this device is no longer let in"
         case .noDevice: return "the yard has no device"
+        case .nameKept(let title): return "\(title) is paired already. Forget it first to pair another yard of the same name."
         case .away: return "the yard is away"
         case .busy(let retryAfter): return "the yard is busy, again after \(retryAfter)"
         case .notReady(let why): return "the yard is not ready: \(why)"
@@ -58,6 +63,7 @@ enum ApiError: Error, Equatable, Sendable {
         case .notSignedIn: return "NotSignedIn"
         case .notLetIn: return "NotLetIn"
         case .noDevice: return "NoDevice"
+        case .nameKept: return "NameKept"
         case .away: return "Away"
         case .busy: return "Busy"
         case .notReady: return "NotReady"

@@ -45,7 +45,7 @@ final class LineScreenshotTests: XCTestCase {
         let conversation = ConversationModel(mailroom: mailroom, now: { now }, zone: { TimeZone(secondsFromGMT: 0)! })
         let line = LineModel(
             followers: { ["": home, "laptop": laptop] }, records: records, pairer: pairer, nav: nav,
-            conversation: conversation, origin: fake.origin, now: { now }
+            conversation: conversation, origins: { _ in fake.origin }, now: { now }
         )
         line.open(yard: "")
         let deadline = ContinuousClock.now + .seconds(10)

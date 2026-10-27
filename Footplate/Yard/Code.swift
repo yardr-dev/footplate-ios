@@ -2,15 +2,19 @@ import Foundation
 
 // A pairing's code, read from what yardr's QR holds or from what was typed
 // (design 3.2). The QR is yardr's, unchanged: <address>#<code>, or
-// <address>#<code>#<yard>. The address is checked against the edge the
-// app was built for and never used: the phone sends nothing anywhere but
-// there.
+// <address>#<code>#<yard> where the address is the edge's. The edge's
+// address is checked against the edge the app was built for and never
+// used; a yard's own address is where the code goes, with no edge.
 
 /// A code to pair with: `code` as yardr shows it (`K7QM-2XPD`), `yard`
-/// the yard's name at the edge, empty for the account's own.
+/// the yard's name at the edge, empty for the account's own, and
+/// `address` the yard's own address, empty for the edge's. A code with
+/// an address pairs with no edge: no sign-in, no session, and the
+/// device token alone from then on.
 struct PairingCode: Equatable, Sendable {
     var code: String
     var yard: String
+    var address: String = ""
 }
 
 /// What a scan or the typed fields read as.
@@ -21,10 +25,12 @@ enum CodeRead: Equatable, Sendable {
 }
 
 /// What a pairing's QR holds, read: split at `#` into at most three
-/// parts, the address, the code and the yard's name at the edge. More
-/// parts, an address that is not `edge` (another scheme, host or port:
-/// `http://` is refused as another), or a code that is not eight letters
-/// and digits, are refused with the reason.
+/// parts, the address, the code and the yard's name at the edge. The
+/// edge's address reads as a code with a yard's name; any other
+/// address reads as a yard's own, `<address>#<code>` with no yard's
+/// name, and pairs with no edge. More parts, an address that is
+/// neither, or a code that is not eight letters and digits, are
+/// refused with the reason.
 func readQr(_ text: String, edge: String) -> CodeRead {
     let parts = text.trimmingCharacters(in: .whitespacesAndNewlines)
         .split(separator: "#", omittingEmptySubsequences: false)
@@ -33,13 +39,65 @@ func readQr(_ text: String, edge: String) -> CodeRead {
         return .refused(why: "That is not a pairing's code: yardr user device pair --qr draws one.")
     }
     let address = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
-    guard sameEdge(address, edge: edge) else {
-        let shown = address.hasSuffix("/") ? String(address.dropLast()) : address
-        let home = edge.hasSuffix("/") ? String(edge.dropLast()) : edge
-        return .refused(why: "This code is for \(shown). footplate speaks to \(home) alone.")
+    if sameEdge(address, edge: edge) {
+        let yard = parts.count == 3 ? parts[2] : ""
+        return typedCode(yard: yard, code: parts[1])
     }
-    let yard = parts.count == 3 ? parts[2] : ""
-    return typedCode(yard: yard, code: parts[1])
+    switch readOwnAddress(address) {
+    case .refused(let why):
+        return .refused(why: why)
+    case .address(let origin):
+        guard parts.count == 2 else {
+            return .refused(why: "This code is for \(origin) and names a yard: a yard's own address pairs with no yard's name.")
+        }
+        let read = typedCode(yard: "", code: parts[1])
+        switch read {
+        case .code(let code):
+            return .code(PairingCode(code: code.code, yard: "", address: origin))
+        case .refused:
+            return read
+        }
+    }
+}
+
+/// What an own address reads as: the origin the code goes to, or the
+/// reason it is refused, with nothing sent.
+enum AddressRead: Equatable, Sendable {
+    case address(origin: String)
+    /// Not an address to pair with: `why` says so.
+    case refused(why: String)
+}
+
+/// What **Use your own address** reads: an `https://` origin, the
+/// scheme, the host and the port alone. Plain `http` is refused: over
+/// it anyone on the way could read the pairing code and the device
+/// token, so a yard of your own is reached over TLS.
+func readOwnAddress(_ text: String) -> AddressRead {
+    let noAddress = "That is no address: https://yard.example.net, the scheme, the host and the port alone."
+    let address = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let url = URLComponents(string: address), let scheme = url.scheme?.lowercased() else {
+        return .refused(why: noAddress)
+    }
+    if scheme == "http" {
+        return .refused(why: "That address is plain http: anyone on the way could read the code and the token. Give the yard's https address.")
+    }
+    guard scheme == "https",
+          let host = url.host, !host.isEmpty,
+          url.user == nil, url.password == nil, url.query == nil, url.fragment == nil,
+          url.path.isEmpty || url.path == "/"
+    else {
+        return .refused(why: noAddress)
+    }
+    var clean = URLComponents()
+    clean.scheme = "https"
+    clean.host = host.lowercased()
+    if let port = url.port, port != 443 {
+        clean.port = port
+    }
+    guard let origin = clean.string else {
+        return .refused(why: noAddress)
+    }
+    return .address(origin: origin)
 }
 
 /// What **Type the code** reads: the yard's name at the edge (empty:

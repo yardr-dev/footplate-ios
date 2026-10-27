@@ -1,10 +1,11 @@
 import Foundation
 
-// One paired yard's calls, as its device, through the edge: design
-// 3.1's table, each with its arguments by name and its answer read as
-// docs/api.md has it. Every request carries the device token, the
-// session and, for a yard with a name at the edge, X-Edge-Yard. Made by
-// `Edge.yard(device:session:name:)`. The phone sends no `run.ask`
+// One paired yard's calls, as its device: design 3.1's table, each
+// with its arguments by name and its answer read as docs/api.md has
+// it. Through the edge every request carries the device token, the
+// session and, for a yard with a name at the edge, X-Edge-Yard; a yard
+// of its own carries the device token alone. Made by `Edge.yard` and
+// `Edge.yardDirect`. The phone sends no `run.ask`
 // values and no setup account: `approveAsk` and `approveSetup` carry
 // only the pick and `weighed`, so a yard refusal is what a later bead
 // shows the yard command for; ordinary picks go through `answerAsk`.
@@ -14,14 +15,22 @@ import Foundation
 final class YardClient: Sendable {
     private let edge: Edge
     private let device: String
+    /// The edge's session; empty for a yard of its own, and no
+    /// `X-Edge-Token` is sent then.
     private let session: String
-    /// The yard's name at the edge; empty for the account's own yard.
+    /// The yard's name at the edge; empty for the account's own yard,
+    /// and for a yard of its own, which has no name at any edge.
     let name: String
 
     init(edge: Edge, device: String, session: String, name: String) throws {
         try requireToken(device)
-        try requireToken(session)
+        guard session.isEmpty || isToken(session) else {
+            throw InvalidValueError("a session is one line of visible characters")
+        }
         try requireName(name)
+        guard !session.isEmpty || name.isEmpty else {
+            throw InvalidValueError("a yard of its own has no name at the edge")
+        }
         self.edge = edge
         self.device = device
         self.session = session
@@ -293,7 +302,9 @@ final class YardClient: Sendable {
     private func request(path: String) -> URLRequest {
         var request = edge.makeRequest(path: path)
         request.setValue("Bearer \(device)", forHTTPHeaderField: "Authorization")
-        request.setValue(session, forHTTPHeaderField: edgeTokenHeader)
+        if !session.isEmpty {
+            request.setValue(session, forHTTPHeaderField: edgeTokenHeader)
+        }
         if !name.isEmpty {
             request.setValue(name, forHTTPHeaderField: edgeYardHeader)
         }
@@ -390,7 +401,11 @@ final class YardClient: Sendable {
 
 extension YardClient: CustomStringConvertible {
     var description: String {
-        "YardClient(\(edge.origin), yard=\(name.isEmpty ? "<the account's>" : name), device=<token>, session=<token>)"
+        if session.isEmpty {
+            "YardClient(\(edge.origin), direct, device=<token>)"
+        } else {
+            "YardClient(\(edge.origin), yard=\(name.isEmpty ? "<the account's>" : name), device=<token>, session=<token>)"
+        }
     }
 }
 

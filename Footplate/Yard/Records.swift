@@ -152,13 +152,16 @@ extension Account: CustomStringConvertible {
 /// One paired yard: `name` its name at the edge (empty: the account's
 /// own, and no `X-Edge-Yard` is sent), `yard` the yard's own name,
 /// `user` whom the device calls as, `device` the device's name at the
-/// yard, `token` the device token.
+/// yard, `token` the device token, `origin` the yard's own address,
+/// empty for the edge's (a yard of its own has no name at any edge, so
+/// its name is empty too).
 struct PairedYard: Equatable, Sendable {
     var name: String
     var yard: String
     var user: String
     var device: String
     var token: String
+    var origin: String = ""
 
     /// What the head line calls it: its name at the edge, else its own.
     var title: String { name.isEmpty ? yard : name }
@@ -260,7 +263,7 @@ final class Records {
 
     /// Keeps a paired yard, in place of one of the same name, and selects it.
     func keepYard(_ yard: PairedYard) {
-        secret.write(put: [Self.yardPrefix + yard.name: yard.token])
+        secret.write(put: [Self.yardPrefix + yard.name: yardSecret(token: yard.token, origin: yard.origin)])
         let meta = StoredYard(name: yard.name, yard: yard.yard, user: yard.user, device: yard.device)
         let encoded = (try? JSONEncoder().encode(meta)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
         plain.write(put: [Self.yardMetaPrefix + yard.name: encoded, Self.selectedKey: yard.name])
@@ -353,13 +356,14 @@ final class Records {
             guard let json = plain.get(key),
                   let meta = try? JSONDecoder().decode(StoredYard.self, from: Data(json.utf8)),
                   meta.name == name,
-                  let token = secret.get(secretKey)
+                  let stored = secret.get(secretKey)
             else {
                 asidePlain.append(key)
                 if secret.get(secretKey) != nil { asideSecret.append(secretKey) }
                 continue
             }
-            yards.append(PairedYard(name: meta.name, yard: meta.yard, user: meta.user, device: meta.device, token: token))
+            let (token, origin) = readYardSecret(stored)
+            yards.append(PairedYard(name: meta.name, yard: meta.yard, user: meta.user, device: meta.device, token: token, origin: origin))
         }
         if !asideSecret.isEmpty { secret.write(remove: asideSecret) }
         if !asidePlain.isEmpty { plain.write(remove: asidePlain) }
@@ -383,4 +387,44 @@ final class Records {
     private static let selectedKey = "selected"
     private static let askedKey = "notifications-asked"
     private static let yardMetaPrefix = "yard-meta:"
+}
+
+/// The mark a yard of its own leaves on its Keychain record: a bare
+/// token is one line with no spaces (`isToken`), so the mark's space
+/// keeps the two forms apart whatever a yard answers as its token.
+private let directSecretMark = "direct "
+
+/// The value a yard's Keychain record holds for `token` with `origin`
+/// beside it: the token alone where the yard is the edge's, so
+/// records written before a yard of its own could be paired read as
+/// they always did.
+private func yardSecret(token: String, origin: String) -> String {
+    guard !origin.isEmpty else { return token }
+    struct Secret: Codable {
+        var token: String
+        var origin: String
+    }
+    guard let json = (try? JSONEncoder().encode(Secret(token: token, origin: origin)))
+        .flatMap({ String(data: $0, encoding: .utf8) })
+    else { return token }
+    return directSecretMark + json
+}
+
+/// A yard's Keychain record read: the token with its origin where the
+/// mark is, or the bare token of a record written before, whose yard
+/// is the edge's. A marked record that cannot be read is the bare
+/// token whole, whose space keeps it out of any request.
+private func readYardSecret(_ stored: String) -> (token: String, origin: String) {
+    struct Secret: Codable {
+        var token: String
+        var origin: String
+    }
+    if stored.hasPrefix(directSecretMark),
+       let data = String(stored.dropFirst(directSecretMark.count)).data(using: .utf8),
+       let secret = try? JSONDecoder().decode(Secret.self, from: data),
+       !secret.origin.isEmpty
+    {
+        return (secret.token, secret.origin)
+    }
+    return (stored, "")
 }
