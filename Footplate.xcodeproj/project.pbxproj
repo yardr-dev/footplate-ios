@@ -22,6 +22,9 @@
 						CreatedOnToolsVersion = 26.3;
 						TestTargetID = 00000000000000000000000B;
 					};
+					D00000000000000000000003 = {
+						CreatedOnToolsVersion = 26.3;
+					};
 				};
 			};
 			buildConfigurationList = 000000000000000000000014;
@@ -35,16 +38,16 @@
 			productRefGroup = 000000000000000000000003;
 			projectDirPath = "";
 			projectRoot = "";
-			targets = (00000000000000000000000B, 00000000000000000000000C, 00000000000000000000000D);
+			targets = (00000000000000000000000B, 00000000000000000000000C, 00000000000000000000000D, D00000000000000000000003);
 		};
 		000000000000000000000002 /* main */ = {
 			isa = PBXGroup;
-			children = (000000000000000000000004, 000000000000000000000005, 000000000000000000000006, 000000000000000000000007, 000000000000000000000003);
+			children = (000000000000000000000004, 000000000000000000000005, 000000000000000000000006, 000000000000000000000007, D00000000000000000000001, D0000000000000000000000E, 000000000000000000000003);
 			sourceTree = "<group>";
 		};
 		000000000000000000000003 /* products */ = {
 			isa = PBXGroup;
-			children = (00000000000000000000000E, 00000000000000000000000F, 000000000000000000000010);
+			children = (00000000000000000000000E, 00000000000000000000000F, 000000000000000000000010, D00000000000000000000002);
 			name = Products;
 			sourceTree = "<group>";
 		};
@@ -78,6 +81,48 @@
 			membershipExceptions = (Info.plist, API/.gitkeep, Session/.gitkeep, Model/.gitkeep, Unlock/.gitkeep, Notify/.gitkeep, Yard/.gitkeep);
 			target = 00000000000000000000000B;
 		};
+		D00000000000000000000001 /* notifyservicegroup */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (D0000000000000000000000F);
+			explicitFileTypes = {
+			};
+			explicitFolders = ();
+			path = NotifyService;
+			sourceTree = "<group>";
+		};
+		D0000000000000000000000F /* notifyserviceexceptions */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (Info.plist, NotifyService.entitlements);
+			target = D00000000000000000000003;
+		};
+		D00000000000000000000002 /* notifyserviceproduct */ = {
+			isa = PBXFileReference;
+			explicitFileType = wrapper.app-extension;
+			includeInIndex = 0;
+			path = NotifyService.appex;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		D0000000000000000000000E /* pushsharedgroup */ = {
+			isa = PBXGroup;
+			children = (D00000000000000000000010, D00000000000000000000011, D00000000000000000000012, D00000000000000000000013, D00000000000000000000014, D00000000000000000000015, D00000000000000000000016, D00000000000000000000017, D00000000000000000000018, D00000000000000000000019, D0000000000000000000001A, D0000000000000000000001B, D0000000000000000000001C, D0000000000000000000001D, D0000000000000000000001E);
+			name = PushShared;
+			sourceTree = "<group>";
+		};
+		D00000000000000000000010 /* Transport.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Footplate/API/Transport.swift; sourceTree = "<group>"; };
+		D00000000000000000000011 /* Edge.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Footplate/API/Edge.swift; sourceTree = "<group>"; };
+		D00000000000000000000012 /* YardClient.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Footplate/API/YardClient.swift; sourceTree = "<group>"; };
+		D00000000000000000000013 /* Wire.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Footplate/API/Wire.swift; sourceTree = "<group>"; };
+		D00000000000000000000014 /* ApiError.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Footplate/API/ApiError.swift; sourceTree = "<group>"; };
+		D00000000000000000000015 /* Load.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Footplate/Session/Load.swift; sourceTree = "<group>"; };
+		D00000000000000000000016 /* Board.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Footplate/Model/Board.swift; sourceTree = "<group>"; };
+		D00000000000000000000017 /* Nav.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Footplate/Model/Nav.swift; sourceTree = "<group>"; };
+		D00000000000000000000018 /* Notify.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Footplate/Notify/Notify.swift; sourceTree = "<group>"; };
+		D00000000000000000000019 /* Burst.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Footplate/Notify/Burst.swift; sourceTree = "<group>"; };
+		D0000000000000000000001A /* Records.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Footplate/Yard/Records.swift; sourceTree = "<group>"; };
+		D0000000000000000000001B /* Code.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Footplate/Yard/Code.swift; sourceTree = "<group>"; };
+		D0000000000000000000001C /* Push.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Footplate/Push/Push.swift; sourceTree = "<group>"; };
+		D0000000000000000000001D /* Checkpoint.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Footplate/Push/Checkpoint.swift; sourceTree = "<group>"; };
+		D0000000000000000000001E /* Wake.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Footplate/Push/Wake.swift; sourceTree = "<group>"; };
 		000000000000000000000007 /* configgroup */ = {
 			isa = PBXGroup;
 			children = (000000000000000000000008, 000000000000000000000009, 00000000000000000000000A);
@@ -126,9 +171,9 @@
 		00000000000000000000000B /* app */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 000000000000000000000011;
-			buildPhases = (00000000000000000000001D, 00000000000000000000001E, 00000000000000000000001F);
+			buildPhases = (00000000000000000000001D, 00000000000000000000001E, 00000000000000000000001F, D0000000000000000000000A);
 			buildRules = ();
-			dependencies = ();
+			dependencies = (D0000000000000000000000C);
 			fileSystemSynchronizedGroups = (000000000000000000000004);
 			name = Footplate;
 			packageProductDependencies = ();
@@ -149,6 +194,65 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		00000000000000000000001F /* appresources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D0000000000000000000000A /* embedappex */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (D0000000000000000000000B);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D0000000000000000000000B /* embednotifyservice */ = {
+			isa = PBXBuildFile;
+			fileRef = D00000000000000000000002;
+			settings = { ATTRIBUTES = (RemoveHeadersOnCopy, ); };
+		};
+		D00000000000000000000003 /* notifyservice */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D00000000000000000000007;
+			buildPhases = (D00000000000000000000004, D00000000000000000000005, D00000000000000000000006);
+			buildRules = ();
+			dependencies = ();
+			fileSystemSynchronizedGroups = (D00000000000000000000001);
+			name = NotifyService;
+			productName = NotifyService;
+			productReference = D00000000000000000000002;
+			productType = "com.apple.product-type.app-extension";
+		};
+		D00000000000000000000004 /* notifyservicesources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (D00000000000000000000030, D00000000000000000000031, D00000000000000000000032, D00000000000000000000033, D00000000000000000000034, D00000000000000000000035, D00000000000000000000036, D00000000000000000000037, D00000000000000000000038, D00000000000000000000039, D0000000000000000000003A, D0000000000000000000003B, D0000000000000000000003C, D0000000000000000000003D, D0000000000000000000003E);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D00000000000000000000030 = { isa = PBXBuildFile; fileRef = D00000000000000000000010; };
+		D00000000000000000000031 = { isa = PBXBuildFile; fileRef = D00000000000000000000011; };
+		D00000000000000000000032 = { isa = PBXBuildFile; fileRef = D00000000000000000000012; };
+		D00000000000000000000033 = { isa = PBXBuildFile; fileRef = D00000000000000000000013; };
+		D00000000000000000000034 = { isa = PBXBuildFile; fileRef = D00000000000000000000014; };
+		D00000000000000000000035 = { isa = PBXBuildFile; fileRef = D00000000000000000000015; };
+		D00000000000000000000036 = { isa = PBXBuildFile; fileRef = D00000000000000000000016; };
+		D00000000000000000000037 = { isa = PBXBuildFile; fileRef = D00000000000000000000017; };
+		D00000000000000000000038 = { isa = PBXBuildFile; fileRef = D00000000000000000000018; };
+		D00000000000000000000039 = { isa = PBXBuildFile; fileRef = D00000000000000000000019; };
+		D0000000000000000000003A = { isa = PBXBuildFile; fileRef = D0000000000000000000001A; };
+		D0000000000000000000003B = { isa = PBXBuildFile; fileRef = D0000000000000000000001B; };
+		D0000000000000000000003C = { isa = PBXBuildFile; fileRef = D0000000000000000000001C; };
+		D0000000000000000000003D = { isa = PBXBuildFile; fileRef = D0000000000000000000001D; };
+		D0000000000000000000003E = { isa = PBXBuildFile; fileRef = D0000000000000000000001E; };
+		D00000000000000000000005 /* notifyserviceframeworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D00000000000000000000006 /* notifyserviceresources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = ();
@@ -228,6 +332,18 @@
 			target = 00000000000000000000000B;
 			targetProxy = 000000000000000000000028;
 		};
+		D0000000000000000000000D /* notifyserviceproxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 000000000000000000000001;
+			proxyType = 1;
+			remoteGlobalIDString = D00000000000000000000003;
+			remoteInfo = NotifyService;
+		};
+		D0000000000000000000000C /* notifyservicedep */ = {
+			isa = PBXTargetDependency;
+			target = D00000000000000000000003;
+			targetProxy = D0000000000000000000000D;
+		};
 		000000000000000000000029 /* uiproxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 000000000000000000000001;
@@ -250,6 +366,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Footplate/Footplate.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Footplate/Info.plist;
@@ -272,6 +389,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Footplate/Footplate.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Footplate/Info.plist;
@@ -347,6 +465,38 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PRODUCT_BUNDLE_IDENTIFIER = "dev.yardr.footplate.$(TARGET_NAME)";
 				TEST_TARGET_NAME = Footplate;
+			};
+			name = Release;
+		};
+		D00000000000000000000007 /* notifyservicelist */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (D00000000000000000000008, D00000000000000000000009);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		D00000000000000000000008 /* notifyservicedebug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = NotifyService/NotifyService.entitlements;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = NotifyService/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks");
+				PRODUCT_BUNDLE_IDENTIFIER = "$(PUSH_EXTENSION_BUNDLE_IDENTIFIER)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+			};
+			name = Debug;
+		};
+		D00000000000000000000009 /* notifyservicerelease */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = NotifyService/NotifyService.entitlements;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = NotifyService/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks");
+				PRODUCT_BUNDLE_IDENTIFIER = "$(PUSH_EXTENSION_BUNDLE_IDENTIFIER)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
 			};
 			name = Release;
 		};

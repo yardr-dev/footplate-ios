@@ -34,55 +34,6 @@ func notificationRequest(_ telling: Telling) -> UNNotificationRequest {
     return UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
 }
 
-/// The thread a telling groups under: its yard and its row — the
-/// conversation for mail, the card for a decision.
-func threadOf(_ telling: Telling) -> String {
-    switch telling.target {
-    case .conversation(let with):
-        return "mail/\(telling.yard)/\(with)"
-    case .decision(let bead, let ask):
-        return "decision/\(telling.yard)/\(bead)/\(ask)"
-    }
-}
-
-private let notifyYardKey = "yard"
-private let notifyWithKey = "with"
-private let notifyBeadKey = "bead"
-private let notifyAskKey = "ask"
-
-/// Where a telling leads, as its tap carries it: the yard by its name
-/// at the edge, and the conversation or decision there.
-func userInfoOf(_ telling: Telling) -> [AnyHashable: Any] {
-    var info: [AnyHashable: Any] = [notifyYardKey: telling.yard]
-    switch telling.target {
-    case .conversation(let with):
-        info[notifyWithKey] = with
-    case .decision(let bead, let ask):
-        info[notifyBeadKey] = bead
-        info[notifyAskKey] = ask
-    }
-    return info
-}
-
-/// Where a tap leads: the yard by its name at the edge, and the
-/// conversation or decision there. Nil where the tap carries none of
-/// ours.
-func targetOf(_ userInfo: [AnyHashable: Any]) -> (String, Target)? {
-    guard let yard = userInfo[notifyYardKey] as? String else { return nil }
-    if let with = userInfo[notifyWithKey] as? String {
-        return (yard, .conversation(with: with))
-    }
-    guard let bead = userInfo[notifyBeadKey] as? String else { return nil }
-    let ask: Int64?
-    if let number = userInfo[notifyAskKey] as? NSNumber {
-        ask = number.int64Value
-    } else {
-        ask = userInfo[notifyAskKey] as? Int64
-    }
-    guard let ask, ask >= 0 else { return nil }
-    return (yard, .decision(bead: bead, ask: ask))
-}
-
 /// A notification's tap: the app on that yard, and on that
 /// conversation or decision. A yard paired no more is left where the
 /// app opens.
@@ -98,6 +49,34 @@ func applyNotifyTap(yard: String, target: Target, records: Records, nav: Nav) {
         nav.place = .decide
         nav.openDecision(yard: yard, bead: bead, ask: ask)
     }
+}
+
+/// A wake's tap: where the phone saved the wake landing — on its
+/// yard and row, on the sign-in-again shape where the door closed,
+/// or on the yard list where the yard is gone or nothing was saved.
+@MainActor
+func applyWakeTap(wakeId: String, targets: any WakeTargetStore, records: Records, nav: Nav) {
+    switch resolveWake(targets.landing(wakeId: wakeId), yards: records.kept.yards.map(\.name)) {
+    case .target(let yard, let target):
+        applyNotifyTap(yard: yard, target: target, records: records, nav: nav)
+    case .signInAgain:
+        nav.showSignIn(again: true)
+    case .yardList:
+        nav.showYardList()
+    }
+}
+
+/// A custom wake URL is only a hint. A malformed one, or a missing
+/// local wake mapping, opens the paired-yards list without selecting
+/// a yard or fetching from an unpaired address.
+@MainActor
+func applyWakeLink(_ url: URL, targets: any WakeTargetStore, records: Records, nav: Nav) {
+    guard url.scheme == wakeScheme else { return }
+    guard let wakeId = wakeIdOf(url) else {
+        nav.showYardList()
+        return
+    }
+    applyWakeTap(wakeId: wakeId, targets: targets, records: records, nav: nav)
 }
 
 /// Whether a delivered notification is the migrated yard's stale one:
@@ -150,9 +129,16 @@ private struct TapCompletion: @unchecked Sendable {
 
 final class NotifyDelegate: NSObject, UNUserNotificationCenterDelegate, @unchecked Sendable {
     private let onTap: @MainActor (String, Target) -> Void
+    /// A tap on a wake the extension could not fill in: it carries
+    /// the wake id alone, and where it lands is the saved landing's.
+    private let onWakeTap: @MainActor (String) -> Void
 
-    init(onTap: @escaping @MainActor (String, Target) -> Void) {
+    init(
+        onTap: @escaping @MainActor (String, Target) -> Void,
+        onWakeTap: @escaping @MainActor (String) -> Void = { _ in }
+    ) {
         self.onTap = onTap
+        self.onWakeTap = onWakeTap
     }
 
     func userNotificationCenter(
@@ -168,15 +154,26 @@ final class NotifyDelegate: NSObject, UNUserNotificationCenterDelegate, @uncheck
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
-        guard let (yard, target) = targetOf(response.notification.request.content.userInfo) else {
-            completionHandler()
+        if let (yard, target) = targetOf(response.notification.request.content.userInfo) {
+            let tap = onTap
+            let done = TapCompletion(completionHandler)
+            Task { @MainActor in
+                tap(yard, target)
+                done.call()
+            }
             return
         }
-        let tap = onTap
-        let done = TapCompletion(completionHandler)
-        Task { @MainActor in
-            tap(yard, target)
-            done.call()
+        // No row of ours: a wake's generic line, whose tap carries
+        // the wake id and lands where the phone saved it landing.
+        if let wake = wakePayloadOf(response.notification.request.content.userInfo) {
+            let tap = onWakeTap
+            let done = TapCompletion(completionHandler)
+            Task { @MainActor in
+                tap(wake.id)
+                done.call()
+            }
+            return
         }
+        completionHandler()
     }
 }

@@ -21,6 +21,12 @@ final class Notifier {
     private let allowed: @MainActor () async -> Bool
     private let tell: @MainActor (Telling) async -> Void
     private let clock: any Clock
+    /// The checkpoints the wakes fill against, where the app shares
+    /// them: every board read here is judged against the freshest
+    /// checkpoint and written back as the next, so a wake the
+    /// extension filled meanwhile is not told of twice, and one the
+    /// foreground read is not lost to it.
+    private let checkpoints: (any CheckpointStore)?
     private var shown: ScreenShown = .elsewhere
     private var last: [String: Board] = [:]
     private var bursts: [Kind: Burst] = [:]
@@ -31,13 +37,15 @@ final class Notifier {
         records: Records,
         allowed: @escaping @MainActor () async -> Bool,
         tell: @escaping @MainActor (Telling) async -> Void,
-        clock: any Clock = SystemClock()
+        clock: any Clock = SystemClock(),
+        checkpoints: (any CheckpointStore)? = nil
     ) {
         self.mailroom = mailroom
         self.records = records
         self.allowed = allowed
         self.tell = tell
         self.clock = clock
+        self.checkpoints = checkpoints
         // The observer lives with the mailroom; the closure holds the
         // notifier weakly, so nothing here needs removing.
         _ = mailroom.observeBoards { [weak self] in self?.sync() }
@@ -61,6 +69,7 @@ final class Notifier {
         let now = mailroom.boards
         for gone in last.keys where now[gone] == nil {
             last.removeValue(forKey: gone)
+            checkpoints?.transaction { $0.forget(yard: gone) }
             for kind in bursts.keys {
                 if bursts[kind]?.forget(yard: gone) == true {
                     timers[kind]?.cancel()
@@ -68,18 +77,36 @@ final class Notifier {
                 }
             }
         }
-        for (yard, board) in now {
-            for item in arrived(yard: yard, before: last[yard], after: board) {
-                if wanted(item, shown: shown) {
-                    var burst = bursts[item.kind] ?? Burst()
-                    let first = burst.add(item)
-                    bursts[item.kind] = burst
-                    if first, timers[item.kind] == nil {
-                        let kind = item.kind
-                        timers[kind] = Task { [weak self] in await self?.wait(kind) }
-                    }
+        // Judged against the freshest checkpoint where one is kept,
+        // and written back as the next: a board a wake filled while
+        // the app was closed is the board these arrivals are read
+        // from, not the one the app last saw.
+        var fresh: [News] = []
+        if let checkpoints {
+            checkpoints.transaction { access in
+                for (yard, board) in now {
+                    let before = access.checkpoint(yard: yard)?.board() ?? last[yard]
+                    fresh += arrived(yard: yard, before: before, after: board)
+                    access.save(yard: yard, YardCheckpoint(board))
                 }
             }
+        } else {
+            for (yard, board) in now {
+                fresh += arrived(yard: yard, before: last[yard], after: board)
+            }
+        }
+        for item in fresh {
+            if wanted(item, shown: shown) {
+                var burst = bursts[item.kind] ?? Burst()
+                let first = burst.add(item)
+                bursts[item.kind] = burst
+                if first, timers[item.kind] == nil {
+                    let kind = item.kind
+                    timers[kind] = Task { [weak self] in await self?.wait(kind) }
+                }
+            }
+        }
+        for (yard, board) in now {
             last[yard] = board
         }
     }

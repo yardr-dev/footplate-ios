@@ -15,7 +15,7 @@ struct LinesScreen: View {
     var body: some View {
         NavigationStack(path: $nav.linesPath) {
             content(model.state)
-                .yardPlace(inbox: inbox, title: "Lines")
+                .yardPlace(inbox: inbox, nav: nav, title: "Lines")
                 .navigationDestination(for: LinesRoute.self) { route in
                     switch route {
                     case .line(let line): RouteMapScreen(model: model, route: line)

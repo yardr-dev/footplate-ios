@@ -232,6 +232,46 @@ final class NotifierTests: XCTestCase {
         XCTAssertTrue(clock.pending().isEmpty, "no timer left")
     }
 
+    func testABoardAWakeFilledIsNotToldAgainInTheForeground() async {
+        // The two sides of the shared checkpoint, in a room of
+        // their own: a wake fills the board in and commits it, and
+        // the foreground's next read of the same board tells nothing.
+        let room = Mailroom()
+        let fake = FakeFollowed()
+        room.setFollowers(["laptop": fake])
+        let checkpoints = MemoryCheckpointStore()
+        let testClock = TestClock()
+        var toldAgain: [Telling] = []
+        let foreground = Notifier(
+            mailroom: room, records: records,
+            allowed: { true },
+            tell: { toldAgain.append($0) },
+            clock: testClock,
+            checkpoints: checkpoints
+        )
+        _ = foreground
+        fake.up(loaded())
+        let after = Board.of(loaded(letters: [letter(11, text: "While closed.")]))
+        let engine = WakeEngine(
+            yards: [WakeYard(name: "laptop", title: "laptop")],
+            fetch: { _ in after },
+            checkpoints: checkpoints,
+            targets: MemoryWakeTargetStore(),
+            canSuppress: false
+        )
+        let outcome = await engine.handle(wakeId: "w-1", kind: .mail, shown: .elsewhere)
+        guard case .show = outcome else {
+            return XCTFail("the wake shows it: \(outcome)")
+        }
+        // The same board reaches the foreground: read against the
+        // wake's checkpoint, it brings nothing new.
+        fake.up(loaded(letters: [letter(11, text: "While closed.")]))
+        testClock.advance(.seconds(3))
+        try? await Task.sleep(for: .milliseconds(50))
+        XCTAssertTrue(toldAgain.isEmpty, "not told of twice: \(toldAgain)")
+        withExtendedLifetime(foreground) {}
+    }
+
     func testMutedUntilTheFirstRefreshReadsIt() async {
         XCTAssertTrue(notifier.muted)
         await notifier.refresh()

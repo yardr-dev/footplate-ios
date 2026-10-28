@@ -49,6 +49,41 @@ final class YardClient: Sendable {
         return try decode("who this device is", Me.self, from: answer.data)
     }
 
+    /// Registers this device for wakes with the relay, through the
+    /// edge (design 8787 3.2): the router answers it itself, binds
+    /// it to the session beside the device token, and forwards no
+    /// part of it to the yard. `token` is the system's push token
+    /// for this installation; it rides in this call's body alone.
+    /// A yard of its own is never registered — no router stands in
+    /// front of it — and this client is never made for one here.
+    func registerPush(token: String) async throws {
+        var request = request(path: "/user/push/register")
+        request.httpMethod = "POST"
+        request.setValue(jsonContentType, forHTTPHeaderField: "Content-Type")
+        request.httpBody = try jsonBody(["platform": "apns", "token": token])
+        let answer = try await edge.exchange(request)
+        if let error = refusal(status: answer.status, edgeRefusal: answer.edgeRefusal, retryAfterHeader: answer.retryAfter, body: answer.body) {
+            throw error
+        }
+        guard answer.status == 200 else {
+            throw ApiError.protocol(what: "the push registration: status \(answer.status)")
+        }
+    }
+
+    /// Undoes the registration, as the phone unpairs itself (3.3):
+    /// the same door, with no body, deleting this device's row.
+    func unregisterPush() async throws {
+        var request = request(path: "/user/push/unregister")
+        request.httpMethod = "POST"
+        let answer = try await edge.exchange(request)
+        if let error = refusal(status: answer.status, edgeRefusal: answer.edgeRefusal, retryAfterHeader: answer.retryAfter, body: answer.body) {
+            throw error
+        }
+        guard answer.status == 200 else {
+            throw ApiError.protocol(what: "the push unregistration: status \(answer.status)")
+        }
+    }
+
     /// The seq of the newest event: where the stream starts.
     func head() async throws -> Int64 {
         try await answer(method: "Head", args: [:], as: Int64.self)

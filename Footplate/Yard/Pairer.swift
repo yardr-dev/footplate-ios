@@ -9,6 +9,11 @@ final class Pairer {
     private let edge: Edge
     private let records: Records
 
+    /// Called with a yard as it is forgotten, while its credentials
+    /// stand: the app undoes the yard's push registration there
+    /// (design 8787 3.3). Nothing else rides on it.
+    var onForget: (@MainActor (PairedYard) async -> Void)?
+
     init(edge: Edge, records: Records) {
         self.edge = edge
         self.records = records
@@ -147,6 +152,9 @@ final class Pairer {
     /// the error is thrown after.
     func forget(name: String) async throws {
         let kept = records.kept
+        if let yard = kept.yards.first(where: { $0.name == name }) {
+            await onForget?(yard)
+        }
         if kept.yards.contains(where: { $0.name != name }) {
             records.forgetYard(name)
             return

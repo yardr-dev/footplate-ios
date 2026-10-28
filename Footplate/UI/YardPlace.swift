@@ -6,8 +6,8 @@ import SwiftUI
 // alert. The tab bar and the back button are the system's own.
 struct YardPlace: ViewModifier {
     @Bindable var inbox: InboxModel
+    @Bindable var nav: Nav
     var title: String
-    @State private var showingSwitch = false
     @State private var confirmingForget = false
 
     func body(content: Content) -> some View {
@@ -32,7 +32,7 @@ struct YardPlace: ViewModifier {
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button {
-                    showingSwitch = true
+                    nav.yardListShown = true
                 } label: {
                     HStack(spacing: 6) {
                         Text(state.head)
@@ -59,19 +59,19 @@ struct YardPlace: ViewModifier {
                 }
             }
         }
-        .sheet(isPresented: $showingSwitch) {
+        .sheet(isPresented: $nav.yardListShown) {
             YardSwitchView(
                 state: state,
                 onSelect: { name in
                     inbox.select(name)
-                    showingSwitch = false
+                    nav.yardListShown = false
                 },
                 onPairAnother: {
-                    showingSwitch = false
+                    nav.yardListShown = false
                     inbox.pairAnother()
                 },
                 onForget: {
-                    showingSwitch = false
+                    nav.yardListShown = false
                     confirmingForget = true
                 }
             )
@@ -90,7 +90,7 @@ struct YardPlace: ViewModifier {
 }
 
 extension View {
-    func yardPlace(inbox: InboxModel, title: String) -> some View {
-        modifier(YardPlace(inbox: inbox, title: title))
+    func yardPlace(inbox: InboxModel, nav: Nav, title: String) -> some View {
+        modifier(YardPlace(inbox: inbox, nav: nav, title: title))
     }
 }

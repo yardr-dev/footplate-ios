@@ -22,7 +22,7 @@ struct CrewScreen: View {
                 }
                 content(model.state)
             }
-            .yardPlace(inbox: model, title: "Crew")
+            .yardPlace(inbox: model, nav: nav, title: "Crew")
             .navigationDestination(for: ConversationRoute.self) { route in
                 ConversationScreen(model: conversation, yard: route.yard, with: route.with)
             }

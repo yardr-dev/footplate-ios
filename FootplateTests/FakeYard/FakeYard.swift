@@ -193,6 +193,17 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
     private var openStreams: [UUID: OpenStream] = [:]
     private var recorded: [RecordedRequest] = []
     private var takenIndex = 0
+    /// The relay's rows as the fake router holds them, by yard name:
+    /// the push token a register call last wrote for that yard.
+    private var pushRows: [String: String] = [:]
+
+    /// The push token registered for the yard named `yardName`, or
+    /// nil where no row stands (never registered, or unregistered).
+    func pushToken(yardName: String) -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return pushRows[yardName]
+    }
 
     func edge() throws -> Edge {
         try Edge(origin: origin, transport: self)
@@ -639,6 +650,26 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
                 return FakeResponse(status: 404, text: "not found\n")
             }
             return FakeResponse(status: 200, headers: ["Content-Type": "application/octet-stream"], body: bytes)
+        }
+        if path == "/user/push/register" {
+            // The router's own door, as the relay answers it: a
+            // platform and a token, or the edge's refusal of both.
+            let body = recorded.bodyObject()
+            guard recorded.method == "POST",
+                  (body["platform"] as? String) == "apns",
+                  let token = body["token"] as? String, !token.isEmpty
+            else {
+                return FakeResponse.json(400, #"{"error": "edge: a registration names its platform (apns or fcm) and its push token"}"#)
+            }
+            pushRows[named] = token
+            return FakeResponse.json(200, #"{"status": "registered"}"#)
+        }
+        if path == "/user/push/unregister" {
+            guard recorded.method == "POST" else {
+                return FakeResponse(status: 405, text: "method not allowed\n")
+            }
+            pushRows.removeValue(forKey: named)
+            return FakeResponse.json(200, #"{"status": "unregistered"}"#)
         }
         if path == "/user/me" {
             return FakeResponse.json(200, "{\"user\": \"\(yard.user)\", \"said_by\": \"\(yard.device)\", \"yard\": \"\(yard.yard)\"}")

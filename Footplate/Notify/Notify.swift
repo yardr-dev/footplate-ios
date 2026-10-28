@@ -103,6 +103,59 @@ func arrived(yard: String, before: Board?, after: Board) -> [News] {
     return mail + asks
 }
 
+/// The thread a telling groups under: its yard and its row — the
+/// conversation for mail, the card for a decision. The extension
+/// threads a rewritten wake the same way, so these stand with the
+/// rules, not with the system's showing of them.
+func threadOf(_ telling: Telling) -> String {
+    switch telling.target {
+    case .conversation(let with):
+        return "mail/\(telling.yard)/\(with)"
+    case .decision(let bead, let ask):
+        return "decision/\(telling.yard)/\(bead)/\(ask)"
+    }
+}
+
+private let notifyYardKey = "yard"
+private let notifyWithKey = "with"
+private let notifyBeadKey = "bead"
+private let notifyAskKey = "ask"
+
+/// Where a telling leads, as its tap carries it: the yard by its name
+/// at the edge, and the conversation or decision there. The ids live
+/// here and in the tap state alone — never in a remote payload or a
+/// wake link (Push.swift).
+func userInfoOf(_ telling: Telling) -> [AnyHashable: Any] {
+    var info: [AnyHashable: Any] = [notifyYardKey: telling.yard]
+    switch telling.target {
+    case .conversation(let with):
+        info[notifyWithKey] = with
+    case .decision(let bead, let ask):
+        info[notifyBeadKey] = bead
+        info[notifyAskKey] = ask
+    }
+    return info
+}
+
+/// Where a tap leads: the yard by its name at the edge, and the
+/// conversation or decision there. Nil where the tap carries none of
+/// ours.
+func targetOf(_ userInfo: [AnyHashable: Any]) -> (String, Target)? {
+    guard let yard = userInfo[notifyYardKey] as? String else { return nil }
+    if let with = userInfo[notifyWithKey] as? String {
+        return (yard, .conversation(with: with))
+    }
+    guard let bead = userInfo[notifyBeadKey] as? String else { return nil }
+    let ask: Int64?
+    if let number = userInfo[notifyAskKey] as? NSNumber {
+        ask = number.int64Value
+    } else {
+        ask = userInfo[notifyAskKey] as? Int64
+    }
+    guard let ask, ask >= 0 else { return nil }
+    return (yard, .decision(bead: bead, ask: ask))
+}
+
 /// As much of a first line as a notification says (footplate's `LINE`):
 /// the system cuts what its banner does not hold, and the list shows
 /// more.

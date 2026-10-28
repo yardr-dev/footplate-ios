@@ -15,8 +15,10 @@ folders and no external dependencies. `Config/Debug.xcconfig`,
 
 Targets: `Footplate` (SwiftUI app, iOS 18+, iPhone and iPad),
 `FootplateTests` (unit tests, run by `.yardr/test` on the named iPhone
-simulator), and `FootplateUITests` (UI/instrumentation, run by hand,
-never by the gate). `FootplateTests/Tokens/` vendors the design tokens
+simulator), `FootplateUITests` (UI/instrumentation, run by hand,
+never by the gate), and `NotifyService` (the notification service
+extension that fills a closed phone's wakes in, over the shared
+core in `Push/` and its neighbours listed in the project). `FootplateTests/Tokens/` vendors the design tokens
 for the theme test. The iPad layout is a readable single column; its
 simulator run is by hand.
 
@@ -51,8 +53,18 @@ Under `Footplate/`:
   `UNUserNotificationCenter`, and the tap opening the app on that
   yard and there; `FootplateTests/Notify/` drives the rules and
   the bursts.
+- `Push/`: waking a closed phone — the content-free wake and its
+  link, the per-yard checkpoints and wake landings the app group
+  shares with the extension, the wake engine that fills a wake in
+  through `Notify`'s rules, and the registrar that keeps the
+  relay's rows through the edge; `FootplateTests/Push/` drives
+  them against the fake yard.
 - `Yard/`: the account and per-yard records in the Keychain, the QR
   read, and the pairer (sign-in, pairing, forgetting).
+
+`NotifyService/` holds the extension itself: a thin
+`UNNotificationServiceExtension` over the shared core, with its own
+`Info.plist` and entitlements beside it.
 
 `.yardr/` holds the
 flow, roles and simulator gate; `docs/design/` holds design decisions.

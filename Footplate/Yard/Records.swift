@@ -49,22 +49,87 @@ final class MemoryShelf: Shelf, @unchecked Sendable {
 }
 
 /// The Keychain as the secret shelf: `kSecClassGenericPassword`, one
-/// account value per record, `WhenUnlockedThisDeviceOnly` and never
-/// synchronised, so no token reaches iCloud Keychain, a backup or
-/// another device.
+/// account value per record, ThisDeviceOnly and never synchronised,
+/// so no token reaches iCloud Keychain, a backup or another device.
+/// With an access group (the live shelf, design 8787 section 4) the
+/// items stand in the group the notification service extension
+/// shares, at `AfterFirstUnlockThisDeviceOnly`, so it can fetch
+/// while the screen is locked after the first unlock; without one
+/// they stand as they always did, `WhenUnlockedThisDeviceOnly`. An
+/// item kept before the group is read where it lies and moved into
+/// the group at its next write, so an upgraded phone keeps its
+/// pairing.
 final class KeychainShelf: Shelf, @unchecked Sendable {
     static let service = "dev.yardr.footplate"
 
-    private func baseQuery(_ key: String) -> [String: Any] {
-        [
+    /// The group the items stand in, as the entitlement names it
+    /// without its App ID prefix; the prefix is the system's, so the
+    /// name it stands under is read back from a probe item (below)
+    /// rather than written here in a form one build may expand
+    /// otherwise.
+    private let accessGroup: String?
+    private let probeLock = NSLock()
+    private var probedGroup: String??
+
+    init(accessGroup: String? = nil) {
+        self.accessGroup = accessGroup
+    }
+
+    /// The access group as the system expanded it, or nil where
+    /// this shelf stands ungrouped. An item added with no group
+    /// lands in the first of the entitlement's groups, expanded:
+    /// its read-back names the group every grouped query must use.
+    private var group: String? {
+        guard let accessGroup else { return nil }
+        probeLock.lock()
+        defer { probeLock.unlock() }
+        if let probedGroup { return probedGroup }
+        let resolved = probeGroup() ?? accessGroup
+        probedGroup = resolved
+        return resolved
+    }
+
+    private func probeGroup() -> String? {
+        let probeKey = "access-group-probe"
+        var add = baseQuery(probeKey, grouped: false)
+        add[kSecValueData as String] = Data("x".utf8)
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        add[kSecAttrSynchronizable as String] = false
+        SecItemAdd(add as CFDictionary, nil)
+        var query = baseQuery(probeKey, grouped: false)
+        query[kSecReturnAttributes as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var item: CFTypeRef?
+        var found: String?
+        if SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+           let attributes = item as? [String: Any] {
+            found = attributes[kSecAttrAccessGroup as String] as? String
+        }
+        SecItemDelete(baseQuery(probeKey, grouped: false) as CFDictionary)
+        return found
+    }
+
+    private func baseQuery(_ key: String, grouped: Bool) -> [String: Any] {
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.service,
             kSecAttrAccount as String: key,
         ]
+        if grouped, let group {
+            query[kSecAttrAccessGroup as String] = group
+        }
+        return query
     }
 
     func get(_ key: String) -> String? {
-        var query = baseQuery(key)
+        if accessGroup != nil, let grouped = read(key, grouped: true) {
+            return grouped
+        }
+        return read(key, grouped: false)
+    }
+
+    private func read(_ key: String, grouped: Bool) -> String? {
+        var query = baseQuery(key, grouped: grouped)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var item: CFTypeRef?
@@ -74,12 +139,23 @@ final class KeychainShelf: Shelf, @unchecked Sendable {
     }
 
     func keys() -> Set<String> {
+        var all = accounts(grouped: false)
+        if accessGroup != nil {
+            all.formUnion(accounts(grouped: true))
+        }
+        return all
+    }
+
+    private func accounts(grouped: Bool) -> Set<String> {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.service,
             kSecReturnAttributes as String: true,
             kSecMatchLimit as String: kSecMatchLimitAll,
         ]
+        if grouped, let group {
+            query[kSecAttrAccessGroup as String] = group
+        }
         query[kSecAttrSynchronizable as String] = kSecAttrSynchronizableAny
         var items: CFTypeRef?
         guard SecItemCopyMatching(query as CFDictionary, &items) == errSecSuccess,
@@ -89,17 +165,26 @@ final class KeychainShelf: Shelf, @unchecked Sendable {
 
     func write(put: [String: String], remove: [String]) {
         for key in remove {
-            SecItemDelete(baseQuery(key) as CFDictionary)
+            SecItemDelete(baseQuery(key, grouped: true) as CFDictionary)
+            SecItemDelete(baseQuery(key, grouped: false) as CFDictionary)
         }
         for (key, value) in put {
             let data = Data(value.utf8)
-            var query = baseQuery(key)
+            if accessGroup != nil {
+                // Its ungrouped copy of before the group goes first:
+                // deleted after, it would take the grouped item with
+                // it where the group is the default one.
+                SecItemDelete(baseQuery(key, grouped: false) as CFDictionary)
+            }
+            var query = baseQuery(key, grouped: accessGroup != nil)
             query[kSecAttrSynchronizable as String] = false
             let update: [String: Any] = [kSecValueData as String: data]
             if SecItemUpdate(query as CFDictionary, update as CFDictionary) == errSecItemNotFound {
                 var add = query
                 add[kSecValueData as String] = data
-                add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+                add[kSecAttrAccessible as String] = accessGroup != nil
+                    ? kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+                    : kSecAttrAccessibleWhenUnlockedThisDeviceOnly
                 add[kSecAttrSynchronizable as String] = false
                 SecItemAdd(add as CFDictionary, nil)
             }
@@ -107,11 +192,17 @@ final class KeychainShelf: Shelf, @unchecked Sendable {
     }
 }
 
+/// The namespace of the records' plain-shelf keys, in whichever
+/// defaults they lie: the standard ones before the app group, and
+/// the group's suite since (below), so `Records.live` can carry the
+/// one set over to the other.
+let recordsDefaultsPrefix = "dev.yardr.footplate.records."
+
 /// `UserDefaults` as the plain shelf, its keys namespaced so the
 /// records' keys are the only ones this shelf names.
 final class UserDefaultsShelf: Shelf, @unchecked Sendable {
     private let defaults: UserDefaults
-    private let prefix = "dev.yardr.footplate.records."
+    private let prefix = recordsDefaultsPrefix
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -238,8 +329,24 @@ final class Records {
         self.kept = read()
     }
 
+    /// The records as the app and its extension keep them: the
+    /// secrets in the shared Keychain group (Push.swift), and the
+    /// plain shelf in the app group's suite, where the extension
+    /// reads the yards' names beside the checkpoints. What a phone
+    /// kept in the standard defaults before the group is carried
+    /// over once, where the suite holds none of it yet.
     static func live(origin: String) -> Records {
-        Records(secret: KeychainShelf(), plain: UserDefaultsShelf(), origin: origin)
+        let plain: any Shelf
+        if let suite = UserDefaults(suiteName: pushAppGroup) {
+            for (key, value) in UserDefaults.standard.dictionaryRepresentation()
+            where key.hasPrefix(recordsDefaultsPrefix) && suite.object(forKey: key) == nil {
+                suite.set(value, forKey: key)
+            }
+            plain = UserDefaultsShelf(defaults: suite)
+        } else {
+            plain = UserDefaultsShelf()
+        }
+        return Records(secret: KeychainShelf(accessGroup: pushKeychainGroup), plain: plain, origin: origin)
     }
 
     func observe(_ observer: @escaping @MainActor (Kept) -> Void) -> UUID {

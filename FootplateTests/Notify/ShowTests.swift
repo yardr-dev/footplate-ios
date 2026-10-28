@@ -110,6 +110,58 @@ final class ShowTests: XCTestCase {
         )
     }
 
+    func testAWakeTapOpensItsSavedRow() {
+        let records = records()
+        let nav = Nav()
+        nav.place = .lines
+        let targets = MemoryWakeTargetStore()
+        targets.save(wakeId: "w-1", .target(yard: "laptop", .conversation(with: "yardmaster")))
+        applyWakeTap(wakeId: "w-1", targets: targets, records: records, nav: nav)
+        XCTAssertEqual("laptop", records.kept.selected)
+        XCTAssertEqual(.crew, nav.place)
+        XCTAssertEqual([ConversationRoute(yard: "laptop", with: "yardmaster")], nav.crewPath)
+    }
+
+    func testAWakeTapOnARemovedYardOpensTheYardList() {
+        let records = records()
+        let nav = Nav()
+        nav.place = .lines
+        nav.crewPath = [ConversationRoute(yard: "laptop", with: "yardmaster")]
+        let targets = MemoryWakeTargetStore()
+        targets.save(wakeId: "w-1", .target(yard: "north", .conversation(with: "yardmaster")))
+        applyWakeTap(wakeId: "w-1", targets: targets, records: records, nav: nav)
+        // The yard list: no selection moved, no row pushed.
+        XCTAssertEqual("", records.kept.selected)
+        XCTAssertEqual(.crew, nav.place)
+        XCTAssertTrue(nav.yardListShown)
+        XCTAssertTrue(nav.crewPath.isEmpty)
+        XCTAssertTrue(nav.decidePath.isEmpty)
+        // And one with nothing saved at all.
+        applyWakeTap(wakeId: "w-unknown", targets: targets, records: records, nav: nav)
+        XCTAssertEqual(.crew, nav.place)
+        XCTAssertTrue(nav.yardListShown)
+        nav.yardListShown = false
+        nav.place = .lines
+        applyWakeLink(URL(string: "yardr-footplate://open/wake/")!, targets: targets, records: records, nav: nav)
+        XCTAssertEqual(.crew, nav.place)
+        XCTAssertTrue(nav.yardListShown)
+
+        nav.yardListShown = false
+        nav.place = .lines
+        applyWakeLink(URL(string: "https://example.org/open/wake/w-1")!, targets: targets, records: records, nav: nav)
+        XCTAssertEqual(.lines, nav.place)
+        XCTAssertFalse(nav.yardListShown)
+    }
+
+    func testAWakeTapWhereTheDoorClosedAsksForTheSignInAgain() {
+        let records = records()
+        let nav = Nav()
+        let targets = MemoryWakeTargetStore()
+        targets.save(wakeId: "w-1", .signInAgain)
+        applyWakeTap(wakeId: "w-1", targets: targets, records: records, nav: nav)
+        XCTAssertEqual(SignInRequest(again: true), nav.signIn)
+    }
+
     func testATapOnAYardPairedNoMoreLeavesTheAppWhereItOpens() {
         let records = records()
         let nav = Nav()

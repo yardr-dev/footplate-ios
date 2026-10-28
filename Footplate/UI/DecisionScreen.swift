@@ -25,7 +25,7 @@ struct DecisionsScreen: View {
     var body: some View {
         NavigationStack(path: $nav.decidePath) {
             list(model.state)
-                .yardPlace(inbox: inbox, title: "Decide")
+                .yardPlace(inbox: inbox, nav: nav, title: "Decide")
                 .navigationDestination(for: DecisionRoute.self) { route in
                     DecisionScreen(model: decision, yard: route.yard, bead: route.bead, ask: route.ask)
                 }

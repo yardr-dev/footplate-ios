@@ -1,15 +1,39 @@
 import SwiftUI
+import UIKit
 import UserNotifications
 
 @main
 struct FootplateApp: App {
+    @UIApplicationDelegateAdaptor(PushAppDelegate.self) private var pushDelegate
     @State private var services = AppServices()
 
     var body: some Scene {
         WindowGroup {
-            FootplateScene(services: services)
+            FootplateScene(services: services, pushDelegate: pushDelegate)
         }
     }
+}
+
+/// The system's push door, which SwiftUI has no shape for: the token
+/// the system gives this installation, handed to the registrar. A
+/// failure to register is the next launch's to try again; its error
+/// is named nowhere, as it can name the token's standing.
+final class PushAppDelegate: NSObject, UIApplicationDelegate {
+    var onToken: @MainActor (String) -> Void = { _ in }
+
+    func application(
+        _ application: UIApplication,
+        didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
+    ) {
+        let token = apnsTokenHex(deviceToken)
+        let onToken = self.onToken
+        Task { @MainActor in onToken(token) }
+    }
+
+    func application(
+        _ application: UIApplication,
+        didFailToRegisterForRemoteNotificationsWithError error: Error
+    ) {}
 }
 
 /// What the screens share, made once for the process, by hand: no
@@ -33,6 +57,12 @@ final class AppServices {
     let decisionModel: DecisionModel
     let lineModel: LineModel
     let notifier: Notifier
+    /// The relay's registrations and the stores the wakes share
+    /// with the extension: the checkpoints and the wake landings in
+    /// the app group, the push token beside the device tokens.
+    let registrar: PushRegistrar
+    let checkpoints: any CheckpointStore
+    let wakeTargets: any WakeTargetStore
     private let notifyDelegate: NotifyDelegate
 
     private(set) var followers: [String: Follower] = [:]
@@ -62,6 +92,17 @@ final class AppServices {
         }
         let pairer = Pairer(edge: edge, records: records)
         self.pairer = pairer
+        let checkpoints: any CheckpointStore = FileCheckpointStore.shared() ?? MemoryCheckpointStore()
+        self.checkpoints = checkpoints
+        self.wakeTargets = FileWakeTargetStore.shared() ?? MemoryWakeTargetStore()
+        let registrar = PushRegistrar(
+            edge: edge, records: records,
+            secret: KeychainShelf(accessGroup: pushKeychainGroup)
+        )
+        self.registrar = registrar
+        pairer.onForget = { [weak registrar] yard in
+            await registrar?.unregister(yard: yard)
+        }
         let nav = Nav()
         self.nav = nav
         self.pairModel = PairModel(pairer: pairer, records: records, nav: nav)
@@ -84,18 +125,27 @@ final class AppServices {
             mailroom: mailroom,
             records: records,
             allowed: { await canNotify() },
-            tell: { telling in await show(telling) }
+            tell: { telling in await show(telling) },
+            checkpoints: checkpoints
         )
-        let delegate = NotifyDelegate { [weak records, weak nav] yard, target in
-            guard let records, let nav else { return }
-            applyNotifyTap(yard: yard, target: target, records: records, nav: nav)
-        }
+        let wakeTargets = self.wakeTargets
+        let delegate = NotifyDelegate(
+            onTap: { [weak records, weak nav] yard, target in
+                guard let records, let nav else { return }
+                applyNotifyTap(yard: yard, target: target, records: records, nav: nav)
+            },
+            onWakeTap: { [weak records, weak nav] wakeId in
+                guard let records, let nav else { return }
+                applyWakeTap(wakeId: wakeId, targets: wakeTargets, records: records, nav: nav)
+            }
+        )
         self.notifyDelegate = delegate
         UNUserNotificationCenter.current().delegate = delegate
         self.inboxModel.followers = { [weak self] in (self?.followers ?? [:]).mapValues { $0 as any Followed } }
         self.lineModel.followers = { [weak self] in (self?.followers ?? [:]).mapValues { $0 as any Followed } }
         recordsObserver = records.observe { [weak self] _ in
             self?.refollow()
+            Task { @MainActor in await self?.registrar.yardsChanged() }
         }
         refollow()
     }
@@ -107,6 +157,28 @@ final class AppServices {
         }
         networkWatch = watch
         watch.start()
+        // The relay's rows are told again on every launch, and the
+        // system is asked for the token where it lets footplate
+        // notify already (design 8787 3.2).
+        Task { await registrar.launch() }
+        Task {
+            if await canNotify() {
+                UIApplication.shared.registerForRemoteNotifications()
+            }
+        }
+    }
+
+    /// A push token the system gave, on launch or rotated: the
+    /// registrar keeps it and registers every edge yard with it.
+    func pushTokenReceived(_ token: String) {
+        Task { await registrar.tokenReceived(token) }
+    }
+
+    /// A wake link opened: on the yard and row the phone saved
+    /// beside its id, or where that landing says. A link that names
+    /// no wake of ours opens the yard list, as it stands.
+    func openWake(_ url: URL) {
+        applyWakeLink(url, targets: wakeTargets, records: records, nav: nav)
     }
 
     func setForeground(_ foreground: Bool) {
@@ -179,6 +251,7 @@ final class AppServices {
 private struct FootplateScene: View {
     @Environment(\.scenePhase) private var scenePhase
     @Bindable var services: AppServices
+    let pushDelegate: PushAppDelegate
 
     var body: some View {
         Group {
@@ -207,7 +280,11 @@ private struct FootplateScene: View {
             }
         }
         .tint(ThemeColor.textAccent.color)
-        .onAppear(perform: services.start)
+        .onAppear {
+            pushDelegate.onToken = { [services] token in services.pushTokenReceived(token) }
+            services.start()
+        }
+        .onOpenURL { url in services.openWake(url) }
         .onChange(of: scenePhase, initial: true) { _, phase in
             services.setForeground(phase == .active)
             if phase == .active {

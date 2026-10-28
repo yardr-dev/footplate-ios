@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import UserNotifications
 
 // The three places as tabs (design 3.5): Crew, Decide with the waiting
@@ -51,7 +52,12 @@ struct TabsView: View {
             Button("Continue") {
                 records.noteNotificationsAsked()
                 Task {
-                    _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
+                    let granted = (try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])) ?? false
+                    if granted {
+                        // The system gives the push token from here:
+                        // the registrar registers it through the edge.
+                        UIApplication.shared.registerForRemoteNotifications()
+                    }
                     await notifier.refresh()
                 }
             }

@@ -81,6 +81,8 @@ final class Nav {
     /// Pair another yard, over the tabs. The Pair root, shown while no
     /// yard is paired, is the records', not this.
     var pairing: Bool
+    /// The paired-yards sheet, opened by a wake with no usable target.
+    var yardListShown: Bool
     /// Sign in, over the Pair screen or the tabs.
     var signIn: SignInRequest?
     /// What the person is told after a yard left on its own, over the
@@ -94,6 +96,7 @@ final class Nav {
         self.decidePath = []
         self.linesPath = []
         self.pairing = false
+        self.yardListShown = false
         self.signIn = nil
         self.notice = nil
     }
@@ -150,6 +153,14 @@ final class Nav {
     /// Sign in, over the Pair screen or the tabs.
     func showSignIn(again: Bool) {
         signIn = SignInRequest(again: again)
+    }
+
+    /// A wake without a usable target opens the paired-yards list,
+    /// clearing any stale row the person had open.
+    func showYardList() {
+        place = .crew
+        crewPath = []
+        yardListShown = true
     }
 
     /// The sign-in finished: its cover shuts.
