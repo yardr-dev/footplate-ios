@@ -275,10 +275,15 @@ struct ConversationScreen: View {
             if letter.mine { Spacer(minLength: 60) }
             VStack(alignment: letter.mine ? .trailing : .leading, spacing: 2) {
                 VStack(alignment: .leading, spacing: 4) {
-                    if !letter.text.isEmpty {
-                        Text(letter.text)
+                    if let copy = copyableMessage(letter) {
+                        linkedText(letter.text)
                             .themeType(.body)
                             .foregroundStyle(ThemeColor.textPrimary.color)
+                            .contextMenu {
+                                Button("Copy message") {
+                                    UIPasteboard.general.string = copy
+                                }
+                            }
                     }
                     ForEach(letter.images, id: \.hash) { image in
                         pictureRow(image, textAbove: !letter.text.isEmpty)

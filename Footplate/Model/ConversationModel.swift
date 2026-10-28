@@ -23,6 +23,13 @@ struct Shown: Equatable, Sendable {
     var images: [ShownImage] = []
 }
 
+/// The whole text a long-press on the letter offers to copy, or nil
+/// where the letter has none (an image alone). The copy is the
+/// letter's words entire, never one link of them.
+func copyableMessage(_ letter: Shown) -> String? {
+    letter.text.isEmpty ? nil : letter.text
+}
+
 /// One image of a letter: drawn under its text, opened full on tap.
 struct ShownImage: Equatable, Sendable {
     var hash: String
