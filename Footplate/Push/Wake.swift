@@ -22,9 +22,10 @@ final class WakeCompletionGate: @unchecked Sendable {
 // `wanted` run against the saved checkpoints and the screen shown,
 // and a `Burst` of each kind across the yards becomes the one
 // telling the running app would show. The engine is the whole of
-// it, driven by the extension for a closed phone and by the app for
-// a wake it takes itself; the fetch is the caller's, so a test
-// stands a yard in. What becomes of the wake is decided here alone:
+// it, driven by the extension for a closed phone, by the app for a
+// wake it takes itself, and by a tap whose wake saved no landing;
+// the fetch is the caller's, so a test stands a yard in. What
+// becomes of the wake is decided here alone:
 // show the telling, end it where the filtering entitlement stands,
 // or leave the generic line standing.
 
@@ -235,9 +236,21 @@ struct WakeEngine: Sendable {
     /// checkpoint is baselined by its fetch and tells of nothing.
     func handle(wakeId: String, kind: Kind, shown: ScreenShown) async -> WakeOutcome {
         // Fetched apart, then judged together: the lock is not held
-        // over the network, and the judging transaction re-reads the
-        // checkpoints before it compares, so a board the foreground
-        // moved meanwhile is the one arrivals are read against.
+        // over the network.
+        let (boards, refusals) = await fetchBoards()
+
+        // An extension that has run out of its system budget is
+        // cancelled before its generic fallback is delivered. Do not
+        // advance the shared checkpoint for work no one will see.
+        guard !Task.isCancelled else { return .generic(kind: kind) }
+
+        return judge(wakeId: wakeId, kind: kind, boards: boards, refusals: refusals, shown: shown)
+    }
+
+    /// Every yard's board read whole, with what each fetch refused
+    /// beside it: apart from the judging, so the lock is never held
+    /// over the network.
+    func fetchBoards() async -> ([String: Board], [String: FetchRefusal]) {
         var boards: [String: Board] = [:]
         var refusals: [String: FetchRefusal] = [:]
         await withTaskGroup(of: (String, Result<Board, Error>).self) { group in
@@ -257,12 +270,21 @@ struct WakeEngine: Sendable {
                 }
             }
         }
+        return (boards, refusals)
+    }
 
-        // An extension that has run out of its system budget is
-        // cancelled before its generic fallback is delivered. Do not
-        // advance the shared checkpoint for work no one will see.
-        guard !Task.isCancelled else { return .generic(kind: kind) }
-
+    /// The fetched boards judged for one wake of `kind`: the Notify
+    /// rules run against the freshest checkpoints in one transaction,
+    /// each fetched yard's checkpoint committed after the decision,
+    /// and the telling or the fallback saved beside the wake id for
+    /// its tap. The transaction re-reads the checkpoints before it
+    /// compares, so a board the foreground moved meanwhile is the one
+    /// arrivals are read against.
+    func judge(
+        wakeId: String, kind: Kind,
+        boards: [String: Board], refusals: [String: FetchRefusal],
+        shown: ScreenShown
+    ) -> WakeOutcome {
         let titles = Dictionary(uniqueKeysWithValues: yards.map { ($0.name, $0.title) })
         let news: [News] = checkpoints.transaction { access in
             var news: [News] = []
@@ -328,4 +350,70 @@ struct WakeEngine: Sendable {
         targets.save(wakeId: wakeId, doorClosed ? .signInAgain : .yardList)
         return .generic(kind: kind)
     }
+
+    /// Where a tap with no saved landing lands (design 8787 section
+    /// 6): the boards fetched again and judged for `kind` — a link
+    /// names none, so mail first and then decisions over the one
+    /// fetch, stopping at the first that shows — with the landing
+    /// saved beside the wake id for the tap to land on. The judging
+    /// is the wake's own: a yard with no checkpoint is baselined and
+    /// tells of nothing, and one kind's judging holds the other's
+    /// checkpoint state back, so what is not shown is still to tell.
+    func resolveTap(wakeId: String, kind: Kind?) async -> WakeLanding {
+        let (boards, refusals) = await fetchBoards()
+        let kinds: [Kind]
+        if let kind {
+            kinds = [kind]
+        } else {
+            kinds = [.mail, .decision]
+        }
+        for kind in kinds {
+            if case .show(let telling) = judge(wakeId: wakeId, kind: kind, boards: boards, refusals: refusals, shown: .elsewhere) {
+                return .target(yard: telling.yard, telling.target)
+            }
+        }
+        // Nothing showed: the judging saved where that lands beside
+        // the wake id already — the sign-in-again shape where every
+        // fetch found the door closed, else the yard list.
+        return targets.landing(wakeId: wakeId) ?? .yardList
+    }
+}
+
+/// The wake engine over the records' paired edge yards: each read
+/// whole as a `Board` through its relay-paired credentials, as the
+/// extension's fill and a tap's refetch both read them. A yard of
+/// its own is no wake's yard; a yard with no client answers the door
+/// closed — the session gone, or the device gone with it kept.
+@MainActor
+func wakeEngine(
+    edge: Edge,
+    records: Records,
+    checkpoints: any CheckpointStore,
+    targets: any WakeTargetStore,
+    canSuppress: Bool
+) -> WakeEngine {
+    let kept = records.kept
+    let session = kept.account?.session
+    var yards: [WakeYard] = []
+    var building: [String: YardClient] = [:]
+    for yard in kept.yards where yard.origin.isEmpty {
+        yards.append(WakeYard(name: yard.name, title: yard.title))
+        if let session,
+           let client = try? edge.yard(device: yard.token, session: session, name: yard.name) {
+            building[yard.name] = client
+        }
+    }
+    let clients = building
+    return WakeEngine(
+        yards: yards,
+        fetch: { name in
+            guard let client = clients[name] else {
+                throw session == nil ? ApiError.notSignedIn : ApiError.noDevice
+            }
+            return Board.of(try await client.load())
+        },
+        checkpoints: checkpoints,
+        targets: targets,
+        canSuppress: canSuppress
+    )
 }

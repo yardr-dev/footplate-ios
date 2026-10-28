@@ -121,33 +121,13 @@ final class NotificationService: UNNotificationServiceExtension {
         else {
             return .generic(kind: wake.kind)
         }
-        let (yards, clients, hasSession): ([WakeYard], [String: YardClient], Bool) = await MainActor.run {
-            let records = Records.live(origin: edge.origin)
-            let kept = records.kept
-            let session = kept.account?.session
-            var yards: [WakeYard] = []
-            var clients: [String: YardClient] = [:]
-            for yard in kept.yards where yard.origin.isEmpty {
-                yards.append(WakeYard(name: yard.name, title: yard.title))
-                if let session,
-                   let client = try? edge.yard(device: yard.token, session: session, name: yard.name) {
-                    clients[yard.name] = client
-                }
-            }
-            return (yards, clients, session != nil)
+        let engine = await MainActor.run {
+            wakeEngine(
+                edge: edge, records: Records.live(origin: edge.origin),
+                checkpoints: checkpoints, targets: targets,
+                canSuppress: filteringGranted()
+            )
         }
-        let engine = WakeEngine(
-            yards: yards,
-            fetch: { name in
-                guard let client = clients[name] else {
-                    throw hasSession ? ApiError.noDevice : ApiError.notSignedIn
-                }
-                return Board.of(try await client.load())
-            },
-            checkpoints: checkpoints,
-            targets: targets,
-            canSuppress: filteringGranted()
-        )
         return await engine.handle(wakeId: wake.id, kind: wake.kind, shown: .elsewhere)
     }
 }

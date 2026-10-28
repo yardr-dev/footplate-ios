@@ -134,9 +134,10 @@ final class AppServices {
                 guard let records, let nav else { return }
                 applyNotifyTap(yard: yard, target: target, records: records, nav: nav)
             },
-            onWakeTap: { [weak records, weak nav] wakeId in
+            onWakeTap: { [weak records, weak nav] wakeId, kind in
                 guard let records, let nav else { return }
-                applyWakeTap(wakeId: wakeId, targets: wakeTargets, records: records, nav: nav)
+                let engine = wakeEngine(edge: edge, records: records, checkpoints: checkpoints, targets: wakeTargets, canSuppress: false)
+                await applyWakeTap(wakeId: wakeId, kind: kind, engine: engine, records: records, nav: nav)
             }
         )
         self.notifyDelegate = delegate
@@ -175,10 +176,14 @@ final class AppServices {
     }
 
     /// A wake link opened: on the yard and row the phone saved
-    /// beside its id, or where that landing says. A link that names
-    /// no wake of ours opens the yard list, as it stands.
+    /// beside its id, or where that landing says, fetching again
+    /// where nothing was saved. A link that names no wake of ours
+    /// opens the yard list, as it stands.
     func openWake(_ url: URL) {
-        applyWakeLink(url, targets: wakeTargets, records: records, nav: nav)
+        let engine = wakeEngine(edge: edge, records: records, checkpoints: checkpoints, targets: wakeTargets, canSuppress: false)
+        Task {
+            await applyWakeLink(url, engine: engine, records: records, nav: nav)
+        }
     }
 
     func setForeground(_ foreground: Bool) {

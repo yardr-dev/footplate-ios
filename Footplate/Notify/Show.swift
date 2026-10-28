@@ -53,10 +53,19 @@ func applyNotifyTap(yard: String, target: Target, records: Records, nav: Nav) {
 
 /// A wake's tap: where the phone saved the wake landing — on its
 /// yard and row, on the sign-in-again shape where the door closed,
-/// or on the yard list where the yard is gone or nothing was saved.
+/// or on the yard list where the yard is gone. Where no landing was
+/// saved the boards are fetched again and judged for `kind` — nil
+/// where the tap names none, a link — and the tap lands where that
+/// resolves, the yard list where nothing does.
 @MainActor
-func applyWakeTap(wakeId: String, targets: any WakeTargetStore, records: Records, nav: Nav) {
-    switch resolveWake(targets.landing(wakeId: wakeId), yards: records.kept.yards.map(\.name)) {
+func applyWakeTap(wakeId: String, kind: Kind?, engine: WakeEngine, records: Records, nav: Nav) async {
+    let landing: WakeLanding
+    if let saved = engine.targets.landing(wakeId: wakeId) {
+        landing = saved
+    } else {
+        landing = await engine.resolveTap(wakeId: wakeId, kind: kind)
+    }
+    switch resolveWake(landing, yards: records.kept.yards.map(\.name)) {
     case .target(let yard, let target):
         applyNotifyTap(yard: yard, target: target, records: records, nav: nav)
     case .signInAgain:
@@ -66,17 +75,18 @@ func applyWakeTap(wakeId: String, targets: any WakeTargetStore, records: Records
     }
 }
 
-/// A custom wake URL is only a hint. A malformed one, or a missing
-/// local wake mapping, opens the paired-yards list without selecting
-/// a yard or fetching from an unpaired address.
+/// A custom wake URL is only a hint. A malformed one opens the
+/// paired-yards list without selecting a yard or fetching from an
+/// unpaired address; one that names a wake lands where its tap
+/// would, fetching again where nothing was saved.
 @MainActor
-func applyWakeLink(_ url: URL, targets: any WakeTargetStore, records: Records, nav: Nav) {
+func applyWakeLink(_ url: URL, engine: WakeEngine, records: Records, nav: Nav) async {
     guard url.scheme == wakeScheme else { return }
     guard let wakeId = wakeIdOf(url) else {
         nav.showYardList()
         return
     }
-    applyWakeTap(wakeId: wakeId, targets: targets, records: records, nav: nav)
+    await applyWakeTap(wakeId: wakeId, kind: nil, engine: engine, records: records, nav: nav)
 }
 
 /// Whether a delivered notification is the migrated yard's stale one:
@@ -130,12 +140,13 @@ private struct TapCompletion: @unchecked Sendable {
 final class NotifyDelegate: NSObject, UNUserNotificationCenterDelegate, @unchecked Sendable {
     private let onTap: @MainActor (String, Target) -> Void
     /// A tap on a wake the extension could not fill in: it carries
-    /// the wake id alone, and where it lands is the saved landing's.
-    private let onWakeTap: @MainActor (String) -> Void
+    /// the wake id and kind, and lands where the saved landing says,
+    /// fetching the boards again where none was saved.
+    private let onWakeTap: @MainActor (String, Kind) async -> Void
 
     init(
         onTap: @escaping @MainActor (String, Target) -> Void,
-        onWakeTap: @escaping @MainActor (String) -> Void = { _ in }
+        onWakeTap: @escaping @MainActor (String, Kind) async -> Void = { _, _ in }
     ) {
         self.onTap = onTap
         self.onWakeTap = onWakeTap
@@ -164,13 +175,15 @@ final class NotifyDelegate: NSObject, UNUserNotificationCenterDelegate, @uncheck
             return
         }
         // No row of ours: a wake's generic line, whose tap carries
-        // the wake id and lands where the phone saved it landing.
+        // the wake id and kind. The completion fires at once; where
+        // no landing was saved the tap fetches again, and lands when
+        // that resolves.
         if let wake = wakePayloadOf(response.notification.request.content.userInfo) {
             let tap = onWakeTap
             let done = TapCompletion(completionHandler)
             Task { @MainActor in
-                tap(wake.id)
                 done.call()
+                await tap(wake.id, wake.kind)
             }
             return
         }

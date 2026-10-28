@@ -303,4 +303,107 @@ final class WakeTests: XCTestCase {
         XCTAssertTrue(targetsText.contains("footplate-1"), targetsText)
         XCTAssertEqual(.target(yard: "laptop", .decision(bead: "footplate-1", ask: 2)), targets.landing(wakeId: "w-1"))
     }
+
+    func testATapWithNoSavedLandingResolvesToTheFirstStillNewItemAcrossYards() async {
+        let checkpoints = MemoryCheckpointStore()
+        let targets = MemoryWakeTargetStore()
+        save(checkpoints, yard: "laptop", board())
+        save(checkpoints, yard: "", board())
+        let yards = [WakeYard(name: "laptop", title: "laptop"), WakeYard(name: "", title: "south")]
+        let boards: [String: Board] = [
+            "laptop": board(letters: [letter(11, text: "First.")]),
+            "": board(letters: [letter(11, from: "signalman", text: "Second.")]),
+        ]
+        let engine = engine(yards: yards, boards: boards, checkpoints: checkpoints, targets: targets)
+        let landing = await engine.resolveTap(wakeId: "w-tap", kind: .mail)
+        XCTAssertEqual(.target(yard: "laptop", .conversation(with: "yardmaster")), landing)
+        // The landing stands beside the wake id, for the tap to land on.
+        XCTAssertEqual(landing, targets.landing(wakeId: "w-tap"))
+        // And the checkpoint moved once: the same boards read again
+        // tell of nothing.
+        let again = await engine.resolveTap(wakeId: "w-again", kind: .mail)
+        XCTAssertEqual(.yardList, again)
+    }
+
+    func testATapWithNothingStillNewResolvesToTheYardListAndADoorClosedToTheSignIn() async {
+        let checkpoints = MemoryCheckpointStore()
+        let targets = MemoryWakeTargetStore()
+        save(checkpoints, board(letters: [letter(11)]))
+        let same = await engine(boards: ["laptop": board(letters: [letter(11)])], checkpoints: checkpoints, targets: targets)
+            .resolveTap(wakeId: "w-tap", kind: .mail)
+        XCTAssertEqual(.yardList, same)
+        XCTAssertEqual(.yardList, targets.landing(wakeId: "w-tap"))
+
+        let refused = WakeEngine(
+            yards: [WakeYard(name: "laptop", title: "laptop")],
+            fetch: { _ in throw ApiError.notSignedIn },
+            checkpoints: MemoryCheckpointStore(), targets: targets, canSuppress: false
+        )
+        let closed = await refused.resolveTap(wakeId: "w-closed", kind: .decision)
+        // Its tap asks for the sign-in again, never the yard's rows.
+        XCTAssertEqual(.signInAgain, closed)
+        XCTAssertEqual(.signInAgain, targets.landing(wakeId: "w-closed"))
+    }
+
+    func testALinkTapJudgesMailBeforeDecisionsAndHoldsBackWhatItDoesNotShow() async {
+        let checkpoints = MemoryCheckpointStore()
+        let targets = MemoryWakeTargetStore()
+        save(checkpoints, board())
+        let ask = OpenAsk(bead: "footplate-1", ask: 2, question: "Move this yard's links?", asker: "yardmaster")
+        let after = board(letters: [letter(11)], open: [ask])
+        let both = engine(boards: ["laptop": after], checkpoints: checkpoints, targets: targets)
+        // A link names no kind: mail first, and the decision's
+        // checkpoint state held back for its own telling.
+        let landing = await both.resolveTap(wakeId: "w-link", kind: nil)
+        XCTAssertEqual(.target(yard: "laptop", .conversation(with: "yardmaster")), landing)
+        XCTAssertEqual([AskMark](), checkpoints.transaction { $0.checkpoint(yard: "laptop")?.open })
+        let decision = await both.resolveTap(wakeId: "w-link-decision", kind: .decision)
+        XCTAssertEqual(.target(yard: "laptop", .decision(bead: "footplate-1", ask: 2)), decision)
+
+        // And where mail holds nothing, the link's tap opens the decision.
+        let held = MemoryCheckpointStore()
+        save(held, board())
+        let decisionOnly = await engine(boards: ["laptop": board(open: [ask])], checkpoints: held, targets: targets)
+            .resolveTap(wakeId: "w-link-ask", kind: nil)
+        XCTAssertEqual(.target(yard: "laptop", .decision(bead: "footplate-1", ask: 2)), decisionOnly)
+    }
+
+    func testTheSharedBuilderReadsOnlyThePairedEdgeYards() async throws {
+        let fake = FakeYard()
+        let edge = try fake.edge()
+        let laptop = fake.token(yardName: "laptop")
+        let session = fake.session()
+        let engine = await MainActor.run {
+            let records = Records(secret: MemoryShelf(), plain: MemoryShelf(), origin: edge.origin)
+            records.keepSession(account: "jo@example.com", session: session)
+            records.keepYard(PairedYard(name: "laptop", yard: "laptop", user: "jo", device: "pixel", token: laptop))
+            records.keepYard(PairedYard(name: "south", yard: "south", user: "jo", device: "phone", token: "direct-token", origin: "https://yard.example.net"))
+            return wakeEngine(
+                edge: edge, records: records,
+                checkpoints: MemoryCheckpointStore(), targets: MemoryWakeTargetStore(), canSuppress: false
+            )
+        }
+        // A yard of its own is no wake's yard; no unpaired yard is
+        // ever called.
+        XCTAssertEqual([WakeYard(name: "laptop", title: "laptop")], engine.yards)
+        // And the board reads through its relay-paired credentials.
+        let board = try await engine.fetch("laptop")
+        XCTAssertEqual("jo", board.me)
+
+        // Without a session the yard answers the door closed.
+        let nosession = await MainActor.run {
+            let records = Records(secret: MemoryShelf(), plain: MemoryShelf(), origin: edge.origin)
+            records.keepYard(PairedYard(name: "laptop", yard: "laptop", user: "jo", device: "pixel", token: laptop))
+            return wakeEngine(
+                edge: edge, records: records,
+                checkpoints: MemoryCheckpointStore(), targets: MemoryWakeTargetStore(), canSuppress: false
+            )
+        }
+        do {
+            _ = try await nosession.fetch("laptop")
+            XCTFail("expected the door closed")
+        } catch {
+            XCTAssertEqual(ApiError.notSignedIn, error as? ApiError)
+        }
+    }
 }
