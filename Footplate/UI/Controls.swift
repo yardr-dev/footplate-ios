@@ -59,6 +59,18 @@ struct NoticeRow: View {
     }
 }
 
+/// A line of someone's words, the web addresses in it links that the
+/// system opens: underlined, in the accent, and so no colour alone says
+/// what is a link. The asker's words on a decision, a bead's on its card.
+func linkedText(_ line: String) -> Text {
+    var words = linked(line)
+    for run in words.runs where run.link != nil {
+        words[run.range].swiftUI.underlineStyle = .single
+        words[run.range].swiftUI.foregroundColor = ThemeColor.textAccent.color
+    }
+    return Text(words)
+}
+
 /// A label and its value, one row of what was read.
 struct FieldRow: View {
     let label: String

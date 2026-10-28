@@ -5,7 +5,8 @@ import UIKit
 // first, each a card — the only cards in the app — the weighty lines
 // first; then Decided, one line each. One decision is pushed onto the
 // place's stack: the weighty lines first, the question, its context
-// and the beads it is about, the options with what each costs and the
+// (one row, Show context, until it is tapped) and the beads it is
+// about, the options with what each costs and the
 // recommended one, the words, and Pick, Later and Decline. A run or
 // setup ask is approved with Approve behind the unlock. A card the edge
 // cannot approve shows what it proposes and the command that answers
@@ -162,10 +163,8 @@ struct DecisionScreen: View {
         linkedText(state.question)
             .themeType(.title)
             .foregroundStyle(ThemeColor.textPrimary.color)
-        ForEach(Array(state.context.enumerated()), id: \.offset) { _, line in
-            linkedText(line)
-                .themeType(.body)
-                .foregroundStyle(ThemeColor.textPrimary.color)
+        if !state.context.isEmpty {
+            contextRow(state)
         }
         ForEach(Array(state.details.enumerated()), id: \.offset) { _, detail in
             detailsRow(detail)
@@ -242,6 +241,40 @@ struct DecisionScreen: View {
                 }
                 .buttonStyle(FootplateButtonStyle(primary: false))
                 .disabled(state.sending || state.unlocking != nil)
+            }
+        }
+    }
+
+    /// The ask's context: shut, one row; tapped open, its lines in
+    /// place with their web addresses links, and the row shuts them
+    /// again. Everything else on the card stays where it is.
+    private func contextRow(_ state: DecisionState) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button {
+                model.toggleContext()
+            } label: {
+                HStack(spacing: 0) {
+                    Text(state.contextShown ? "Hide context" : "Show context")
+                        .themeType(.label)
+                        .foregroundStyle(ThemeColor.textPrimary.color)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Spacer(minLength: 8)
+                    Image(systemName: state.contextShown ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(ThemeColor.textSecondary.color)
+                }
+                .frame(minHeight: 48)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint(state.contextShown ? "Shuts the ask's context" : "Opens the ask's context")
+            .accessibilityIdentifier("context-toggle")
+            if state.contextShown {
+                ForEach(Array(state.context.enumerated()), id: \.offset) { _, line in
+                    linkedText(line)
+                        .themeType(.body)
+                        .foregroundStyle(ThemeColor.textPrimary.color)
+                }
             }
         }
     }
@@ -397,17 +430,5 @@ struct DecisionScreen: View {
             .textInputAutocapitalization(.never)
             .themeType(.body)
             .fieldBox()
-    }
-
-    /// A line of the asker's words, the web addresses in it links that
-    /// the system opens: underlined, in the accent, and so no colour
-    /// alone says what is a link.
-    private func linkedText(_ line: String) -> Text {
-        var words = linked(line)
-        for run in words.runs where run.link != nil {
-            words[run.range].swiftUI.underlineStyle = .single
-            words[run.range].swiftUI.foregroundColor = ThemeColor.textAccent.color
-        }
-        return Text(words)
     }
 }

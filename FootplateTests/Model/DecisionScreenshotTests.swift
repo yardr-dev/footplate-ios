@@ -5,10 +5,11 @@ import XCTest
 
 // The decision screens rendered in the simulator against
 // fake-followed state (design 3.5, the bead's screenshots): the
-// decisions list, a routine card, a routine card with a bead's details
-// expanded, a weighty card, a harness login's
-// code card with its sign-in link, and an API key's card. Hand-run for
-// the bead note; the gate runs it too, and it only asserts that each
+// decisions list, a routine card with its context shut and open, a
+// routine card with a bead's details expanded, a weighty card, a
+// harness login's code card with its sign-in link, and an API key's
+// card. Hand-run for the bead note; the gate runs it too, and it only
+// asserts that each
 // screen renders non-empty at phone size. PNGs land in
 // `DECISION_SHOTS_DIR`, or the temporary directory's `decision-shots`
 // where that names none.
@@ -60,6 +61,14 @@ final class DecisionScreenshotTests: XCTestCase {
             DecisionScreen(model: decision, yard: "", bead: "yd-links", ask: 3),
             scene: scene, to: dir.appendingPathComponent("routine.png")
         )
+        XCTAssertFalse(decision.state.contextShown)
+        decision.toggleContext()
+        XCTAssertTrue(decision.state.contextShown)
+        try await render(
+            DecisionScreen(model: decision, yard: "", bead: "yd-links", ask: 3),
+            scene: scene, to: dir.appendingPathComponent("context.png")
+        )
+        decision.toggleContext()
         await decision.toggleDetails("yd-train")
         XCTAssertTrue(decision.state.details.first?.expanded == true)
         try await render(

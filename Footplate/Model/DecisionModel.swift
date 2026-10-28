@@ -6,8 +6,9 @@ private func refusalWords(_ error: ApiError) -> String { words(error) }
 
 // One decision (design 3.5, after Android's model/DecisionModel.kt),
 // read with `Bead`: the weighty lines first, the question, its context
-// and the beads it is about, the options with what each costs and the
-// recommended one, the words, and Pick, Later and Decline. A pick that
+// (shut behind a toggle until it is tapped, and shut again for the next
+// ask) and the beads it is about, the options with what each costs and
+// the recommended one, the words, and Pick, Later and Decline. A pick that
 // passes the gate (3.4) goes with `weighed` only after the unlock was
 // passed, or the ask's number typed back where the phone has no screen
 // lock; a cancelled unlock sends nothing and keeps the choice. A card
@@ -59,6 +60,9 @@ struct DecisionState: Equatable, Sendable {
     var weighty: [String] = []
     var question: String = ""
     var context: [String] = []
+    /// The context lines are shown: shut when the card opens, until
+    /// the toggle is tapped.
+    var contextShown: Bool = false
     /// The beads it is about, one details row each.
     var details: [AboutDetail] = []
     var options: [Choice] = []
@@ -119,6 +123,9 @@ final class DecisionModel {
     private var declining: Bool = false
     private var declineWordsText: String = ""
     private var sending: Bool = false
+    /// The context toggle is open. Per ask and kept nowhere: shut again
+    /// whenever another ask opens.
+    private var contextShown: Bool = false
     /// The details rows open, the descriptions read and their errors,
     /// by the bead each row is about. A read description is kept while
     /// the card is open; a failed row's error is forgotten when the row
@@ -192,6 +199,7 @@ final class DecisionModel {
             weighty: weight.map(weightLine),
             question: ask.question,
             context: ask.context,
+            contextShown: contextShown,
             details: ask.about.map {
                 AboutDetail(
                     id: $0.id,
@@ -246,6 +254,7 @@ final class DecisionModel {
             declining = false
             declineWordsText = ""
             sending = false
+            contextShown = false
             expandedDetails = []
             detailBodies = [:]
             detailReads = [:]
@@ -295,6 +304,14 @@ final class DecisionModel {
 
     func declineWords(_ text: String) {
         declineWordsText = text
+    }
+
+    /// The context toggle tapped: the ask's context lines show where
+    /// they were shut and shut where they showed. Nothing else on the
+    /// card folds; the next ask opens shut.
+    func toggleContext() {
+        guard readAsk != nil else { return }
+        contextShown.toggle()
     }
 
     /// A details row tapped: shut where open, and where shut opened

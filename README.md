@@ -24,6 +24,11 @@ One secret crosses the edge: the one-time code a harness's sign-in page
 gives. Its decision card links the page and takes the code behind the
 unlock; API keys and every other secret are answered on the yard's machine.
 
+A bead opened from the lines place shows what the yard holds of it, its
+labels, description and notes, with its page in the web view one tap away
+for the rest. A decision's context stands shut behind a row, Show context,
+until it is tapped.
+
 Tracked in the yard as the `footplate-ios` depot. `.yardr/` holds its flow,
 roles and merge gate. Every change is reviewed twice before it lands:
 against its bead, then for security alone.

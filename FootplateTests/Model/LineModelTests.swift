@@ -8,7 +8,7 @@ import XCTest
 // read said and cleared, an unreadable depot in the yard's own words,
 // the place following a yard switch, the backlog opening and
 // shutting, a line pushed as its route map, and a bead pushed as its
-// card with its Ask and its web view.
+// card with its Ask, its details read with `Bead` and its web view.
 @MainActor
 final class LineModelTests: XCTestCase {
     private var home: FakeFollowed!
@@ -41,7 +41,8 @@ final class LineModelTests: XCTestCase {
         )
         model = LineModel(followers: { [home, laptop] in
             ["": home!, "laptop": laptop!]
-        }, records: records, pairer: pairer, nav: nav, conversation: conversation, origins: { _ in "https://edge.example" }, now: { now })
+        }, records: records, pairer: pairer, nav: nav, conversation: conversation, origins: { _ in "https://edge.example" },
+        now: { now }, zone: { TimeZone(secondsFromGMT: 0)! })
     }
 
     override func tearDown() {
@@ -488,13 +489,40 @@ final class LineModelTests: XCTestCase {
         model.open(yard: "")
         try await waitRead()
 
+        // The card stands on the board's facts while the bead is read
+        // for its details.
+        home.beads["yd-train"] = trainBead()
+        home.holdBeadReads("yd-train", count: 1)
         model.openBead("yd-train")
         let route = BeadRoute(yard: "", bead: "yd-train")
         XCTAssertEqual(nav.linesPath, [.bead(route)])
+        let reading = try XCTUnwrap(model.card(for: route))
+        XCTAssertEqual(reading.bead.title, "Release train")
+        XCTAssertTrue(reading.details.loading)
+        XCTAssertFalse(reading.details.read)
+        try await waitFor("the bead's read") { [home] in home?.pendingBeadReadCount("yd-train") == 1 }
+        home.releaseBeadRead("yd-train")
+        try await waitFor("the card's details") { [model] in model?.card(for: route)?.details.read == true }
         model.openBead("yd-train")
         XCTAssertEqual(nav.linesPath, [.bead(route)], "opening what is pushed pushes nothing more")
 
         let card = try XCTUnwrap(model.card(for: route))
+        // The bead's details as the yard answered: its labels and body,
+        // and its notes newest last whatever order they were served in
+        // (notes of one seq keep the order served), each with its author
+        // and when it was written.
+        XCTAssertFalse(card.details.loading)
+        XCTAssertNil(card.details.error)
+        XCTAssertEqual(card.details.labels, ["topic:trains", "kind:feat"])
+        XCTAssertEqual(card.details.body, "Run the train to https://yard.example/trains/9 and back.")
+        XCTAssertEqual(
+            card.details.notes,
+            [
+                CardNote(author: "mckean", at: "7 Oct", text: "first, written yesterday"),
+                CardNote(author: "yardmaster", at: "09:45", text: "second, written today"),
+                CardNote(author: "train-new", at: "09:46", text: "second again, of one seq"),
+            ]
+        )
         XCTAssertEqual(card.bead.id, "yd-train")
         XCTAssertEqual(card.bead.title, "Release train")
         XCTAssertEqual(card.line, "yard · default")
@@ -575,6 +603,76 @@ final class LineModelTests: XCTestCase {
         XCTAssertNil(unresolved)
         XCTAssertNotNil(model.webViewError)
         _ = fake.taken()
+    }
+
+    // A card stands whole on the board's facts whatever becomes of its
+    // bead's read: a refused read says so on the card and leaves Open in
+    // web view working, the next read clears it, a refusal after a read
+    // keeps what it gave, and the bead is read again with the board, on a
+    // pull and on an event that moves the line. A reply that comes after
+    // the place was left and came back lands nowhere.
+    func testACardsDetailsSayWhyTheyAreNotReadAndAreReadAgainWithTheBoard() async throws {
+        home.up(loaded())
+        home.board = richBoard()
+        model.open(yard: "")
+        try await waitRead()
+        let route = BeadRoute(yard: "", bead: "yd-train")
+
+        home.beadRefuse = .away
+        model.openBead("yd-train")
+        try await waitFor("the refused read") { [model] in model?.card(for: route)?.details.error != nil }
+        let refused = try XCTUnwrap(model.card(for: route))
+        XCTAssertEqual(refused.details.error, "Details not read: The yard is away: the edge cannot reach it.")
+        XCTAssertFalse(refused.details.read)
+        XCTAssertFalse(refused.details.loading)
+        XCTAssertEqual(refused.bead.title, "Release train")
+        XCTAssertEqual(refused.head, "yard · default · new for 41m · expected 11–25m")
+        let link = await model.webViewURL(for: route)
+        XCTAssertEqual(link?.absoluteString, "https://edge.example/beads/yd-train?yard=jo")
+        XCTAssertNil(model.webViewError)
+
+        // A pull reads the board and the bead again, and clears it.
+        home.beadRefuse = nil
+        home.beads["yd-train"] = trainBead()
+        await model.refresh()
+        let read = try XCTUnwrap(model.card(for: route)).details
+        XCTAssertNil(read.error)
+        XCTAssertEqual(read.notes.count, 3)
+
+        // A refusal after a read keeps what the read gave, and says why.
+        home.beadRefuse = .slow
+        await model.refresh()
+        var kept = try XCTUnwrap(model.card(for: route)).details
+        XCTAssertEqual(kept.error, "Details not read: The yard took too long to answer.")
+        kept.error = nil
+        XCTAssertEqual(kept, read)
+
+        // An event that moves the line reads the bead again: a note
+        // written meanwhile shows on the card.
+        home.beadRefuse = nil
+        var written = trainBead()
+        written.notes.append(BeadNote(seq: 7, kind: "note", author: "train-new", text: "the test passed", at: "2026-10-08T10:05:00Z"))
+        home.beads["yd-train"] = written
+        home.event(Event(seq: 160, kind: "noted", actor: "train-new", at: "2026-10-08T10:05:00Z", bead: "yd-train"))
+        try await waitFor("the new note") { [model] in model?.card(for: route)?.details.notes.count == 4 }
+        XCTAssertEqual(model.card(for: route)?.details.notes.last?.text, "the test passed")
+        XCTAssertNil(model.card(for: route)?.details.error)
+
+        // A reply that arrives after the place was left and came back
+        // is an old one: it lands nowhere.
+        home.holdBeadReads("yd-train", count: 1)
+        var newer = written
+        newer.notes.append(BeadNote(seq: 8, kind: "note", author: "yardmaster", text: "read after the place came back", at: "2026-10-08T10:06:00Z"))
+        home.beads["yd-train"] = newer
+        home.event(Event(seq: 161, kind: "noted", actor: "yardmaster", at: "2026-10-08T10:06:00Z", bead: "yd-train"))
+        try await waitFor("the held read") { [home] in home?.pendingBeadReadCount("yd-train") == 1 }
+        model.leave()
+        model.open(yard: "")
+        try await waitFor("the read after the place came back") { [model] in model?.card(for: route)?.details.notes.count == 5 }
+        home.beads["yd-train"] = trainBead()
+        home.releaseBeadRead("yd-train")
+        try await settle()
+        XCTAssertEqual(model.card(for: route)?.details.notes.count, 5)
     }
 
     func testAYardOfItsOwnServesItsCardsPagesItself() async throws {
@@ -982,6 +1080,22 @@ final class LineModelTests: XCTestCase {
                 ),
             ],
             unassigned: [FlowBead(bead: "yd-crm", title: "Read the CRM")]
+        )
+    }
+
+    /// What the fake yard answers for yd-train: its notes served out of
+    /// seq order, two of them of one seq.
+    private func trainBead() -> Bead {
+        Bead(
+            id: "yd-train", title: "Release train",
+            body: "Run the train to https://yard.example/trains/9 and back.",
+            stage: "new",
+            labels: ["topic:trains", "kind:feat"],
+            notes: [
+                BeadNote(seq: 5, kind: "note", author: "yardmaster", text: "second, written today", at: "2026-10-08T09:45:00Z"),
+                BeadNote(seq: 2, kind: "note", author: "mckean", text: "first, written yesterday", at: "2026-10-07T16:20:00Z"),
+                BeadNote(seq: 5, kind: "note", author: "train-new", text: "second again, of one seq", at: "2026-10-08T09:46:00Z"),
+            ]
         )
     }
 

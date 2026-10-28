@@ -2,10 +2,12 @@ import SwiftUI
 
 // One bead opened (design 3.5, after Android's BeadCardView): its title
 // and head, the strip of its line with the bead's stage marked, what is
-// happening now, and the two actions: ask the yardmaster about it, or
-// open it in the web view. Pushed onto the lines stack from a card's
-// bead id, a row or a station, with the system's back. A place to check
-// and nudge, not to edit. Pull to refresh reads the board again.
+// happening now, Ask yardmaster, the bead's details as the yard gave
+// them (its labels, description and notes, newest last), and the
+// bead's page in the web view for the rest. Pushed onto the lines stack
+// from a card's bead id, a row or a station, with the system's back. A
+// place to check and nudge, not to edit. Pull to refresh reads the
+// board and the bead again.
 struct BeadCardScreen: View {
     @Bindable var model: LineModel
     var route: BeadRoute
@@ -52,7 +54,9 @@ struct BeadCardScreen: View {
                 .accessibilityHidden(true)
         }
         now(card.bead)
-        actions(card)
+        ask(card)
+        details(card.details)
+        web()
         if let error = model.webViewError {
             Text(error)
                 .themeType(.body)
@@ -93,22 +97,6 @@ struct BeadCardScreen: View {
         }
     }
 
-    /// Ask yardmaster and Open in web view, side by side where they fit
-    /// and one above the other where they do not.
-    private func actions(_ card: BeadCard) -> some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 8) {
-                ask(card)
-                web()
-            }
-            VStack(spacing: 8) {
-                ask(card)
-                web()
-            }
-        }
-        .padding(.top, 16)
-    }
-
     /// The yardmaster's conversation, its draft started with the bead's
     /// id.
     private func ask(_ card: BeadCard) -> some View {
@@ -118,10 +106,96 @@ struct BeadCardScreen: View {
         .buttonStyle(FootplateButtonStyle(primary: true))
         .accessibilityHint("Writes to the yardmaster about this bead")
         .accessibilityIdentifier("bead-ask")
+        .padding(.top, 16)
     }
 
-    /// The bead's page at the yard's web view, in the phone's browser:
-    /// nothing comes back.
+    /// What the Bead call gave: the labels on one line, the description
+    /// and the notes, each with its author and time, newest last. The
+    /// board's facts above stand while the bead is read; a read that
+    /// failed says so here, under what an earlier read gave.
+    @ViewBuilder
+    private func details(_ details: CardDetails) -> some View {
+        if details.loading {
+            HStack(spacing: 8) {
+                ProgressView()
+                Text("Reading the details…")
+                    .themeType(.meta)
+                    .foregroundStyle(ThemeColor.textSecondary.color)
+            }
+            .padding(.top, 16)
+        }
+        if !details.labels.isEmpty {
+            Text(details.labels.joined(separator: " · "))
+                .themeType(.meta)
+                .foregroundStyle(ThemeColor.textSecondary.color)
+                .padding(.top, 16)
+                .accessibilityIdentifier("bead-labels")
+        }
+        if details.read {
+            Text("Description")
+                .themeType(.section)
+                .foregroundStyle(ThemeColor.textPrimary.color)
+                .accessibilityAddTraits(.isHeader)
+                .padding(.top, 16)
+            if details.body.isEmpty {
+                Text("No description.")
+                    .themeType(.body)
+                    .foregroundStyle(ThemeColor.textSecondary.color)
+                    .padding(.top, 8)
+            } else {
+                linkedText(details.body)
+                    .themeType(.body)
+                    .foregroundStyle(ThemeColor.textPrimary.color)
+                    .textSelection(.enabled)
+                    .padding(.top, 8)
+                    .accessibilityIdentifier("bead-body")
+            }
+        }
+        if !details.notes.isEmpty {
+            Text("Notes")
+                .themeType(.section)
+                .foregroundStyle(ThemeColor.textPrimary.color)
+                .accessibilityAddTraits(.isHeader)
+                .padding(.top, 16)
+            ForEach(Array(details.notes.enumerated()), id: \.offset) { _, note in
+                noteRow(note)
+            }
+        }
+        if let error = details.error {
+            Text(error)
+                .themeType(.body)
+                .foregroundStyle(ThemeColor.textError.color)
+                .padding(.top, 16)
+                .accessibilityIdentifier("bead-details-error")
+        }
+    }
+
+    /// One note: who wrote it and when, over its words, which are
+    /// selectable with their addresses links.
+    private func noteRow(_ note: CardNote) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 8) {
+                Text(note.author)
+                    .themeType(.label)
+                    .foregroundStyle(ThemeColor.textPrimary.color)
+                if !note.at.isEmpty {
+                    Text(note.at)
+                        .themeType(.meta)
+                        .foregroundStyle(ThemeColor.textSecondary.color)
+                }
+            }
+            linkedText(note.text)
+                .themeType(.body)
+                .foregroundStyle(ThemeColor.textPrimary.color)
+                .textSelection(.enabled)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, 12)
+    }
+
+    /// The bead's page at the yard's web view, in the phone's browser,
+    /// below the details: sessions, mail and the rest live there.
+    /// Nothing comes back.
     private func web() -> some View {
         Button("Open in web view") {
             Task {
@@ -132,5 +206,6 @@ struct BeadCardScreen: View {
         .disabled(model.resolvingWebView == route)
         .accessibilityHint("Opens the bead's page in the browser")
         .accessibilityIdentifier("bead-open-web")
+        .padding(.top, 24)
     }
 }

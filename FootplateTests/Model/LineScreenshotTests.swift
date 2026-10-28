@@ -5,10 +5,11 @@ import XCTest
 
 // The lines place rendered in the simulator against a fake-followed
 // board (design 3.5, the bead's screenshot): the overview unfiltered
-// and with one stat filtering it. Hand-run for the bead note; the
-// gate runs it too, and it only asserts that the screens render
-// non-empty at phone size. The PNGs land in `LINE_SHOTS_DIR`, or the
-// temporary directory's `line-shots` where that names none.
+// and with one stat filtering it, and a bead's card with its details,
+// while they are read and when the read is refused. Hand-run for the
+// bead note; the gate runs it too, and it only asserts that the screens
+// render non-empty at phone size. The PNGs land in `LINE_SHOTS_DIR`, or
+// the temporary directory's `line-shots` where that names none.
 @MainActor
 final class LineScreenshotTests: XCTestCase {
     func testLineScreenRenders() async throws {
@@ -45,8 +46,10 @@ final class LineScreenshotTests: XCTestCase {
         let conversation = ConversationModel(mailroom: mailroom, now: { now }, zone: { TimeZone(secondsFromGMT: 0)! })
         let line = LineModel(
             followers: { ["": home, "laptop": laptop] }, records: records, pairer: pairer, nav: nav,
-            conversation: conversation, origins: { _ in fake.origin }, now: { now }
+            conversation: conversation, origins: { _ in fake.origin }, now: { now },
+            zone: { TimeZone(secondsFromGMT: 0)! }
         )
+        home.beads["yd-train"] = trainBead()
         line.open(yard: "")
         let deadline = ContinuousClock.now + .seconds(10)
         while !line.state.read, ContinuousClock.now <= deadline {
@@ -66,7 +69,56 @@ final class LineScreenshotTests: XCTestCase {
         XCTAssertEqual(line.state.lines.map(\.title), ["yard · default"])
         XCTAssertEqual(line.state.lines[0].beads, ["yd-train"])
         try await render(LinesScreen(inbox: inbox, records: records, model: line, nav: nav), scene: scene, to: dir.appendingPathComponent("line-filtered.png"))
+        // A bead's card: the board's facts, then what the Bead call gave.
+        // The screens above left the place as they went; it is shown again.
+        line.filter(.all)
+        line.open(yard: "")
+        let route = BeadRoute(yard: "", bead: "yd-train")
+        line.openBead("yd-train")
+        let detailsDeadline = ContinuousClock.now + .seconds(10)
+        while line.card(for: route)?.details.read != true, ContinuousClock.now <= detailsDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let card = try XCTUnwrap(line.card(for: route))
+        XCTAssertTrue(card.details.read)
+        XCTAssertEqual(card.details.notes.map(\.author), ["mckean", "yardmaster", "train-new"])
+        try await render(NavigationStack { BeadCardScreen(model: line, route: route) }, scene: scene, to: dir.appendingPathComponent("bead-card.png"))
+        // The card of a bead still being read keeps the board's facts and
+        // says it is reading; one whose read is refused says so, whole.
+        let shed = BeadRoute(yard: "", bead: "yd-shed")
+        home.holdBeadReads("yd-shed", count: 1)
+        line.openBead("yd-shed")
+        while home.pendingBeadReadCount("yd-shed") == 0, ContinuousClock.now <= detailsDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(line.card(for: shed)?.details.loading, true)
+        try await render(NavigationStack { BeadCardScreen(model: line, route: shed) }, scene: scene, to: dir.appendingPathComponent("bead-card-reading.png"))
+        home.releaseBeadRead("yd-shed")
+        let seal = BeadRoute(yard: "", bead: "yd-seal")
+        home.beadRefuse = .away
+        line.openBead("yd-seal")
+        while line.card(for: seal)?.details.error == nil, ContinuousClock.now <= detailsDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(line.card(for: seal)?.details.error, "Details not read: The yard is away: the edge cannot reach it.")
+        try await render(NavigationStack { BeadCardScreen(model: line, route: seal) }, scene: scene, to: dir.appendingPathComponent("bead-card-refused.png"))
         line.leave()
+    }
+
+    /// What the fake yard answers for the train: labels, a body with a
+    /// link, and three notes.
+    private func trainBead() -> Bead {
+        Bead(
+            id: "yd-train", title: "Release train",
+            body: "The release train leaves nightly with what is green.\nSee https://example.com/train for the timetable.",
+            stage: "new",
+            labels: ["topic:trains", "kind:feat", "size:medium"],
+            notes: [
+                BeadNote(seq: 2, kind: "note", author: "mckean", text: "Keep the night run; the day run can wait.", at: "2026-10-07T16:20:00Z"),
+                BeadNote(seq: 5, kind: "note", author: "yardmaster", text: "Plan: read the timetable, then move the departure to 02:00.", at: "2026-10-08T09:45:00Z"),
+                BeadNote(seq: 6, kind: "note", author: "train-new", text: "Moved. test: sh .yardr/test @ a1b2c3d: pass, 226 ok, 0 failed", at: "2026-10-08T11:20:00Z"),
+            ]
+        )
     }
 
     /// The fake yard's board, as Canned serves it: two depots.
@@ -98,6 +150,9 @@ final class LineScreenshotTests: XCTestCase {
         try png.write(to: file)
         XCTAssertGreaterThan(png.count, 10000, "the rendered screen looks blank")
         window.isHidden = true
+        // The screen's onDisappear lands before the next step reads the
+        // model it left.
+        try await Task.sleep(for: .milliseconds(200))
     }
 
     private func loaded() -> Loaded {

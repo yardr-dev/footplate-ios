@@ -11,7 +11,8 @@ import XCTest
 // secret, and a refused answer shows the yard's sentence with the
 // per-type command;
 // Later and Decline move the card to Decided when the yard's `noted`
-// event comes, and not before.
+// event comes, and not before; the ask's context stands behind a
+// toggle, shut for every ask that opens.
 @MainActor
 final class DecisionModelTests: XCTestCase {
     private var fake: FakeYard!
@@ -535,6 +536,34 @@ final class DecisionModelTests: XCTestCase {
         let tokenDeclined = await waitFor("yd-token declined", state: { list.state }) { s in !s.open.contains { $0.bead == "yd-token" } }
         XCTAssertEqual(tokenDeclined.decided.first { $0.bead == "yd-token" }?.what, "declined")
         XCTAssertEqual(token.state.done, "declined")
+    }
+
+    func testTheContextStandsBehindAToggleAndEveryAskOpensItShut() async {
+        let card = await opened("yd-links", 3)
+        let shut = card.state
+        XCTAssertEqual(shut.context, ["The links file declares the new source; 64 links still point at the old one."])
+        XCTAssertFalse(shut.contextShown)
+
+        // Tapped, the context shows and nothing else on the card moves;
+        // tapped again, it shuts.
+        card.toggleContext()
+        var shown = card.state
+        XCTAssertTrue(shown.contextShown)
+        shown.contextShown = false
+        XCTAssertEqual(shown, shut)
+        card.toggleContext()
+        XCTAssertEqual(card.state, shut)
+
+        // The next ask opens shut, as the first did, and so does this
+        // one when it is opened again after it.
+        card.toggleContext()
+        card.open(yard: "laptop", bead: "yd-map", ask: 7)
+        let next = await waitFor("the next ask", state: { card.state }) { $0.read && $0.ask == 7 }
+        XCTAssertEqual(next.context, ["a delivery arrived from U024BE7LH in C1, who maps to nobody."])
+        XCTAssertFalse(next.contextShown)
+        card.open(yard: "laptop", bead: "yd-links", ask: 3)
+        let again = await waitFor("the first ask again", state: { card.state }) { $0.read && $0.ask == 3 }
+        XCTAssertFalse(again.contextShown)
     }
 
     func testADetailsRowExpandsToTheBeadsDescriptionAndPickStillWorks() async throws {

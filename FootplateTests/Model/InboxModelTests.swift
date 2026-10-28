@@ -819,6 +819,9 @@ final class FakeFollowed: Followed {
     /// and its answer refused.
     var answerRefuse: ApiError? = nil
     var refuse: ApiError? = nil
+    /// Refused to the whole-bead call alone, so a board can be read
+    /// while a card's details are not.
+    var beadRefuse: ApiError? = nil
     var holdNextCrewRead = false
     private var heldPageCalls: Set<Int> = []
     private var pendingPageCalls: [Int: CheckedContinuation<Page, Never>] = [:]
@@ -935,6 +938,7 @@ final class FakeFollowed: Followed {
     func bead(_ bead: String) async throws -> Bead {
         beadAsked.append(bead)
         if let refuse { throw refuse }
+        if let beadRefuse { throw beadRefuse }
         if heldBeadReads[bead, default: 0] > 0 {
             heldBeadReads[bead, default: 0] -= 1
             return await withCheckedContinuation { (continuation: CheckedContinuation<Bead, Never>) in

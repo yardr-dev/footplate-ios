@@ -37,8 +37,8 @@ Under `Footplate/`:
   `SignInModel`, `InboxModel`, `ConversationModel`, `DecisionsModel`,
   `DecisionModel`, `LineModel`), the inbox board (`Board`) and the
   boards' keeping (`Mailroom`). `LineModel` holds the Lines place: the
-  overview, a line's route map and a bead's card with its web view
-  link. The conversation's pictures (`Images` shrinks one for a letter,
+  overview, a line's route map and a bead's card with the bead's
+  details and its web view link. The conversation's pictures (`Images` shrinks one for a letter,
   `Pictures` keeps the ones shown, by hash) and `Links` (the web
   addresses in a card's words) stand beside them.
 - `UI/`: SwiftUI screens (Pair, Sign in, Crew, Decide, Decision,

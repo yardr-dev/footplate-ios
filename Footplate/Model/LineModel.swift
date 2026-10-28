@@ -9,8 +9,9 @@ import Foundation
 // A line tap pushes its route map: the whole line as stations from
 // top to bottom, whatever filter the overview holds. A bead tap, from
 // a card, a row or a station, pushes its card: the strip with its
-// stage marked, what is happening now, and two actions, Ask yardmaster
-// and Open in web view.
+// stage marked, what is happening now, Ask yardmaster, the bead's
+// details (its labels, body and notes, read with `Bead` when the card
+// opens and again with every read of the board), and Open in web view.
 
 /// One open bead on the line, as its row draws it.
 struct LineBead: Equatable, Sendable {
@@ -160,8 +161,34 @@ struct RouteMap: Equatable, Sendable {
     var stations: [Station]
 }
 
-/// One bead opened from the line: its card, from the board's row. A
-/// place to check and nudge, not to edit (Android's `BeadCard`).
+/// One note of a bead, as its card draws it.
+struct CardNote: Equatable, Sendable {
+    var author: String
+    /// When it was written, in the zone of the person reading
+    /// (`14:02` on the day it is, else `27 Oct`).
+    var at: String
+    var text: String
+}
+
+/// What the `Bead` call adds to a card: the bead's labels, its body
+/// and its notes, the newest last, as footplate's bead view has them.
+struct CardDetails: Equatable, Sendable {
+    /// The call has answered; what is below is the yard's.
+    var read: Bool = false
+    var labels: [String] = []
+    var body: String = ""
+    var notes: [CardNote] = []
+    /// Why the last read said something; the card stays whole, with
+    /// what an earlier read gave where there was one.
+    var error: String? = nil
+
+    /// Nothing read and nothing said yet: the card shows a loading line.
+    var loading: Bool { !read && error == nil }
+}
+
+/// One bead opened from the line: its card, from the board's row and,
+/// once it is read, the `Bead` call's details. A place to check and
+/// nudge, not to edit (Android's `BeadCard`).
 struct BeadCard: Equatable, Sendable {
     var bead: StationBead
     /// `yard · default`, `yard · Elsewhere`, or `No line`.
@@ -175,6 +202,8 @@ struct BeadCard: Equatable, Sendable {
     var head: String
     /// The yard's web view URL for the bead.
     var webView: String
+    /// The bead's labels, body and notes; the board has none of them.
+    var details: CardDetails = CardDetails()
 }
 
 struct LineState: Equatable, Sendable {
@@ -223,6 +252,12 @@ final class LineModel {
     private var lastLoaded: Loaded? = nil
     private var applied: Int64 = 0
     private var observed: (followed: any Followed, id: UUID)? = nil
+    /// What the `Bead` call last answered for each bead opened as a
+    /// card, and why its last read said something.
+    private var cardReads: [String: CardRead] = [:]
+    /// The read each card waits on: one that is not its latest lands
+    /// nowhere.
+    private var cardReading: [String: UUID] = [:]
     private(set) var webViewError: String? = nil
     private(set) var resolvingWebView: BeadRoute? = nil
 
@@ -238,6 +273,7 @@ final class LineModel {
     /// view serves a bead's page.
     private let origins: @MainActor (String) -> String
     private let now: @Sendable () -> Date
+    private let zone: @Sendable () -> TimeZone
     private var active = false
     private var generation = 0
     private var readGeneration = 0
@@ -250,7 +286,8 @@ final class LineModel {
         nav: Nav,
         conversation: ConversationModel,
         origins: @escaping @MainActor (String) -> String,
-        now: @escaping @Sendable () -> Date = { Date() }
+        now: @escaping @Sendable () -> Date = { Date() },
+        zone: @escaping @Sendable () -> TimeZone = { .current }
     ) {
         self.followers = followers
         self.records = records
@@ -259,6 +296,7 @@ final class LineModel {
         self.conversation = conversation
         self.origins = origins
         self.now = now
+        self.zone = zone
     }
 
     var state: LineState {
@@ -297,6 +335,8 @@ final class LineModel {
             selectedFilter = .all
             lastLoaded = nil
             applied = 0
+            cardReads = [:]
+            cardReading = [:]
             // A line pushed for the yard before is none of this one's.
             nav.closeLines { $0.yard != yard }
         }
@@ -352,16 +392,18 @@ final class LineModel {
     }
 
     /// A bead tapped, on a card, a row or a station: its card is pushed
-    /// onto the lines stack.
+    /// onto the lines stack, standing on the board's facts while the
+    /// bead is read for its details.
     func openBead(_ id: String) {
         guard let yard = openedYard else { return }
         webViewError = nil
         nav.openBead(yard: yard, bead: id)
+        Task { @MainActor in await readDetails(of: id) }
     }
 
     /// The pushed bead as its card, whatever filter the overview holds;
     /// nil where the board is not read, is another yard's, or holds no
-    /// such bead.
+    /// such bead. Its details are what the last read of the bead gave.
     func card(for route: BeadRoute) -> BeadCard? {
         guard let board, openedYard == route.yard else { return nil }
         let me = followers()[route.yard]?.state.loaded?.me.user ?? ""
@@ -369,11 +411,14 @@ final class LineModel {
         // address, with no yard named: the handle is the edge's own
         // yard's alone.
         let direct = isDirect(route.yard)
-        return beadCard(
+        var card = beadCard(
             board: board, me: me, now: now(), origin: origins(route.yard),
             yard: direct ? "" : route.yard,
             handle: direct ? "" : (records.kept.account?.handle ?? ""), id: route.bead
         )
+        let read = cardReads[route.bead]
+        card?.details = cardDetails(read?.bead, error: read?.error, now: now(), zone: zone())
+        return card
     }
 
     /// Whether the yard named `name` is a yard of its own, serving its
@@ -521,6 +566,13 @@ final class LineModel {
             nav.closeLines { route in
                 route.yard == yard && !holds(fresh, route)
             }
+            // The cards that stand read their beads again with the
+            // board, so a note written meanwhile shows on its card.
+            for route in nav.linesPath {
+                if case .bead(let bead) = route, bead.yard == yard {
+                    await readDetails(of: bead.bead)
+                }
+            }
         } catch is CancellationError {
             return
         } catch let error as ApiError {
@@ -532,6 +584,41 @@ final class LineModel {
         }
     }
 
+    /// Reads the bead whole for its card. What it answers lands while
+    /// this is the card's latest read and the yard is still the one
+    /// shown; a failure keeps what an earlier read gave and says why on
+    /// the card, which stays whole.
+    private func readDetails(of id: String) async {
+        guard let yard = openedYard, let followed = followers()[yard] else { return }
+        let gen = generation
+        let token = UUID()
+        cardReading[id] = token
+        defer {
+            if cardReading[id] == token {
+                cardReading.removeValue(forKey: id)
+            }
+        }
+        func landed() -> Bool {
+            guard active, openedYard == yard, generation == gen, cardReading[id] == token,
+                  let current = followers()[yard]
+            else { return false }
+            return (current as AnyObject) === (followed as AnyObject)
+        }
+        do {
+            let bead = try await followed.bead(id)
+            guard landed() else { return }
+            cardReads[id] = CardRead(bead: bead)
+        } catch is CancellationError {
+            return
+        } catch let error as ApiError {
+            guard landed() else { return }
+            cardReads[id, default: CardRead()].error = "Details not read: \(words(error))"
+        } catch {
+            guard landed() else { return }
+            cardReads[id, default: CardRead()].error = "Details not read: \(words(ApiError.down(why: "an unexpected error")))"
+        }
+    }
+
     /// An older request or the previous yard's late reply cannot replace
     /// the board a newer screen read is drawing.
     private func current(yard: String, followed: any Followed, gen: Int, read: Int) -> Bool {
@@ -540,6 +627,26 @@ final class LineModel {
         else { return false }
         return (current as AnyObject) === (followed as AnyObject)
     }
+}
+
+/// What the `Bead` call last answered for a card's bead, and why the
+/// last read said something.
+private struct CardRead {
+    var bead: Bead? = nil
+    var error: String? = nil
+}
+
+/// A card's details from the bead as the yard last answered it: its
+/// labels, its body and its notes, the newest last. The yard serves the
+/// notes oldest first; the order by seq stands where it serves them
+/// otherwise, and notes of one seq keep the order served. With no bead
+/// read yet there is nothing to show but why.
+func cardDetails(_ bead: Bead?, error: String?, now: Date, zone: TimeZone) -> CardDetails {
+    guard let bead else { return CardDetails(error: error) }
+    let notes = bead.notes.enumerated()
+        .sorted { ($0.element.seq, $0.offset) < ($1.element.seq, $1.offset) }
+        .map { CardNote(author: $0.element.author, at: stamp($0.element.at, now: now, zone: zone), text: $0.element.text) }
+    return CardDetails(read: true, labels: bead.labels, body: bead.body, notes: notes, error: error)
 }
 
 /// The yard serves stages in travel order; the backlog is the one row
