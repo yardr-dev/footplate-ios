@@ -7,8 +7,9 @@ import XCTest
 // a stat filtering it, the board drawn with its head words, a failed
 // read said and cleared, an unreadable depot in the yard's own words,
 // the place following a yard switch, the backlog opening and
-// shutting, a line pushed as its route map, and a bead pushed as its
-// card with its Ask, its details read with `Bead` and its web view.
+// shutting, a line pushed as its route map with its landings under
+// the landed station, and a bead pushed as its card with its Ask, its
+// details read with `Bead` and its web view.
 @MainActor
 final class LineModelTests: XCTestCase {
     private var home: FakeFollowed!
@@ -417,6 +418,93 @@ final class LineModelTests: XCTestCase {
         XCTAssertFalse(waitsForSeat(plain, in: room))
         XCTAssertFalse(waitsForSeat(plain, in: unrouted))
         XCTAssertFalse(waitsForSeat(plain, in: FlowStage(stage: "new", limit: 0, taken: 0)))
+    }
+
+    func testALineShowsItsLandingsUnderItsLandedStation() async throws {
+        home.up(loaded())
+        // The yard's line gains its landed station with two landings,
+        // newest first; the drafts line is served none.
+        var landed = board()
+        landed.depots[0].flows[0].stages.append(FlowStage(stage: "merged", terminal: true))
+        landed.depots[0].flows[0].landings = [
+            FlowLanding(bead: "yd-points", title: "Oil the points", landedAt: "2026-10-08T09:30:00Z"),
+            FlowLanding(bead: "yd-ballast", title: "Lay the ballast", landedAt: "2026-10-07T12:00:00Z"),
+        ]
+        home.board = landed
+        model.open(yard: "")
+        try await waitRead()
+
+        let map = try XCTUnwrap(model.routeMap(for: LineRoute(yard: "", depot: "yard", flow: "default")))
+        XCTAssertEqual(map.stations.map(\.name), ["backlog", "new", "review", "decide", "merged"])
+        let merged = try XCTUnwrap(map.stations.last)
+        XCTAssertEqual(merged.landings.map(\.id), ["yd-points", "yd-ballast"])
+        XCTAssertEqual(merged.landings.map(\.title), ["Oil the points", "Lay the ballast"])
+        XCTAssertEqual(merged.landings.map(\.ago), ["41m ago", "22h ago"])
+        // No other station carries them, and a flow served none shows
+        // no section.
+        XCTAssertTrue(map.stations.dropLast().allSatisfy { $0.landings.isEmpty })
+        let drafts = try XCTUnwrap(model.routeMap(for: LineRoute(yard: "", depot: "drafts", flow: "default")))
+        XCTAssertTrue(drafts.stations.allSatisfy { $0.landings.isEmpty })
+
+        // A tap opens the Bead view for the landed id: the card stands
+        // at the landed station, and its details come from the Bead call.
+        home.beads["yd-points"] = Bead(
+            id: "yd-points", title: "Oil the points",
+            body: "The points are oiled.",
+            stage: "merged",
+            labels: ["kind:fix"],
+            notes: [BeadNote(seq: 1, kind: "note", author: "mckean", text: "Oiled.", at: "2026-10-08T09:45:00Z")]
+        )
+        model.openBead("yd-points")
+        let route = BeadRoute(yard: "", bead: "yd-points")
+        XCTAssertEqual(nav.linesPath, [.bead(route)])
+        try await waitFor("the landed card's details") { [model] in model?.card(for: route)?.details.read == true }
+        let card = try XCTUnwrap(model.card(for: route))
+        XCTAssertEqual(card.bead.id, "yd-points")
+        XCTAssertEqual(card.bead.title, "Oil the points")
+        XCTAssertEqual(card.line, "yard · default")
+        XCTAssertEqual(card.stage, "merged")
+        XCTAssertEqual(
+            card.stages,
+            [
+                StripStage(name: "backlog", state: .none, human: false),
+                StripStage(name: "new", state: .moving, human: false),
+                StripStage(name: "review", state: .yourTurn, human: false),
+                StripStage(name: "decide", state: .none, human: true),
+                StripStage(name: "merged", state: .none, human: false),
+            ]
+        )
+        XCTAssertEqual(card.head, "yard · default · merged")
+        XCTAssertEqual(card.webView, "https://edge.example/beads/yd-points?yard=jo")
+        XCTAssertEqual(card.details.labels, ["kind:fix"])
+        XCTAssertEqual(card.details.body, "The points are oiled.")
+        XCTAssertEqual(card.details.notes, [CardNote(author: "mckean", at: "09:45", text: "Oiled.")])
+        // The landed card stays while the board still holds the landing.
+        await model.refresh()
+        XCTAssertEqual(nav.linesPath, [.bead(route)])
+        XCTAssertEqual(model.card(for: route)?.bead.id, "yd-points")
+
+        // How long ago counts minutes, hours and days, and says just now
+        // under a minute; no clock says nothing.
+        let now = parseInstant("2026-10-08T10:11:00Z")!
+        XCTAssertEqual(landedAgo(landedAt: "2026-10-08T09:30:00Z", now: now), "41m ago")
+        XCTAssertEqual(landedAgo(landedAt: "2026-10-08T10:10:30Z", now: now), "just now")
+        XCTAssertEqual(landedAgo(landedAt: "2026-10-08T09:11:00Z", now: now), "1h ago")
+        XCTAssertEqual(landedAgo(landedAt: "2026-10-07T10:11:00Z", now: now), "1d ago")
+        XCTAssertEqual(landedAgo(landedAt: "", now: now), "")
+        XCTAssertEqual(landedAgo(landedAt: "not a time", now: now), "")
+
+        // The wire field decodes, and its absence reads as none.
+        let served = try JSONDecoder().decode(
+            DepotFlow.self,
+            from: Data(#"{"name": "default", "stages": [], "landings": [{"bead": "yd-points", "title": "Oil the points", "landed_at": "2026-10-08T09:30:00Z"}]}"#.utf8)
+        )
+        XCTAssertEqual(
+            served.landings,
+            [FlowLanding(bead: "yd-points", title: "Oil the points", landedAt: "2026-10-08T09:30:00Z")]
+        )
+        let unserved = try JSONDecoder().decode(DepotFlow.self, from: Data(#"{"name": "default", "stages": []}"#.utf8))
+        XCTAssertEqual(unserved.landings, [])
     }
 
     func testThePushedLineAndCardLeaveWithTheirYardAndTheirBoard() async throws {

@@ -445,6 +445,17 @@ struct DepotFlow: Equatable, Sendable {
     var source: String = ""
     /// The flow's stages in travel order.
     var stages: [FlowStage] = []
+    /// The beads that entered merged in the trailing 24 hours, newest
+    /// first, at most 30: what landed under its landed station.
+    var landings: [FlowLanding] = []
+}
+
+/// One bead landed in the trailing 24 hours, as a flow serves it.
+struct FlowLanding: Equatable, Sendable {
+    var bead: String
+    var title: String = ""
+    /// When the bead entered merged, as an RFC 3339 time.
+    var landedAt: String = ""
 }
 
 struct FlowStage: Equatable, Sendable {
@@ -911,13 +922,27 @@ extension FlowDepot: Codable {
 }
 
 extension DepotFlow: Codable {
-    enum CodingKeys: String, CodingKey { case name, type, source, stages }
+    enum CodingKeys: String, CodingKey { case name, type, source, stages, landings }
     init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         name = box.string(.name)
         type = box.string(.type)
         source = box.string(.source)
         stages = box.list(.stages, of: FlowStage.self)
+        landings = box.list(.landings, of: FlowLanding.self)
+    }
+}
+
+extension FlowLanding: Codable {
+    enum CodingKeys: String, CodingKey {
+        case bead, title
+        case landedAt = "landed_at"
+    }
+    init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        bead = box.string(.bead)
+        title = box.string(.title)
+        landedAt = box.string(.landedAt)
     }
 }
 

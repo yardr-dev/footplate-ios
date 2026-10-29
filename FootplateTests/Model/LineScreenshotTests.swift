@@ -5,8 +5,9 @@ import XCTest
 
 // The lines place rendered in the simulator against a fake-followed
 // board (design 3.5, the bead's screenshot): the overview unfiltered
-// and with one stat filtering it, and a bead's card with its details,
-// while they are read and when the read is refused. Hand-run for the
+// and with one stat filtering it, a bead's card with its details,
+// while they are read and when the read is refused, and a route map
+// with its landings under the landed station. Hand-run for the
 // bead note; the gate runs it too, and it only asserts that the screens
 // render non-empty at phone size. The PNGs land in `LINE_SHOTS_DIR`, or
 // the temporary directory's `line-shots` where that names none.
@@ -102,6 +103,22 @@ final class LineScreenshotTests: XCTestCase {
         }
         XCTAssertEqual(line.card(for: seal)?.details.error, "Details not read: The yard is away: the edge cannot reach it.")
         try await render(NavigationStack { BeadCardScreen(model: line, route: seal) }, scene: scene, to: dir.appendingPathComponent("bead-card-refused.png"))
+        // A route map with its landings under the landed station. The
+        // canned drafts line already ends in one; it is served two
+        // landings here, newest first.
+        var landed = try cannedBoard()
+        landed.depots[1].flows[0].landings = [
+            FlowLanding(bead: "yd-points", title: "Oil the points", landedAt: "2026-10-08T11:41:00Z"),
+            FlowLanding(bead: "yd-ballast", title: "Lay the ballast", landedAt: "2026-10-08T09:30:00Z"),
+        ]
+        home.board = landed
+        await line.refresh()
+        let landedRoute = LineRoute(yard: "", depot: "drafts", flow: "default")
+        let landedMap = try XCTUnwrap(line.routeMap(for: landedRoute))
+        XCTAssertEqual(landedMap.stations.map(\.name), ["new", "shipped"])
+        XCTAssertEqual(landedMap.stations[1].landings.map(\.ago), ["19m ago", "2h ago"])
+        line.openLine(depot: "drafts", flow: "default")
+        try await render(NavigationStack { RouteMapScreen(model: line, route: landedRoute) }, scene: scene, to: dir.appendingPathComponent("route-map-landings.png"))
         line.leave()
     }
 

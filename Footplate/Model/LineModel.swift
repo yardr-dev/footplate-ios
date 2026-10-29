@@ -7,8 +7,9 @@ import Foundation
 // opens, read again on pull-to-refresh and on every stream event
 // that moves it, the way footplate reads Flows again; no polling.
 // A line tap pushes its route map: the whole line as stations from
-// top to bottom, whatever filter the overview holds. A bead tap, from
-// a card, a row or a station, pushes its card: the strip with its
+// top to bottom, whatever filter the overview holds, with the landings
+// of the last 24 hours under its landed station. A bead tap, from a
+// card, a row, a station or a landing, pushes its card: the strip with its
 // stage marked, what is happening now, Ask yardmaster, the bead's
 // details (its labels, body and notes, read with `Bead` when the card
 // opens and again with every read of the board), and Open in web view.
@@ -131,6 +132,16 @@ struct StationBead: Equatable, Sendable {
     var waitsSeat: Bool = false
 }
 
+/// One bead landed in the trailing 24 hours, as its row under the
+/// landed station draws it.
+struct LandedBead: Equatable, Sendable {
+    var id: String
+    var title: String
+    /// How long ago it landed (`41m ago`), empty where the yard serves
+    /// no clock for it.
+    var ago: String = ""
+}
+
 /// One station of the route map, from top to bottom.
 struct Station: Equatable, Sendable {
     var name: String
@@ -139,6 +150,8 @@ struct Station: Equatable, Sendable {
     var state: StageState
     var human: Bool
     var beads: [StationBead]
+    /// The flow's landings, on the landed (terminal) station alone.
+    var landings: [LandedBead] = []
     /// The backlog: collapsed by default, its count word in place of
     /// its beads.
     var backlog: Bool = false
@@ -767,6 +780,17 @@ func stageStateOf(_ stage: FlowStage) -> StageState {
     }
 }
 
+/// How long ago the bead landed (`41m ago`), from the clock the
+/// yard serves; empty where it has none.
+func landedAgo(landedAt: String, now: Date) -> String {
+    guard !landedAt.isEmpty, let then = parseInstant(landedAt) else { return "" }
+    let minutes = Int(now.timeIntervalSince(then) / 60)
+    if minutes < 1 { return "just now" }
+    if minutes < 60 { return "\(minutes)m ago" }
+    if minutes < 60 * 24 { return "\(minutes / 60)h ago" }
+    return "\(minutes / (60 * 24))d ago"
+}
+
 /// How long the bead has stood in its stage (`41m`), from the clock
 /// the yard serves; empty where it has none.
 func stayWords(enteredAt: String, now: Date) -> String {
@@ -857,32 +881,33 @@ private func backlogFirst(_ stages: [FlowStage]) -> [FlowStage] {
     stages.filter { $0.stage == backlogStage } + stages.filter { $0.stage != backlogStage }
 }
 
-/// The stages of a depot's flow; nil where the depot or the flow is none.
-private func flowStages(_ board: Flows, depot: String, flow: String) -> [FlowStage]? {
-    board.depots.first { $0.name == depot }?.flows.first { $0.name == flow }?.stages
+/// One depot's flow; nil where the depot or the flow is none.
+private func flowNamed(_ board: Flows, depot: String, flow: String) -> DepotFlow? {
+    board.depots.first { $0.name == depot }?.flows.first { $0.name == flow }
 }
 
 /// Whether the board still holds what a pushed route shows: the flow of
-/// a line, the bead of a card.
+/// a line, the bead of a card, open or landed.
 private func holds(_ board: Flows, _ route: LinesRoute) -> Bool {
     switch route {
     case .line(let line):
-        return flowStages(board, depot: line.depot, flow: line.flow) != nil
+        return flowNamed(board, depot: line.depot, flow: line.flow) != nil
     case .bead(let bead):
         return board.unassigned.contains { $0.bead == bead.bead }
             || board.depots.contains { depot in
                 depot.elsewhere.contains { $0.bead == bead.bead }
                     || depot.flows.contains { flow in
                         flow.stages.contains { stage in stage.beads.contains { $0.bead == bead.bead } }
+                            || flow.landings.contains { $0.bead == bead.bead }
                     }
             }
     }
 }
 
 /// One line as its route map: every stage a station from top to
-/// bottom, the backlog first and the landed stage last. Nil where the
-/// depot or the flow is none. The whole line, whatever filter the
-/// overview holds.
+/// bottom, the backlog first and the landed stage last, the flow's
+/// landings under the landed station. Nil where the depot or the flow
+/// is none. The whole line, whatever filter the overview holds.
 func lineRoute(
     board: Flows,
     me: String,
@@ -891,8 +916,8 @@ func lineRoute(
     now: Date,
     expanded: Set<BacklogKey>
 ) -> RouteMap? {
-    guard let stages = flowStages(board, depot: depot, flow: flow) else { return nil }
-    let ordered = backlogFirst(stages)
+    guard let served = flowNamed(board, depot: depot, flow: flow) else { return nil }
+    let ordered = backlogFirst(served.stages)
     let travelling = ordered.filter { $0.stage != backlogStage }.reduce(0) { $0 + $1.beads.count }
     return RouteMap(
         depot: depot,
@@ -908,12 +933,18 @@ func lineRoute(
                 beads: stage.beads.map {
                     stationBead($0, me: me, now: now, waitsSeat: waitsForSeat($0, in: stage))
                 },
+                landings: stage.terminal ? served.landings.map { landedBead($0, now: now) } : [],
                 backlog: stage.stage == backlogStage,
                 open: expanded.contains(BacklogKey(depot: depot, flow: flow, stage: stage.stage)),
                 waits: stage.beads.filter { waitsOnYou(remark: $0.remark, me: me) }.count
             )
         }
     )
+}
+
+/// One landing as its row, the order served (newest first) kept.
+private func landedBead(_ landing: FlowLanding, now: Date) -> LandedBead {
+    LandedBead(id: landing.bead, title: landing.title, ago: landedAgo(landedAt: landing.landedAt, now: now))
 }
 
 private func stationBead(_ bead: FlowBead, me: String, now: Date, waitsSeat: Bool) -> StationBead {
@@ -932,8 +963,9 @@ private func stationBead(_ bead: FlowBead, me: String, now: Date, waitsSeat: Boo
 }
 
 /// One bead's card from the board: on its line with the strip, in a
-/// depot's Elsewhere, or with no line. Nil where the board holds no
-/// bead of `id`. The whole card, whatever filter the overview holds.
+/// depot's Elsewhere, with no line, or landed under its line's landed
+/// station. Nil where the board holds no bead of `id`. The whole
+/// card, whatever filter the overview holds.
 func beadCard(
     board: Flows,
     me: String,
@@ -975,6 +1007,26 @@ func beadCard(
             bead: stationBead(bead, me: me, now: now, waitsSeat: false),
             line: "No line", stage: "", stages: [], head: "No line", webView: webView
         )
+    }
+    // A landed bead stands at the landed station: the strip with it
+    // marked, and the head naming it.
+    for depot in board.depots {
+        for flow in depot.flows {
+            guard let landing = flow.landings.first(where: { $0.bead == id }) else { continue }
+            let shown = StationBead(id: landing.bead, title: landing.title)
+            let line = "\(depot.name) · \(flow.name)"
+            let terminal = flow.stages.first { $0.terminal }?.stage ?? ""
+            return BeadCard(
+                bead: shown,
+                line: line,
+                stage: terminal,
+                stages: backlogFirst(flow.stages).map {
+                    StripStage(name: $0.stage, state: stageStateOf($0), human: $0.human)
+                },
+                head: terminal.isEmpty ? line : cardHead(line: line, stage: terminal, bead: shown),
+                webView: webView
+            )
+        }
     }
     return nil
 }

@@ -3,10 +3,11 @@ import SwiftUI
 // One line opened (design 3.5, after Android's RouteMap): its stations
 // from top to bottom on a rail, the track under each coloured by its
 // state and dashed where people handle it, the bead cards hanging at
-// theirs, and the backlog folded to a count until it is tapped open.
+// theirs, the landings of the last 24 hours under the landed station,
+// and the backlog folded to a count until it is tapped open.
 // Pushed onto the lines stack, with the system's back. Read-only: a
-// bead card pushes the bead's card. Pull to refresh reads the board
-// again.
+// bead card or a landing pushes the bead's card. Pull to refresh reads
+// the board again.
 struct RouteMapScreen: View {
     @Bindable var model: LineModel
     var route: LineRoute
@@ -63,6 +64,9 @@ private struct StationView: View {
                 ForEach(station.beads, id: \.id) { bead in
                     StationBeadCard(bead: bead) { openBead(bead.id) }
                 }
+                if !station.landings.isEmpty {
+                    landings
+                }
             }
         }
         .padding(.leading, 24)
@@ -114,6 +118,21 @@ private struct StationView: View {
         }
         .padding(.vertical, 4)
         .contentShape(Rectangle())
+    }
+
+    /// The flow's landings under its landed station: each with its
+    /// title and how long ago it landed, a tap pushing its card. Nothing
+    /// where none landed, not an empty heading.
+    private var landings: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Landed in the last 24 hours")
+                .themeType(.label)
+                .foregroundStyle(ThemeColor.textPrimary.color)
+                .padding(.top, 12)
+            ForEach(station.landings, id: \.id) { landing in
+                LandingCard(landing: landing) { openBead(landing.id) }
+            }
+        }
     }
 
     /// A backlog shut: its name, its count, who waits in it, and the
@@ -254,5 +273,49 @@ private struct StationBeadCard: View {
         .padding(.top, 8)
         .accessibilityHint("Opens the bead's card")
         .accessibilityIdentifier("bead/\(bead.id)")
+    }
+}
+
+/// One landed bead under the landed station: its id and title, and how
+/// long ago it landed where the yard served a clock; a tap pushes its
+/// card. The card reads as one element.
+private struct LandingCard: View {
+    var landing: LandedBead
+    var open: () -> Void
+
+    var body: some View {
+        Button(action: open) {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .lastTextBaseline, spacing: 8) {
+                    Text(landing.id)
+                        .themeType(.code)
+                        .foregroundStyle(ThemeColor.textPrimary.color)
+                        .lineLimit(1)
+                        .layoutPriority(1)
+                    if !landing.title.isEmpty {
+                        Text(landing.title)
+                            .themeType(.label)
+                            .foregroundStyle(ThemeColor.textPrimary.color)
+                            .lineLimit(1)
+                    }
+                }
+                if !landing.ago.isEmpty {
+                    Text(landing.ago)
+                        .themeType(.meta)
+                        .foregroundStyle(ThemeColor.textSecondary.color)
+                        .padding(.top, 4)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(ThemeColor.surfaceRaised.color, in: RoundedRectangle(cornerRadius: 8))
+            .overlay { RoundedRectangle(cornerRadius: 8).strokeBorder(ThemeColor.borderSubtle.color, lineWidth: 1) }
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 8)
+        .accessibilityHint("Opens the bead's card")
+        .accessibilityIdentifier("landing/\(landing.id)")
     }
 }
