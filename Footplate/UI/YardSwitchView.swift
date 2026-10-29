@@ -49,7 +49,12 @@ struct YardSwitchView: View {
                                 .padding(.trailing, 20)
                         }
                     }
-                    .frame(height: 64)
+                    // At least 64, and as tall as its two lines need. The
+                    // yard line takes any height it is offered, so the
+                    // row is fixed to its own height, not left a share
+                    // of the screen.
+                    .frame(minHeight: 64)
+                    .fixedSize(horizontal: false, vertical: true)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)

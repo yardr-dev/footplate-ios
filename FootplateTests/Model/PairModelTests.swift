@@ -210,7 +210,7 @@ final class PairModelTests: XCTestCase {
         XCTAssertEqual(legacy.records.kept.yards.map(\.owner), ["", "alice"])
     }
 
-    func testAWrongCodeAndAnEndedPairingAreSaid() async throws {
+    func testAWrongCodeAnEndedPairingAndTheEdgesRefusalsAreSaid() async throws {
         let world = try makeWorld()
         world.records.keepSession(account: world.fake.email, session: world.fake.session())
         world.pair.typeCode()
@@ -230,6 +230,31 @@ final class PairModelTests: XCTestCase {
         world.pair.readTyped()
         await world.pair.pair()
         XCTAssertTrue(world.pair.state.error?.hasPrefix("No pairing is open at this yard") == true, world.pair.state.error ?? "")
+        XCTAssertTrue(world.records.kept.yards.isEmpty)
+        XCTAssertNil(world.nav.signIn)
+        XCTAssertFalse(world.nav.pairing)
+
+        // The edge refuses a code it will not pass on in its own words,
+        // which are the code's and no yard's not being ready; any other
+        // 403 of the pairing still is a yard not ready.
+        world.fake.next("/user/pair", .pairingSpent())
+        world.pair.typed(yard: "laptop", code: "M4TR-9KWE")
+        world.pair.readTyped()
+        await world.pair.pair()
+        XCTAssertEqual(
+            world.pair.state.error,
+            "that pairing code was opened for another account; it is spent — open a new pairing"
+        )
+        world.fake.next("/user/pair", .pairingNotOpen())
+        world.pair.typed(yard: "laptop", code: "M4TR-9KWE")
+        world.pair.readTyped()
+        await world.pair.pair()
+        XCTAssertEqual(world.pair.state.error, "that pairing code is not open for this yard")
+        world.fake.next("/user/pair", .notReady())
+        world.pair.typed(yard: "laptop", code: "M4TR-9KWE")
+        world.pair.readTyped()
+        await world.pair.pair()
+        XCTAssertEqual(world.pair.state.error, "The yard is not ready: the yard is building.")
         XCTAssertTrue(world.records.kept.yards.isEmpty)
         XCTAssertNil(world.nav.signIn)
         XCTAssertFalse(world.nav.pairing)

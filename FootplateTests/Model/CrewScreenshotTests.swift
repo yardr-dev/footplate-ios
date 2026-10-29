@@ -6,10 +6,11 @@ import XCTest
 // The crew screens rendered in the simulator against fake-followed
 // state (design 3.5, the bead's screenshots): the inbox with unread
 // rows, one conversation, and the yard switch with two yards, one
-// away, with a yard of its own beside the edge's, and with a yard of
-// another account's the account is a member of. Hand-run for the
-// bead note; the gate runs it too, and it
-// only asserts that each screen renders non-empty at phone size.
+// away, at the default text size and at two large ones, with a yard of
+// its own beside the edge's, and with a yard of another account's the
+// account is a member of. Hand-run for the bead note; the gate runs it
+// too, and it only asserts that each screen renders non-empty at phone
+// size.
 // PNGs land in `CREW_SHOTS_DIR`, or the temporary directory's
 // `crew-shots` where that names none.
 @MainActor
@@ -92,6 +93,16 @@ final class CrewScreenshotTests: XCTestCase {
         )
         conversation.leave()
         try await render(YardSwitchView(state: inbox.state), scene: scene, to: dir.appendingPathComponent("switch.png"))
+        // The rows at the largest text size and at an accessibility one:
+        // each as tall as its two lines, none drawn into the next.
+        try await render(
+            YardSwitchView(state: inbox.state).environment(\.dynamicTypeSize, .xxxLarge),
+            scene: scene, to: dir.appendingPathComponent("switch-xxxl.png")
+        )
+        try await render(
+            YardSwitchView(state: inbox.state).environment(\.dynamicTypeSize, .accessibility3),
+            scene: scene, to: dir.appendingPathComponent("switch-ax.png")
+        )
     }
 
     /// The yard switch with the edge's own yard and a yard of its own

@@ -164,8 +164,12 @@ final class Edge: Sendable {
         request.httpBody = try jsonBody(["code": code])
         let answer = try await exchange(request)
         // The edge's answers first, by its header and then its body's
-        // shape: the edge's 403 is a yard not ready, never a wrong code.
+        // shape: the edge's 403 is a yard not ready, never a wrong code,
+        // but for the two it gives a code it will not pass on.
         if answer.edgeRefusal != nil || isEdgeShape(answer.body) {
+            if let gifted = giftedPairing(answer) {
+                throw gifted
+            }
             throw refusal(status: answer.status, edgeRefusal: answer.edgeRefusal, retryAfterHeader: answer.retryAfter, body: answer.body)
                 ?? ApiError.protocol(what: "the pairing: status \(answer.status)")
         }
@@ -217,6 +221,27 @@ final class Edge: Sendable {
     /// no edge's headers.
     func yardDirect(device: String) throws -> YardClient {
         try YardClient(edge: self, device: device, session: "", name: "")
+    }
+
+    /// The edge's two refusals of a pairing code it will not pass on, both
+    /// its 403 (the router's `giftedPairing`): the code was opened for
+    /// another account and is spent, or is not open for this yard. They
+    /// are about the code, not a yard that is not ready, so they are said
+    /// in the edge's words. Matched by those sentences alone: any other
+    /// 403 of the pairing keeps the table's reading, and the header still
+    /// decides first, as there.
+    private func giftedPairing(_ answer: Answer) -> ApiError? {
+        guard answer.edgeRefusal == nil, answer.status == 403,
+              case .edge(let why) = bodyShape(answer.body)
+        else { return nil }
+        switch why {
+        case "that pairing code was opened for another account; it is spent — open a new pairing":
+            return .refused(code: "pairing_spent", message: why)
+        case "that pairing code is not open for this yard":
+            return .refused(code: "pairing_not_open", message: why)
+        default:
+            return nil
+        }
     }
 
     /// A pairing's answer read, past the edge's answers: the yard's

@@ -79,6 +79,17 @@ struct FakeResponse: Sendable {
         json(403, "{\"error\": \"edge: \(why)\"}")
     }
 
+    /// The edge's two 403s for a pairing code it will not pass on, as
+    /// the router words them (giftedPairing): opened for another
+    /// account, and not open for this yard.
+    static func pairingSpent() -> FakeResponse {
+        json(403, #"{"error": "edge: that pairing code was opened for another account; it is spent — open a new pairing"}"#)
+    }
+
+    static func pairingNotOpen() -> FakeResponse {
+        json(403, #"{"error": "edge: that pairing code is not open for this yard"}"#)
+    }
+
     static func badGateway() -> FakeResponse {
         json(502, #"{"error": "edge: the yard did not answer"}"#)
     }

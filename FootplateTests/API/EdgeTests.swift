@@ -222,6 +222,26 @@ final class EdgeTests: XCTestCase {
             _ = try await edge.pair(code: "K7QM-2XPD", session: session)
         }
         XCTAssertEqual(notReady, .notReady(why: "the yard is building"))
+        // Its two 403s for a code it will not pass on are the code's,
+        // in the edge's words; a header, were one set, still decides first.
+        fake.next("/user/pair", .pairingSpent())
+        let spent = await raisedApiError {
+            _ = try await edge.pair(code: "K7QM-2XPD", session: session)
+        }
+        XCTAssertEqual(spent, .refused(
+            code: "pairing_spent",
+            message: "that pairing code was opened for another account; it is spent — open a new pairing"
+        ))
+        fake.next("/user/pair", .pairingNotOpen())
+        let notOpen = await raisedApiError {
+            _ = try await edge.pair(code: "K7QM-2XPD", session: session)
+        }
+        XCTAssertEqual(notOpen, .refused(code: "pairing_not_open", message: "that pairing code is not open for this yard"))
+        fake.next("/user/pair", FakeResponse.pairingSpent().withHeader("X-Edge-Refusal", "session"))
+        let headed = await raisedApiError {
+            _ = try await edge.pair(code: "K7QM-2XPD", session: session)
+        }
+        XCTAssertEqual(headed, .notSignedIn)
         // The yard's 403 is the wrong code.
         let wrong = await raisedApiError {
             _ = try await edge.pair(code: "AAAA-BBBB", session: session)
