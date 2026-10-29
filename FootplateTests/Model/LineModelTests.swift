@@ -8,8 +8,9 @@ import XCTest
 // read said and cleared, an unreadable depot in the yard's own words,
 // the place following a yard switch, the backlog opening and
 // shutting, a line pushed as its route map with its landings under
-// the landed station, and a bead pushed as its card with its Ask, its
-// details read with `Bead` and its web view.
+// the landed station, a bead pushed as its card with its Ask, its
+// details read with `Bead` and its web view, and a closed bead opened
+// from mail standing on its read.
 @MainActor
 final class LineModelTests: XCTestCase {
     private var home: FakeFollowed!
@@ -699,6 +700,88 @@ final class LineModelTests: XCTestCase {
     // keeps what it gave, and the bead is read again with the board, on a
     // pull and on an event that moves the line. A reply that comes after
     // the place was left and came back lands nowhere.
+    func testAClosedBeadOpenedFromMailStandsOnItsRead() async throws {
+        // The card with no read yet: no line, and nothing but the id.
+        let unread = closedCard(read: nil, id: "yd-old", origin: "https://edge.example", yard: "", handle: "jo")
+        XCTAssertEqual(unread.bead.id, "yd-old")
+        XCTAssertEqual(unread.bead.title, "")
+        XCTAssertEqual(unread.line, "No line")
+        XCTAssertEqual(unread.stage, "")
+        XCTAssertTrue(unread.stages.isEmpty)
+        XCTAssertEqual(unread.head, "No line")
+        XCTAssertEqual(unread.webView, "https://edge.example/beads/yd-old?yard=jo")
+        // The title and the stage are the read's.
+        let read = closedCard(
+            read: Bead(id: "yd-old", title: "Old bead", stage: "merged"),
+            id: "yd-old", origin: "https://edge.example", yard: "", handle: "jo"
+        )
+        XCTAssertEqual(read.bead.title, "Old bead")
+        XCTAssertEqual(read.stage, "merged")
+        XCTAssertEqual(read.head, "No line · merged")
+
+        home.up(loaded())
+        laptop.up(loaded())
+        laptop.board = board()
+        laptop.beads["yd-old"] = Bead(
+            id: "yd-old", title: "Old bead",
+            body: "Done and dusted.", stage: "merged",
+            labels: ["kind:feat"],
+            notes: [BeadNote(seq: 2, kind: "note", author: "yardmaster", text: "landed", at: "2026-10-08T09:45:00Z")]
+        )
+        model.open(yard: "laptop")
+        try await waitRead()
+        // The board holds no yd-old: the chip's card stands on the
+        // `Bead` read alone.
+        model.openBead("yd-old")
+        let route = BeadRoute(yard: "laptop", bead: "yd-old")
+        XCTAssertEqual(nav.linesPath, [.bead(route)])
+        try await waitFor("the card's details") { [model] in model?.card(for: route)?.details.read == true }
+        let card = try XCTUnwrap(model.card(for: route))
+        XCTAssertEqual(card.bead.id, "yd-old")
+        XCTAssertEqual(card.bead.title, "Old bead")
+        XCTAssertEqual(card.line, "No line")
+        XCTAssertEqual(card.stage, "merged")
+        XCTAssertTrue(card.stages.isEmpty)
+        XCTAssertEqual(card.head, "No line · merged")
+        XCTAssertEqual(card.details.body, "Done and dusted.")
+        XCTAssertEqual(card.details.labels, ["kind:feat"])
+        XCTAssertEqual(card.details.notes, [CardNote(author: "yardmaster", at: "09:45", text: "landed")])
+        // A named yard is named as itself.
+        XCTAssertEqual(card.webView, "https://edge.example/beads/yd-old?yard=laptop")
+        // The next board reads hold no yd-old either, and the card
+        // stays; a board bead's card still leaves with the board.
+        model.openBead("yd-gate")
+        await model.refresh()
+        XCTAssertEqual(pushedBeads, ["yd-old", "yd-gate"])
+        var without = board()
+        without.depots[0].flows[0].stages[1].beads.removeFirst()
+        laptop.board = without
+        await model.refresh()
+        XCTAssertEqual(pushedBeads, ["yd-old"])
+        XCTAssertEqual(model.card(for: route)?.bead.title, "Old bead")
+
+        // When the user switches to a chip before Lines has read its
+        // board, the first board read decides whether the card is a
+        // board bead. Such a card must leave when that bead leaves.
+        model.leave()
+        home.board = board()
+        home.holdNextFlowRead = true
+        model.open(yard: "")
+        try await waitFor("the held board read") { [home] in home?.pendingFlowReadCount == 1 }
+        model.openBead("yd-gate")
+        let gate = BeadRoute(yard: "", bead: "yd-gate")
+        XCTAssertEqual(nav.linesPath, [.bead(gate)])
+        home.releaseFlowRead()
+        try await waitRead()
+        XCTAssertEqual(pushedBeads, ["yd-gate"])
+
+        var withoutGate = board()
+        withoutGate.depots[0].flows[0].stages[1].beads.removeFirst()
+        home.board = withoutGate
+        await model.refresh()
+        XCTAssertTrue(nav.linesPath.isEmpty)
+    }
+
     func testACardsDetailsSayWhyTheyAreNotReadAndAreReadAgainWithTheBoard() async throws {
         home.up(loaded())
         home.board = richBoard()

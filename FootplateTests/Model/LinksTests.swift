@@ -5,12 +5,24 @@ import XCTest
 // a harness login is a link to the page it names, so what is shown is
 // what opens; only an explicit http or https address with a host is a
 // link, and the punctuation of the sentence around it is not part of it.
+// In mail, a bead id the app knows or the yard confirmed chips beside
+// them, opening the bead whole; any other id-shaped word stays plain
+// words, as does an id inside a link or a code span.
 final class LinksTests: XCTestCase {
     /// The links of `text`: the words each is drawn with, and where it goes.
     private func links(_ text: String) -> [(words: String, url: String)] {
         let drawn = linked(text)
         return drawn.runs.compactMap { run in
             run.link.map { (String(drawn[run.range].characters), $0.absoluteString) }
+        }
+    }
+
+    /// The chips of `text`: the words each is drawn with, and the bead
+    /// id its tap opens.
+    private func chips(_ text: String, beads: Set<String>) -> [(words: String, bead: String)] {
+        let drawn = linked(text, beads: beads)
+        return drawn.runs.compactMap { run in
+            run.link.flatMap(chippedBead).map { (String(drawn[run.range].characters), $0) }
         }
     }
 
@@ -78,5 +90,83 @@ final class LinksTests: XCTestCase {
         }
         // One that is not beside one that is.
         XCTAssertEqual(links("https://claude.ai@evil.example/x and https://claude.ai/x").map { $0.words }, ["https://claude.ai/x"])
+    }
+
+    func testAKnownFullIdChipsAndOpensItsBead() {
+        let beads: Set<String> = ["yardr-w311", "yd-crm"]
+        let text = "yardr-w311 moves, and yd-crm with it; yardr-w311 lands first."
+        let found = chips(text, beads: beads)
+        XCTAssertEqual(found.map { $0.words }, ["yardr-w311", "yd-crm", "yardr-w311"])
+        XCTAssertEqual(found.map { $0.bead }, ["yardr-w311", "yd-crm", "yardr-w311"], "what is shown is what opens")
+        XCTAssertEqual(String(linked(text, beads: beads).characters), text, "the words are kept whole")
+        // A chip's link is the app's own, never the system's.
+        for run in linked(text, beads: beads).runs where run.link != nil {
+            XCTAssertEqual(run.link?.scheme, "footplate-bead")
+        }
+        // With no bead known, nothing chips.
+        XCTAssertTrue(chips(text, beads: []).isEmpty)
+        XCTAssertEqual(String(linked(text).characters), text)
+    }
+
+    func testAnUnknownIdShapedWordAndABareSuffixStayPlain() {
+        let beads: Set<String> = ["yd-crm"]
+        let plain = [
+            "land yd-train when it is green",
+            "re-ask the yard",
+            "w311 without its prefix",
+            "ask 6926",
+            "`yd-crm` in a code span",
+            "```\nyd-crm\n``` in a fence",
+            "see https://x.example/beads/yd-crm for the bead",
+        ]
+        for text in plain {
+            XCTAssertTrue(chips(text, beads: beads).isEmpty, text)
+            XCTAssertEqual(String(linked(text, beads: beads).characters), text, text)
+        }
+        // The qualified ask names its bead, which chips as the bead
+        // alone; the ask's number never chips.
+        let qualified = chips("ask 18 on yd-crm", beads: beads)
+        XCTAssertEqual(qualified.map { $0.words }, ["yd-crm"])
+        XCTAssertEqual(qualified.map { $0.bead }, ["yd-crm"])
+        XCTAssertEqual(beadIds("ask 18 on yd-crm"), ["yd-crm"])
+        XCTAssertEqual(beadIds("ask 6926"), [])
+    }
+
+    func testALinkAndAChipStandSideBySideUnchanged() {
+        let beads: Set<String> = ["yd-gate"]
+        let text = "Read https://x.example/a, then land yd-gate."
+        let drawn = linked(text, beads: beads)
+        let urls = drawn.runs.compactMap { run in run.link.map { (String(drawn[run.range].characters), $0) } }
+        XCTAssertEqual(urls.map { $0.0 }, ["https://x.example/a", "yd-gate"])
+        XCTAssertEqual(urls[0].1.absoluteString, "https://x.example/a")
+        XCTAssertEqual(chippedBead(urls[1].1), "yd-gate")
+        XCTAssertEqual(String(drawn.characters), text, "the words are kept whole")
+    }
+
+    func testNamedBeadIdsAreEachOnceOutsideLinksAndCode() {
+        let rows: [(String, [String])] = [
+            ("land yd-gate.", ["yd-gate"]),
+            ("yd-gate and yd-gate again", ["yd-gate"]),
+            ("(yd-gate) [yd-train]", ["yd-gate", "yd-train"]),
+            ("w311 without its prefix", []),
+            ("no dash here", []),
+            ("ask 6926", []),
+            ("see https://x.example/beads/yd-gate first", []),
+            ("`yd-gate` stays as it is", []),
+            ("`` holds nothing", []),
+            ("an `unclosed span names yd-gate", ["yd-gate"]),
+            ("```\nyd-gate\n``` fenced", []),
+            ("```\nunclosed names yd-gate", ["yd-gate"]),
+            ("a peer's yd-crm@peer whole", ["yd-crm@peer"]),
+            ("two peers yd-a@x@y are none", []),
+        ]
+        for (text, ids) in rows {
+            XCTAssertEqual(beadIds(text), ids, text)
+        }
+        // A peer's id chips whole through its own link.
+        let beads: Set<String> = ["yd-crm@peer"]
+        let found = chips("read yd-crm@peer today", beads: beads)
+        XCTAssertEqual(found.map { $0.words }, ["yd-crm@peer"])
+        XCTAssertEqual(found.map { $0.bead }, ["yd-crm@peer"])
     }
 }

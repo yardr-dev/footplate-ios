@@ -59,16 +59,31 @@ struct NoticeRow: View {
     }
 }
 
-/// A line of someone's words, the web addresses in it links that the
-/// system opens: underlined, in the accent, and so no colour alone says
-/// what is a link. The asker's words on a decision, a bead's on its card.
-func linkedText(_ line: String) -> Text {
-    var words = linked(line)
-    for run in words.runs where run.link != nil {
-        words[run.range].swiftUI.underlineStyle = .single
-        words[run.range].swiftUI.foregroundColor = ThemeColor.textAccent.color
+/// A line of someone's words: the web addresses in it are links that
+/// the system opens, underlined and in the accent, so no colour alone
+/// says what is a link; the bead ids of `beads` are chips that open the
+/// bead whole, in the accent on the sunken surface, in mono, with no
+/// underline. The asker's words on a decision, a bead's on its card, mail
+/// in a conversation.
+func linkedText(_ line: String, beads: Set<String> = []) -> Text {
+    var words = linked(line, beads: beads)
+    for run in words.runs {
+        if let link = run.link, chippedBead(link) != nil {
+            words[run.range].swiftUI.foregroundColor = ThemeColor.textAccent.color
+            words[run.range].swiftUI.backgroundColor = ThemeColor.surfaceSunken.color
+            words[run.range].swiftUI.font = chipFont()
+        } else if run.link != nil {
+            words[run.range].swiftUI.underlineStyle = .single
+            words[run.range].swiftUI.foregroundColor = ThemeColor.textAccent.color
+        }
     }
     return Text(words)
+}
+
+/// A chip's face: Plex Mono at the body's size, scaled with the system's
+/// text size.
+private func chipFont() -> Font {
+    Font.custom(ThemeType.code.face, size: ThemeType.body.size, relativeTo: ThemeType.body.textStyle)
 }
 
 /// A label and its value, one row of what was read.

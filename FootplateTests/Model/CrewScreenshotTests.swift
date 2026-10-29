@@ -5,12 +5,12 @@ import XCTest
 
 // The crew screens rendered in the simulator against fake-followed
 // state (design 3.5, the bead's screenshots): the inbox with unread
-// rows, one conversation, and the yard switch with two yards, one
-// away, at the default text size and at two large ones, with a yard of
-// its own beside the edge's, and with a yard of another account's the
-// account is a member of. Hand-run for the bead note; the gate runs it
-// too, and it only asserts that each screen renders non-empty at phone
-// size.
+// rows, one conversation, a conversation naming bead ids, and the yard
+// switch with two yards, one away, at the default text size and at two
+// large ones, with a yard of its own beside the edge's, and with a yard
+// of another account's the account is a member of. Hand-run for the bead
+// note; the gate runs it too, and it only asserts that each screen
+// renders non-empty at phone size.
 // PNGs land in `CREW_SHOTS_DIR`, or the temporary directory's
 // `crew-shots` where that names none.
 @MainActor
@@ -75,9 +75,14 @@ final class CrewScreenshotTests: XCTestCase {
         XCTAssertFalse(inbox.state.rows.isEmpty)
 
         let conversation = ConversationModel(mailroom: mailroom, now: { now }, zone: { TimeZone(secondsFromGMT: 0)! })
+        let line = LineModel(
+            followers: { ["": home, "laptop": laptop] }, records: records, pairer: pairer,
+            nav: nav, conversation: conversation, origins: { _ in "https://edge.example" },
+            now: { now }, zone: { TimeZone(secondsFromGMT: 0)! }
+        )
         let notifier = Notifier(mailroom: mailroom, records: records, allowed: { true }, tell: { _ in })
         await notifier.refresh()
-        try await render(CrewScreen(model: inbox, nav: nav, conversation: conversation, notifier: notifier), scene: scene, to: dir.appendingPathComponent("inbox.png"))
+        try await render(CrewScreen(model: inbox, nav: nav, conversation: conversation, line: line, notifier: notifier), scene: scene, to: dir.appendingPathComponent("inbox.png"))
         conversation.open(yard: "", with: "yardmaster")
         let convDeadline = ContinuousClock.now + .seconds(10)
         while conversation.state.letters.count < 4
@@ -103,6 +108,57 @@ final class CrewScreenshotTests: XCTestCase {
             YardSwitchView(state: inbox.state).environment(\.dynamicTypeSize, .accessibility3),
             scene: scene, to: dir.appendingPathComponent("switch-ax.png")
         )
+    }
+
+    /// A conversation naming bead ids (footplate-ios-ah48): a known
+    /// id and a yard-confirmed closed one chip, while a bare suffix, a
+    /// code span and a link stand as they are.
+    func testConversationWithChipsRenders() async throws {
+        let scene = try XCTUnwrap(
+            UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first,
+            "no window scene to render in"
+        )
+        let fake = FakeYard()
+        let records = Records(secret: MemoryShelf(), plain: MemoryShelf(), origin: fake.origin)
+        records.keepSession(account: fake.email, session: fake.session())
+        records.keepYard(PairedYard(name: "", yard: "south", user: "jo", device: "phone", token: "yardr-dev-south-1"))
+        records.noteNotificationsAsked()
+        let home = FakeFollowed()
+        let mailroom = Mailroom()
+        mailroom.setFollowers(["": home])
+        let now = parseInstant("2026-10-08T12:00:00Z")!
+        // No inbox mail: the board's letters would stand in for the
+        // page's where their seqs meet.
+        var quiet = loaded()
+        quiet.inbox = Inbox()
+        home.up(quiet)
+        home.pages["yardmaster|0"] = Page(letters: [
+            Letter(seq: 13, at: "2026-10-08T09:30:00Z", from: "yardmaster", to: "jo", text: "Landed yd-old this morning; yd-links moves next. The list is at https://yard.example/links, and the old `yd-map` row stands as it was."),
+            Letter(seq: 14, at: "2026-10-08T09:31:00Z", from: "jo", to: "yardmaster", text: "Reading it now. The relief arrives at bay w311."),
+        ], more: false)
+
+        let conversation = ConversationModel(mailroom: mailroom, now: { now }, zone: { TimeZone(secondsFromGMT: 0)! })
+        conversation.open(yard: "", with: "yardmaster")
+        let deadline = ContinuousClock.now + .seconds(10)
+        while conversation.state.letters.count < 2
+            || !conversation.state.knownBeads.isSuperset(of: ["yd-links", "yd-old"]),
+            ContinuousClock.now <= deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(conversation.state.letters.count, 2)
+        // yd-map is known from the open asks, unnamed and unasked.
+        XCTAssertEqual(conversation.state.knownBeads, ["yd-links", "yd-map", "yd-old"])
+        XCTAssertEqual(home.beadAsked, ["yd-old"])
+
+        let dir = ProcessInfo.processInfo.environment["CREW_SHOTS_DIR"]
+            .map { URL(fileURLWithPath: $0) }
+            ?? FileManager.default.temporaryDirectory.appendingPathComponent("crew-shots")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try await render(
+            ConversationScreen(model: conversation, yard: "", with: "yardmaster"),
+            scene: scene, to: dir.appendingPathComponent("conversation-chips.png")
+        )
+        conversation.leave()
     }
 
     /// The yard switch with the edge's own yard and a yard of its own

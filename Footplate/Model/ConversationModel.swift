@@ -61,6 +61,10 @@ struct ConversationState: Equatable, Sendable {
     var more: Bool = false
     /// A page is being read.
     var reading: Bool = false
+    /// The bead ids that chip in the letters: the open and decided asks'
+    /// beads, the beads the stream named, and those the yard confirmed
+    /// when mail named them.
+    var knownBeads: Set<String> = []
     /// The notices are read, not answered: no field.
     var writable: Bool = true
     var draft: String = ""
@@ -100,6 +104,29 @@ func askDraft(_ draft: String, bead: String) -> String {
     return "\(bead) \(draft)"
 }
 
+/// One id the yard was asked about, in one yard's mail.
+struct AskedBead: Hashable, Sendable {
+    var yard: String
+    var bead: String
+}
+
+/// The bead ids that chip in `yard`'s mail: the open and decided asks'
+/// beads, the beads the stream named, and those the yard confirmed when
+/// mail named them (`looked`, by yard and id), a closed bead among them.
+/// Only these chip: any other id-shaped word stays plain text.
+func knownBeads(board: Board?, yard: String?, looked: [AskedBead: Bool]) -> Set<String> {
+    var known: Set<String> = []
+    if let board {
+        known.formUnion(board.open.map(\.bead))
+        known.formUnion(board.decided.map(\.bead))
+        known.formUnion(board.beadEvents.keys)
+    }
+    for (asked, confirmed) in looked where confirmed && asked.yard == yard {
+        known.insert(asked.bead)
+    }
+    return known
+}
+
 @MainActor
 @Observable
 final class ConversationModel {
@@ -135,6 +162,12 @@ final class ConversationModel {
     /// A fetch in flight, by hash: one letter's image is asked
     /// for once.
     private var fetching: [String: Task<Void, Never>] = [:]
+    /// What the yard answered for the ids shown mail named, by yard and
+    /// id: a closed bead among the confirmed.
+    private var looked: [AskedBead: Bool] = [:]
+    /// The ids asked about and not yet answered, by yard and id: each is
+    /// asked once.
+    private var looking: Set<AskedBead> = []
     private var attachTask: Task<Void, Never>? = nil
     private var attachToken: UUID? = nil
 
@@ -166,6 +199,7 @@ final class ConversationModel {
                 letters: (board?.notices ?? []).sorted { $0.seq < $1.seq }.map {
                     Shown(seq: $0.seq, mine: false, text: $0.text, time: stamp($0.at, now: now, zone: zone))
                 },
+                knownBeads: knownBeads(board: board, yard: yard, looked: looked),
                 writable: false,
                 draft: draftText,
                 error: sendError
@@ -197,6 +231,7 @@ final class ConversationModel {
             letters: letters,
             more: pageMore,
             reading: reading,
+            knownBeads: knownBeads(board: board, yard: yard, looked: looked),
             draft: draftText,
             sending: sending.contains(ConversationKey(yard: yard, with: with)),
             attached: attachedPicture,
@@ -253,6 +288,7 @@ final class ConversationModel {
         showVisible()
         boardChanged()
         fetchShown()
+        lookupShown()
     }
 
     /// The conversation is no longer on the screen.
@@ -425,12 +461,63 @@ final class ConversationModel {
         fetching[hash] = task
     }
 
+    /// Asks the yard which of the ids the shown mail names are beads, of
+    /// those the app does not know: a bead that closed falls out of every
+    /// list, and its id in old mail would stand plain. Each id once per
+    /// yard, through the `Bead` call, which answers for a closed bead too:
+    /// what the yard answered is kept, and what it did not answer for want
+    /// of a link is asked again when mail next comes into view. An id a
+    /// list holds stays a bead after it leaves the list.
+    private func lookupShown() {
+        guard active, let yard = openedYard, let with = openedWith,
+              let followed = mailroom.followed(yard) else { return }
+        let board = mailroom.boards[yard]
+        let texts = with == yardRow
+            ? board?.notices.map(\.text) ?? []
+            : mergedLetters(board).map(\.text)
+        let known = knownBeads(board: board, yard: yard, looked: looked)
+        var seen: Set<String> = []
+        let named = texts.flatMap(beadIds).filter { seen.insert($0).inserted }
+        for id in named where known.contains(id) && looked[AskedBead(yard: yard, bead: id)] != true {
+            looked[AskedBead(yard: yard, bead: id)] = true
+        }
+        var wanted: [String] = []
+        for id in named where !known.contains(id) && looked[AskedBead(yard: yard, bead: id)] == nil {
+            if looking.insert(AskedBead(yard: yard, bead: id)).inserted { wanted.append(id) }
+        }
+        guard !wanted.isEmpty else { return }
+        Task { @MainActor [weak self] in
+            for id in wanted {
+                let found: String?
+                do {
+                    found = try await followed.bead(id).id
+                } catch ApiError.refused {
+                    found = nil
+                } catch is ApiError {
+                    // The link says nothing of the id: asked again when
+                    // mail next comes into view.
+                    continue
+                } catch {
+                    continue
+                }
+                self?.looked[AskedBead(yard: yard, bead: id)] = (found == id)
+            }
+            for id in wanted { self?.looking.remove(AskedBead(yard: yard, bead: id)) }
+        }
+    }
+
     private func boardChanged() {
-        guard active, let yard = openedYard, let with = openedWith, with != yardRow else { return }
+        guard active, let yard = openedYard, let with = openedWith else { return }
+        // The notices name beads too, and read no pages.
+        if with == yardRow {
+            lookupShown()
+            return
+        }
         guard let board = mailroom.boards[yard] else { return }
         pageLetters = withEvents(board.lettersWith(with))
         showVisible()
         fetchShown()
+        lookupShown()
         if board.head != lastHead {
             lastHead = board.head
             let gen = generation
@@ -502,6 +589,7 @@ final class ConversationModel {
             activeRead = nil
             showVisible()
             fetchShown()
+            lookupShown()
         } catch let error as ApiError {
             guard gen == generation, request == activeRead else { return }
             reading = false

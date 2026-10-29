@@ -22,7 +22,7 @@ struct TabsView: View {
     var body: some View {
         TabView(selection: $nav.place) {
             Tab("Crew", systemImage: "person.2", value: Place.crew) {
-                CrewScreen(model: inbox, nav: nav, conversation: conversation, notifier: notifier)
+                CrewScreen(model: inbox, nav: nav, conversation: conversation, line: line, notifier: notifier)
             }
             Tab("Decide", systemImage: "checkmark.circle", value: Place.decide) {
                 DecisionsScreen(inbox: inbox, model: decisions, decision: decision, nav: nav)

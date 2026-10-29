@@ -48,6 +48,8 @@ struct ConversationScreen: View {
     @Bindable var model: ConversationModel
     var yard: String
     var with: String
+    /// A chip tapped: its bead opens whole.
+    var openBead: (String) -> Void = { _ in }
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var field: String = ""
     @State private var scrollTracking = ConversationScrollTracking()
@@ -57,6 +59,18 @@ struct ConversationScreen: View {
 
     private var canPhoto: Bool {
         UIImagePickerController.isSourceTypeAvailable(.camera)
+    }
+
+    /// Links in a letter: a chip opens its bead whole, and a web address
+    /// opens as before.
+    private var letterLinks: OpenURLAction {
+        OpenURLAction { url in
+            if let id = chippedBead(url) {
+                openBead(id)
+                return .handled
+            }
+            return .systemAction
+        }
     }
 
     var body: some View {
@@ -276,9 +290,10 @@ struct ConversationScreen: View {
             VStack(alignment: letter.mine ? .trailing : .leading, spacing: 2) {
                 VStack(alignment: .leading, spacing: 4) {
                     if let copy = copyableMessage(letter) {
-                        linkedText(letter.text)
+                        linkedText(letter.text, beads: model.state.knownBeads)
                             .themeType(.body)
                             .foregroundStyle(ThemeColor.textPrimary.color)
+                            .environment(\.openURL, letterLinks)
                             .contextMenu {
                                 Button("Copy message") {
                                     UIPasteboard.general.string = copy

@@ -271,6 +271,10 @@ final class LineModel {
     /// The read each card waits on: one that is not its latest lands
     /// nowhere.
     private var cardReading: [String: UUID] = [:]
+    /// The pushed beads standing on their `Bead` reads: ids the board
+    /// holds none of, opened from mail. Their cards stay across board
+    /// reads, which hold no closed bead.
+    private var closedCards: Set<String> = []
     private(set) var webViewError: String? = nil
     private(set) var resolvingWebView: BeadRoute? = nil
 
@@ -350,6 +354,7 @@ final class LineModel {
             applied = 0
             cardReads = [:]
             cardReading = [:]
+            closedCards = []
             // A line pushed for the yard before is none of this one's.
             nav.closeLines { $0.yard != yard }
         }
@@ -404,19 +409,26 @@ final class LineModel {
         )
     }
 
-    /// A bead tapped, on a card, a row or a station: its card is pushed
-    /// onto the lines stack, standing on the board's facts while the
-    /// bead is read for its details.
+    /// A bead tapped, on a card, a row, a station or a mail's chip:
+    /// its card is pushed onto the lines stack, standing on the board's
+    /// facts while the bead is read for its details, or on the read
+    /// alone where the board holds no such bead.
     func openBead(_ id: String) {
         guard let yard = openedYard else { return }
         webViewError = nil
+        if let board, holds(board, .bead(BeadRoute(yard: yard, bead: id))) {
+            closedCards.remove(id)
+        } else {
+            closedCards.insert(id)
+        }
         nav.openBead(yard: yard, bead: id)
         Task { @MainActor in await readDetails(of: id) }
     }
 
     /// The pushed bead as its card, whatever filter the overview holds;
     /// nil where the board is not read, is another yard's, or holds no
-    /// such bead. Its details are what the last read of the bead gave.
+    /// such bead and no chip opened it. Its details are what the last
+    /// read of the bead gave.
     func card(for route: BeadRoute) -> BeadCard? {
         guard let board, openedYard == route.yard else { return nil }
         let me = followers()[route.yard]?.state.loaded?.me.user ?? ""
@@ -424,11 +436,18 @@ final class LineModel {
         // address, with no yard named: the handle is the edge's own
         // yard's alone.
         let direct = isDirect(route.yard)
+        let webYard = direct ? "" : route.yard
+        let handle = direct ? "" : (records.kept.account?.handle ?? "")
         var card = beadCard(
             board: board, me: me, now: now(), origin: origins(route.yard),
-            yard: direct ? "" : route.yard,
-            handle: direct ? "" : (records.kept.account?.handle ?? ""), id: route.bead
+            yard: webYard, handle: handle, id: route.bead
         )
+        if card == nil, closedCards.contains(route.bead) {
+            card = closedCard(
+                read: cardReads[route.bead]?.bead, id: route.bead,
+                origin: origins(route.yard), yard: webYard, handle: handle
+            )
+        }
         let read = cardReads[route.bead]
         card?.details = cardDetails(read?.bead, error: read?.error, now: now(), zone: zone())
         return card
@@ -574,10 +593,20 @@ final class LineModel {
             // board with the old error.
             errorText = nil
             board = fresh
+            // A chip can be opened before this place has read its board.
+            // If the board now holds that bead, it is a board card, so
+            // let the usual board lifetime close it when it leaves.
+            let nowOnBoard = closedCards.filter { id in
+                holds(fresh, .bead(BeadRoute(yard: yard, bead: id)))
+            }
+            closedCards.subtract(nowOnBoard)
             // A line or a bead the board no longer holds leaves for what
-            // is under it.
+            // is under it. A card standing on its `Bead` read stays: the
+            // board holds no closed bead.
             nav.closeLines { route in
-                route.yard == yard && !holds(fresh, route)
+                guard route.yard == yard, !holds(fresh, route) else { return false }
+                if case .bead(let bead) = route { return !closedCards.contains(bead.bead) }
+                return true
             }
             // The cards that stand read their beads again with the
             // board, so a note written meanwhile shows on its card.
@@ -1029,6 +1058,22 @@ func beadCard(
         }
     }
     return nil
+}
+
+/// One bead's card where the board holds no such bead: a closed bead
+/// opened from mail stands on the `Bead` call's read, with no line.
+/// The title and the stage are the read's, empty where it has not
+/// answered yet.
+func closedCard(read: Bead?, id: String, origin: String, yard: String, handle: String) -> BeadCard {
+    let stage = read?.stage ?? ""
+    return BeadCard(
+        bead: StationBead(id: id, title: read?.title ?? ""),
+        line: "No line",
+        stage: stage,
+        stages: [],
+        head: stage.isEmpty ? "No line" : "No line · \(stage)",
+        webView: webViewUrl(origin: origin, yard: yard, handle: handle, bead: id)
+    )
 }
 
 /// A card's head: `yard · default · new for 41m · expected 11–25m`.

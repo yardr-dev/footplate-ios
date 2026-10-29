@@ -7,6 +7,7 @@ struct CrewScreen: View {
     @Bindable var model: InboxModel
     @Bindable var nav: Nav
     @Bindable var conversation: ConversationModel
+    @Bindable var line: LineModel
     @Bindable var notifier: Notifier
 
     var body: some View {
@@ -24,7 +25,13 @@ struct CrewScreen: View {
             }
             .yardPlace(inbox: model, nav: nav, title: "Crew")
             .navigationDestination(for: ConversationRoute.self) { route in
-                ConversationScreen(model: conversation, yard: route.yard, with: route.with)
+                // A chip tapped: the yard's line opens, the bead's card
+                // is pushed onto it, and the Lines place shows it.
+                ConversationScreen(model: conversation, yard: route.yard, with: route.with, openBead: { id in
+                    line.open(yard: route.yard)
+                    line.openBead(id)
+                    nav.place = .lines
+                })
             }
         }
     }

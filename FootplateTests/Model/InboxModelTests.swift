@@ -803,11 +803,14 @@ final class FakeFollowed: Followed {
     var completedCrewReads = 0
     var beads: [String: Bead] = [:]
     var beadAsked: [String] = []
+    var beadCompleted: [String] = []
     private var heldBeadReads: [String: Int] = [:]
     private var pendingBeadReads: [String: [CheckedContinuation<Bead, Never>]] = [:]
     /// The board its `flows` reads serve.
     var board: Flows = Flows()
     var flowCalls = 0
+    var holdNextFlowRead = false
+    private var pendingFlowRead: CheckedContinuation<Flows, Never>?
     var answers: [(String, Int64, Int64, String, Bool)] = []
     var approvals: [(String, Int64, Bool)] = []
     var setupApprovals: [(String, Int64, Int64, Bool)] = []
@@ -937,6 +940,7 @@ final class FakeFollowed: Followed {
 
     func bead(_ bead: String) async throws -> Bead {
         beadAsked.append(bead)
+        defer { beadCompleted.append(bead) }
         if let refuse { throw refuse }
         if let beadRefuse { throw beadRefuse }
         if heldBeadReads[bead, default: 0] > 0 {
@@ -966,7 +970,18 @@ final class FakeFollowed: Followed {
     func flows() async throws -> Flows {
         flowCalls += 1
         if let refuse { throw refuse }
+        if holdNextFlowRead {
+            holdNextFlowRead = false
+            return await withCheckedContinuation { pendingFlowRead = $0 }
+        }
         return board
+    }
+
+    var pendingFlowReadCount: Int { pendingFlowRead == nil ? 0 : 1 }
+
+    func releaseFlowRead() {
+        pendingFlowRead?.resume(returning: board)
+        pendingFlowRead = nil
     }
 
     func answer(bead: String, ask: Int64, option: Int64, words: String, weighed: Bool) async throws {
