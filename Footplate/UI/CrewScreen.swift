@@ -25,12 +25,24 @@ struct CrewScreen: View {
             }
             .yardPlace(inbox: model, nav: nav, title: "Crew")
             .navigationDestination(for: ConversationRoute.self) { route in
-                // A chip tapped: the yard's line opens, the bead's card
-                // is pushed onto it, and the Lines place shows it.
-                ConversationScreen(model: conversation, yard: route.yard, with: route.with, openBead: { id in
+                // A chip tapped: the yard's line is read, the bead's
+                // card is read for the sheet, and the sheet opens
+                // over the conversation, leaving the tab alone.
+                ConversationScreen(model: conversation, line: line, yard: route.yard, with: route.with, openBead: { id in
                     line.open(yard: route.yard)
-                    line.openBead(id)
+                    line.peekBead(id)
+                    conversation.openBead(id)
+                }, openOnLine: { bead in
+                    // The sheet's Open on the line: what a chip's tap
+                    // did before the sheet.
+                    conversation.closeBeadSheet()
+                    line.openBead(bead.bead)
                     nav.place = .lines
+                }, beadSheetDismissed: {
+                    // The sheet's line observer has no LinesScreen to
+                    // leave after a swipe down. The button handoff has
+                    // already selected Lines, whose screen owns it.
+                    if nav.place != .lines { line.leave() }
                 })
             }
         }

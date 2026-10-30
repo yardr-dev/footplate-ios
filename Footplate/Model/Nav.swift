@@ -45,6 +45,11 @@ struct BeadRoute: Hashable, Sendable {
     var bead: String
 }
 
+extension BeadRoute: Identifiable {
+    /// The yard and the bead, told apart where an address holds a colon.
+    var id: String { "\(yard)\u{1F}\(bead)" }
+}
+
 /// What the lines stack holds: a line as its route map, or a bead as its
 /// card, pushed from the overview or from a route map.
 enum LinesRoute: Hashable, Sendable {

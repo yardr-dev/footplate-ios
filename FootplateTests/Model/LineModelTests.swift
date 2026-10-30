@@ -10,7 +10,8 @@ import XCTest
 // shutting, a line pushed as its route map with its landings under
 // the landed station, a bead pushed as its card with its Ask, its
 // details read with `Bead` and its web view, and a closed bead opened
-// from mail standing on its read.
+// from mail standing on its read, and a mail's chip reading its card
+// for the sheet over the chat without pushing.
 @MainActor
 final class LineModelTests: XCTestCase {
     private var home: FakeFollowed!
@@ -692,6 +693,31 @@ final class LineModelTests: XCTestCase {
         XCTAssertNil(unresolved)
         XCTAssertNotNil(model.webViewError)
         _ = fake.taken()
+    }
+
+    // A mail's chip reads the bead's card for the sheet over the
+    // conversation but pushes nothing: the board's bead stands on the
+    // board's facts, and a closed bead on its read alone.
+    func testAChipsTapReadsTheCardAndPushesNothing() async throws {
+        home.up(loaded())
+        home.board = richBoard()
+        home.beads["yd-old"] = Bead(
+            id: "yd-old", title: "Old bead", body: "Done and dusted.", stage: "merged"
+        )
+        model.open(yard: "")
+        try await waitRead()
+        model.peekBead("yd-train")
+        model.peekBead("yd-old")
+        XCTAssertTrue(nav.linesPath.isEmpty)
+        let train = BeadRoute(yard: "", bead: "yd-train")
+        let old = BeadRoute(yard: "", bead: "yd-old")
+        try await waitFor("the cards' details") { [model] in
+            model?.card(for: train)?.details.read == true && model?.card(for: old)?.details.read == true
+        }
+        XCTAssertEqual(model.card(for: train)?.bead.title, "Release train")
+        XCTAssertEqual(model.card(for: old)?.bead.title, "Old bead")
+        XCTAssertEqual(model.card(for: old)?.line, "No line")
+        XCTAssertTrue(nav.linesPath.isEmpty, "the sheet pushes nothing")
     }
 
     // A card stands whole on the board's facts whatever becomes of its

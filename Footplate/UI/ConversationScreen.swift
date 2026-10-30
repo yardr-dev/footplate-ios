@@ -43,13 +43,22 @@ struct ConversationScrollTracking: Equatable {
 // images under its text, opened full on tap; the field and Send, with
 // a picture picked from the gallery or the camera above it.
 // Scrolling to the oldest letter reads the page before it. The
-// yard's notices are drawn the same way, with no field.
+// yard's notices are drawn the same way, with no field. A chip
+// tapped opens its bead as a sheet over the conversation, with an
+// Open on the line under the card.
 struct ConversationScreen: View {
     @Bindable var model: ConversationModel
+    @Bindable var line: LineModel
     var yard: String
     var with: String
-    /// A chip tapped: its bead opens whole.
+    /// A chip tapped: its bead opens in a sheet over the conversation.
     var openBead: (String) -> Void = { _ in }
+    /// The sheet's Open on the line: the bead's card opens on the
+    /// Lines place, as a chip's tap did before the sheet.
+    var openOnLine: (BeadRoute) -> Void = { _ in }
+    /// The preview releases its line observer when it closes; the
+    /// Lines place keeps it when Open on the line hands off there.
+    var beadSheetDismissed: () -> Void = {}
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var field: String = ""
     @State private var scrollTracking = ConversationScrollTracking()
@@ -238,6 +247,26 @@ struct ConversationScreen: View {
             }
             .ignoresSafeArea()
         }
+        .sheet(item: sheetBinding, onDismiss: beadSheetDismissed) { route in
+            NavigationStack {
+                VStack(spacing: 0) {
+                    BeadCardScreen(model: line, route: route)
+                    Button("Open on the line") {
+                        openOnLine(route)
+                    }
+                    .buttonStyle(FootplateButtonStyle(primary: false))
+                    .accessibilityIdentifier("bead-open-on-line")
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
+                }
+            }
+            .presentationDetents([.medium, .large])
+        }
+    }
+
+    /// The chip's bead as a sheet, shut on a swipe down.
+    private var sheetBinding: Binding<BeadRoute?> {
+        Binding(get: { model.state.sheet }, set: { if $0 == nil { model.closeBeadSheet() } })
     }
 
     /// The picture picked for the letter: its thumbnail, its

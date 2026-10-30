@@ -783,6 +783,7 @@ final class FakeFollowed: Followed {
     }
 
     private var observers: [UUID: @MainActor (YardState) -> Void] = [:]
+    var observerCount: Int { observers.count }
     var pages: [String: Page] = [:]
     var asked: [(String, Int64)] = []
     var completedPageCalls: [Int] = []

@@ -7,7 +7,8 @@ import Foundation
 // never before and never twice; acknowledged as it is shown, through
 // the Mailroom. The yard's row opens the same screen over its
 // notices. A letter's images are drawn under its text; its other
-// files are said by count (`1 file, open it in footplate`).
+// files are said by count (`1 file, open it in footplate`). A chip
+// tapped opens its bead as a sheet over the conversation.
 
 /// One letter as the conversation shows it.
 struct Shown: Equatable, Sendable {
@@ -77,6 +78,8 @@ struct ConversationState: Equatable, Sendable {
     var error: String? = nil
     /// The picture opened full, drawn over the conversation.
     var full: ShownImage? = nil
+    /// A chip's bead, drawn as a sheet over the conversation.
+    var sheet: BeadRoute? = nil
 }
 
 private struct ConversationKey: Hashable {
@@ -144,6 +147,7 @@ final class ConversationModel {
     private(set) var attaching: Bool = false
     private var fetched: [String: Picture] = [:]
     private var fullHash: String? = nil
+    private var sheetBead: BeadRoute? = nil
     /// The bead card's Ask, waiting for the open of the conversation
     /// it names.
     private var pendingAsk: (key: ConversationKey, bead: String)? = nil
@@ -202,7 +206,8 @@ final class ConversationModel {
                 knownBeads: knownBeads(board: board, yard: yard, looked: looked),
                 writable: false,
                 draft: draftText,
-                error: sendError
+                error: sendError,
+                sheet: sheetBead
             )
         }
         let stateWord = board?.stateOf(with)
@@ -237,7 +242,8 @@ final class ConversationModel {
             attached: attachedPicture,
             attaching: attaching,
             error: sendError,
-            full: fullHash.flatMap { hash in letters.flatMap(\.images).first { $0.hash == hash } }
+            full: fullHash.flatMap { hash in letters.flatMap(\.images).first { $0.hash == hash } },
+            sheet: sheetBead
         )
     }
 
@@ -278,6 +284,7 @@ final class ConversationModel {
             return false
         }
         fullHash = nil
+        sheetBead = nil
         if let ask { draft(askDraft(draftText, bead: ask)) }
         // A conversation that comes back on screen reads its newest page
         // again, even when the follower's head has not changed.
@@ -304,6 +311,7 @@ final class ConversationModel {
         attachToken = nil
         attaching = false
         fullHash = nil
+        sheetBead = nil
         for task in fetching.values { task.cancel() }
         mailroom.show(nil)
     }
@@ -375,6 +383,18 @@ final class ConversationModel {
     /// The full picture shuts.
     func closePicture() {
         fullHash = nil
+    }
+
+    /// A chip tapped: its bead opens as a sheet over the
+    /// conversation, leaving the tab alone, until `closeBeadSheet`.
+    func openBead(_ id: String) {
+        guard let yard = openedYard else { return }
+        sheetBead = BeadRoute(yard: yard, bead: id)
+    }
+
+    /// The chip's sheet shuts: swiped down, or opened on the line.
+    func closeBeadSheet() {
+        sheetBead = nil
     }
 
     /// Sends the draft with `Mail`, carrying the picked picture:

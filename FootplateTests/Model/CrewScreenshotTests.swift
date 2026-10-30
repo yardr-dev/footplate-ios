@@ -5,8 +5,9 @@ import XCTest
 
 // The crew screens rendered in the simulator against fake-followed
 // state (design 3.5, the bead's screenshots): the inbox with unread
-// rows, one conversation, a conversation naming bead ids, and the yard
-// switch with two yards, one away, at the default text size and at two
+// rows, one conversation, a conversation naming bead ids, a chip's
+// bead as a sheet over the chat, and the yard switch with two yards,
+// one away, at the default text size and at two
 // large ones, with a yard of its own beside the edge's, and with a yard
 // of another account's the account is a member of. Hand-run for the bead
 // note; the gate runs it too, and it only asserts that each screen
@@ -93,7 +94,7 @@ final class CrewScreenshotTests: XCTestCase {
         XCTAssertEqual(conversation.state.letters.count, 4)
         XCTAssertNotNil(conversation.state.letters.first { $0.seq == 15 }?.images.first?.bytes)
         try await render(
-            ConversationScreen(model: conversation, yard: "", with: "yardmaster"),
+            ConversationScreen(model: conversation, line: line, yard: "", with: "yardmaster"),
             scene: scene, to: dir.appendingPathComponent("conversation.png")
         )
         conversation.leave()
@@ -154,11 +155,100 @@ final class CrewScreenshotTests: XCTestCase {
             .map { URL(fileURLWithPath: $0) }
             ?? FileManager.default.temporaryDirectory.appendingPathComponent("crew-shots")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let nav = Nav()
+        let pairer = Pairer(edge: try fake.edge(), records: records)
+        let line = LineModel(
+            followers: { ["": home] }, records: records, pairer: pairer,
+            nav: nav, conversation: conversation, origins: { _ in "https://edge.example" },
+            now: { now }, zone: { TimeZone(secondsFromGMT: 0)! }
+        )
         try await render(
-            ConversationScreen(model: conversation, yard: "", with: "yardmaster"),
+            ConversationScreen(model: conversation, line: line, yard: "", with: "yardmaster"),
             scene: scene, to: dir.appendingPathComponent("conversation-chips.png")
         )
         conversation.leave()
+    }
+
+    /// A chip's tap (footplate-ios-f9qs): the bead's card as a sheet
+    /// over the chat, with Open on the line under it, the tab left on
+    /// the crew and nothing pushed.
+    func testConversationBeadSheetRenders() async throws {
+        let scene = try XCTUnwrap(
+            UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first,
+            "no window scene to render in"
+        )
+        let fake = FakeYard()
+        let records = Records(secret: MemoryShelf(), plain: MemoryShelf(), origin: fake.origin)
+        records.keepSession(account: fake.email, session: fake.session())
+        records.keepYard(PairedYard(name: "", yard: "south", user: "jo", device: "phone", token: "yardr-dev-south-1"))
+        records.noteNotificationsAsked()
+        let home = FakeFollowed()
+        let mailroom = Mailroom()
+        mailroom.setFollowers(["": home])
+        let now = parseInstant("2026-10-08T12:00:00Z")!
+        var quiet = loaded()
+        quiet.inbox = Inbox()
+        home.up(quiet)
+        home.pages["yardmaster|0"] = Page(letters: [
+            Letter(seq: 13, at: "2026-10-08T09:30:00Z", from: "yardmaster", to: "jo", text: "The release yd-train leaves nightly with what is green."),
+            Letter(seq: 14, at: "2026-10-08T09:31:00Z", from: "jo", to: "yardmaster", text: "Reading it now."),
+        ], more: false)
+        home.board = try cannedBoard()
+        home.beads["yd-train"] = trainBead()
+
+        let nav = Nav()
+        let pairer = Pairer(edge: try fake.edge(), records: records)
+        let conversation = ConversationModel(mailroom: mailroom, now: { now }, zone: { TimeZone(secondsFromGMT: 0)! })
+        let line = LineModel(
+            followers: { ["": home] }, records: records, pairer: pairer,
+            nav: nav, conversation: conversation, origins: { _ in "https://edge.example" },
+            now: { now }, zone: { TimeZone(secondsFromGMT: 0)! }
+        )
+        conversation.open(yard: "", with: "yardmaster")
+        let observersBeforeLine = home.observerCount
+        line.open(yard: "")
+        let deadline = ContinuousClock.now + .seconds(10)
+        while conversation.state.letters.count < 2
+            || !conversation.state.knownBeads.contains("yd-train")
+            || !line.state.read,
+            ContinuousClock.now <= deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(conversation.state.letters.count, 2)
+        XCTAssertTrue(conversation.state.knownBeads.contains("yd-train"))
+        XCTAssertTrue(line.state.read)
+        // The tap, as the crew screen's chip closure does it.
+        let route = BeadRoute(yard: "", bead: "yd-train")
+        line.peekBead("yd-train")
+        conversation.openBead("yd-train")
+        while line.card(for: route)?.details.read != true, ContinuousClock.now <= deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(conversation.state.sheet, route)
+        XCTAssertEqual(nav.place, .crew)
+        XCTAssertTrue(nav.linesPath.isEmpty)
+        XCTAssertEqual(home.observerCount, observersBeforeLine + 1)
+
+        let dir = ProcessInfo.processInfo.environment["CREW_SHOTS_DIR"]
+            .map { URL(fileURLWithPath: $0) }
+            ?? FileManager.default.temporaryDirectory.appendingPathComponent("crew-shots")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let window = try await renderWindow(
+            ConversationScreen(
+                model: conversation, line: line, yard: "", with: "yardmaster",
+                beadSheetDismissed: { if nav.place != .lines { line.leave() } }
+            ),
+            scene: scene, to: dir.appendingPathComponent("conversation-sheet.png")
+        )
+        defer { window.isHidden = true }
+        conversation.closeBeadSheet()
+        let dismissDeadline = ContinuousClock.now + .seconds(3)
+        while home.observerCount > observersBeforeLine, ContinuousClock.now <= dismissDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(home.observerCount, observersBeforeLine, "dismissing the sheet releases its line observer")
+        conversation.leave()
+        line.leave()
     }
 
     /// The yard switch with the edge's own yard and a yard of its own
@@ -276,6 +366,56 @@ final class CrewScreenshotTests: XCTestCase {
         try png.write(to: file)
         XCTAssertGreaterThan(png.count, 10000, "the rendered screen looks blank")
         window.isHidden = true
+    }
+
+    /// As `render`, but drawing the window whole: a presented sheet
+    /// stands outside the hosting view, so the hosting view alone
+    /// would shoot the chat without it.
+    private func renderWindow(_ view: some View, scene: UIWindowScene, to file: URL) async throws -> UIWindow {
+        let hosting = UIHostingController(rootView: AnyView(view))
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 402, height: 874)
+        window.rootViewController = hosting
+        window.makeKeyAndVisible()
+        hosting.view.frame = window.bounds
+        try await Task.sleep(for: .milliseconds(1500))
+        window.layoutIfNeeded()
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 3
+        let renderer = UIGraphicsImageRenderer(bounds: window.bounds, format: format)
+        let image = renderer.image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        }
+        let png = try XCTUnwrap(image.pngData(), "the rendered screen has no PNG")
+        XCTAssertEqual(image.size, CGSize(width: 402, height: 874))
+        try png.write(to: file)
+        XCTAssertGreaterThan(png.count, 10000, "the rendered screen looks blank")
+        return window
+    }
+
+    /// What the fake yard answers for the train: labels, a body with a
+    /// link, and three notes.
+    private func trainBead() -> Bead {
+        Bead(
+            id: "yd-train", title: "Release train",
+            body: "The release train leaves nightly with what is green.\nSee https://example.com/train for the timetable.",
+            stage: "new",
+            labels: ["topic:trains", "kind:feat", "size:medium"],
+            notes: [
+                BeadNote(seq: 2, kind: "note", author: "mckean", text: "Keep the night run; the day run can wait.", at: "2026-10-07T16:20:00Z"),
+                BeadNote(seq: 5, kind: "note", author: "yardmaster", text: "Plan: read the timetable, then move the departure to 02:00.", at: "2026-10-08T09:45:00Z"),
+                BeadNote(seq: 6, kind: "note", author: "train-new", text: "Moved. test: sh .yardr/test @ a1b2c3d: pass, 226 ok, 0 failed", at: "2026-10-08T11:20:00Z"),
+            ]
+        )
+    }
+
+    /// The fake yard's board, as Canned serves it: two depots.
+    private func cannedBoard() throws -> Flows {
+        struct Result: Decodable {
+            var result: Flows
+        }
+        let canned = try XCTUnwrap(Canned.replies["Flows"])
+        return try JSONDecoder().decode(Result.self, from: Data(canned.utf8)).result
     }
 
     private func loaded() -> Loaded {

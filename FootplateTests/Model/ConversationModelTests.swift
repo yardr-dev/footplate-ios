@@ -7,7 +7,9 @@ import XCTest
 // image alone) offers nothing. A known full id chips in mail, and an
 // unknown one is asked about once: the yard confirming it chips it,
 // refusing it leaves it plain, and answering nothing for want of a
-// link asks again when mail next comes into view.
+// link asks again when mail next comes into view. A chip's tap
+// presents the bead as a sheet over the conversation, leaving the
+// tab alone.
 @MainActor
 final class ConversationModelTests: XCTestCase {
     private var home: FakeFollowed!
@@ -118,6 +120,24 @@ final class ConversationModelTests: XCTestCase {
         try await waitFor("the notices") { [model] in model?.state.letters.count == 1 }
         try await waitFor("the confirmation") { [model] in model?.state.knownBeads == ["yd-links", "yd-shed"] }
         XCTAssertEqual(home.beadAsked, ["yd-shed"])
+    }
+
+    /// A chip's tap presents the bead as a sheet over the conversation
+    /// and leaves the tab on the crew: nothing is pushed, nowhere
+    /// switched. The sheet shuts, and never follows to another
+    /// conversation.
+    func testAChipsTapPresentsTheSheetAndLeavesTheTabAlone() {
+        let nav = Nav()
+        model.open(yard: "", with: "yardmaster")
+        XCTAssertNil(model.state.sheet)
+        model.openBead("yd-old")
+        XCTAssertEqual(model.state.sheet, BeadRoute(yard: "", bead: "yd-old"))
+        XCTAssertEqual(nav.place, .crew)
+        model.closeBeadSheet()
+        XCTAssertNil(model.state.sheet)
+        model.openBead("yd-old")
+        model.open(yard: "", with: "signalman")
+        XCTAssertNil(model.state.sheet, "the sheet never follows to another conversation")
     }
 
     // MARK: - Helpers

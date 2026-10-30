@@ -409,11 +409,20 @@ final class LineModel {
         )
     }
 
-    /// A bead tapped, on a card, a row, a station or a mail's chip:
-    /// its card is pushed onto the lines stack, standing on the board's
-    /// facts while the bead is read for its details, or on the read
-    /// alone where the board holds no such bead.
+    /// A bead tapped, on a card, a row, a station or a landing:
+    /// its card is read and pushed onto the lines stack.
     func openBead(_ id: String) {
+        guard let yard = openedYard else { return }
+        peekBead(id)
+        nav.openBead(yard: yard, bead: id)
+    }
+
+    /// A mail's chip tapped: its card is read for the sheet over the
+    /// conversation, standing on the board's facts while the bead is
+    /// read for its details, or on the read alone where the board
+    /// holds no such bead — but pushed nowhere, and the tab left
+    /// alone. The sheet's Open on the line pushes it with `openBead`.
+    func peekBead(_ id: String) {
         guard let yard = openedYard else { return }
         webViewError = nil
         if let board, holds(board, .bead(BeadRoute(yard: yard, bead: id))) {
@@ -421,7 +430,6 @@ final class LineModel {
         } else {
             closedCards.insert(id)
         }
-        nav.openBead(yard: yard, bead: id)
         Task { @MainActor in await readDetails(of: id) }
     }
 
