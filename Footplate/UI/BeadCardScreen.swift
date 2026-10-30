@@ -2,12 +2,12 @@ import SwiftUI
 
 // One bead opened (design 3.5, after Android's BeadCardView): its title
 // and head, the strip of its line with the bead's stage marked, what is
-// happening now, Ask yardmaster, the bead's details as the yard gave
-// them (its labels, description and notes, newest last), and the
-// bead's page in the web view for the rest. Pushed onto the lines stack
-// from a card's bead id, a row or a station, with the system's back. A
-// place to check and nudge, not to edit. Pull to refresh reads the
-// board and the bead again.
+// happening now, Ask the coordinator, the bead's details as the
+// yard gave them (its labels, description and notes, newest last),
+// and the bead's page in the web view for the rest. Pushed onto the
+// lines stack from a card's bead id, a row or a station, with the
+// system's back. A place to check and nudge, not to edit. Pull to
+// refresh reads the board and the bead again.
 struct BeadCardScreen: View {
     @Bindable var model: LineModel
     var route: BeadRoute
@@ -97,14 +97,15 @@ struct BeadCardScreen: View {
         }
     }
 
-    /// The yardmaster's conversation, its draft started with the bead's
+    /// The coordinator's conversation, its draft started with the bead's
     /// id.
     private func ask(_ card: BeadCard) -> some View {
-        Button("Ask yardmaster") {
-            model.askYardmaster(about: card.bead.id)
+        let coordinator = model.coordinatorName(for: route.yard)
+        return Button("Ask \(coordinator)") {
+            model.askCoordinator(about: card.bead.id)
         }
         .buttonStyle(FootplateButtonStyle(primary: true))
-        .accessibilityHint("Writes to the yardmaster about this bead")
+        .accessibilityHint("Writes to \(coordinator) about this bead")
         .accessibilityIdentifier("bead-ask")
         .padding(.top, 16)
     }

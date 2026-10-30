@@ -6,8 +6,9 @@ import XCTest
 // The lines place rendered in the simulator against a fake-followed
 // board (design 3.5, the bead's screenshot): the overview unfiltered
 // and with one stat filtering it, a bead's card with its details,
-// while they are read and when the read is refused, and a route map
-// with its landings under the landed station. Hand-run for the
+// the card while the details are read and when the read is refused,
+// a route map with its landings under the landed station, and the
+// Ask naming a renamed coordinator. Hand-run for the
 // bead note; the gate runs it too, and it only asserts that the screens
 // render non-empty at phone size. The PNGs land in `LINE_SHOTS_DIR`, or
 // the temporary directory's `line-shots` where that names none.
@@ -119,6 +120,17 @@ final class LineScreenshotTests: XCTestCase {
         XCTAssertEqual(landedMap.stations[1].landings.map(\.ago), ["19m ago", "2h ago"])
         line.openLine(depot: "drafts", flow: "default")
         try await render(NavigationStack { RouteMapScreen(model: line, route: landedRoute) }, scene: scene, to: dir.appendingPathComponent("route-map-landings.png"))
+        // Last: a yard whose coordinator has another name renders the
+        // card's Ask with that name. The `up` reads the board again,
+        // and with it every standing card, so nothing held or refused
+        // may follow it, and the refused card's refusal is disarmed
+        // first, or it lands on this card too.
+        home.beadRefuse = nil
+        var renamed = loaded()
+        renamed.me.yardmaster = "mayor"
+        home.up(renamed)
+        XCTAssertEqual(line.coordinatorName(for: ""), "mayor")
+        try await render(NavigationStack { BeadCardScreen(model: line, route: route) }, scene: scene, to: dir.appendingPathComponent("bead-card-ask-mayor.png"))
         line.leave()
     }
 

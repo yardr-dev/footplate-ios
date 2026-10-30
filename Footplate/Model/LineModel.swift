@@ -10,9 +10,10 @@ import Foundation
 // top to bottom, whatever filter the overview holds, with the landings
 // of the last 24 hours under its landed station. A bead tap, from a
 // card, a row, a station or a landing, pushes its card: the strip with its
-// stage marked, what is happening now, Ask yardmaster, the bead's
-// details (its labels, body and notes, read with `Bead` when the card
-// opens and again with every read of the board), and Open in web view.
+// stage marked, what is happening now, Ask the coordinator, the
+// bead's details (its labels, body and notes, read with `Bead` when
+// the card opens and again with every read of the board), and Open in
+// web view.
 
 /// One open bead on the line, as its row draws it.
 struct LineBead: Equatable, Sendable {
@@ -502,13 +503,22 @@ final class LineModel {
         return url
     }
 
-    /// The card's Ask: the yardmaster's conversation is pushed onto the
+    /// The card's Ask: the coordinator's conversation is pushed onto the
     /// crew stack, its draft starting with the bead's id.
-    func askYardmaster(about bead: String) {
+    func askCoordinator(about bead: String) {
         guard let yard = openedYard else { return }
-        conversation.askAbout(yard: yard, bead: bead)
+        let coordinator = coordinatorName(for: yard)
+        conversation.askAbout(yard: yard, bead: bead, with: coordinator)
         nav.place = .crew
-        nav.openConversation(yard: yard, with: yardmaster)
+        nav.openConversation(yard: yard, with: coordinator)
+    }
+
+    /// The yard's coordinator, whose conversation the card's Ask opens
+    /// and names: what /user/me answered, or the yardmaster where the
+    /// yard answers none or is not read yet.
+    func coordinatorName(for yard: String) -> String {
+        let named = followers()[yard]?.state.loaded?.me.yardmaster ?? ""
+        return named.isEmpty ? yardmaster : named
     }
 
     private func lineDepot(_ depot: FlowDepot, me: String, filter: LineFilter) -> LineDepot {

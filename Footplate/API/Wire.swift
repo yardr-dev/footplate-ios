@@ -96,6 +96,10 @@ struct Me: Equatable, Sendable {
     var saidBy: String = ""
     /// The yard's name.
     var yard: String = ""
+    /// The yard's coordinator, whose conversation the bead card's Ask
+    /// opens. A yard older than the field answers none, and the Ask
+    /// goes to the yardmaster.
+    var yardmaster: String = "yardmaster"
 }
 
 /// What a yard answers a pairing code with: the device token, the one
@@ -524,7 +528,7 @@ struct Event: Equatable, Sendable {
 
 extension Me: Codable {
     enum CodingKeys: String, CodingKey {
-        case user, yard
+        case user, yard, yardmaster
         case saidBy = "said_by"
     }
     init(from decoder: Decoder) throws {
@@ -532,6 +536,7 @@ extension Me: Codable {
         user = box.string(.user)
         saidBy = box.string(.saidBy)
         yard = box.string(.yard)
+        yardmaster = box.string(.yardmaster, "yardmaster")
     }
 }
 

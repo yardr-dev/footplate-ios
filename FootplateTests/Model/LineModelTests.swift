@@ -996,20 +996,23 @@ final class LineModelTests: XCTestCase {
         )
     }
 
-    func testAskingTheYardmasterOpensItsConversationWithTheBeadFirst() async throws {
+    func testAskingTheCoordinatorOpensItsConversationWithTheBeadFirst() async throws {
         home.up(loaded())
         laptop.up(loaded())
         home.board = board()
         laptop.board = board()
         // No yard shown yet: the Ask has nowhere to go.
-        model.askYardmaster(about: "yd-train")
+        model.askCoordinator(about: "yd-train")
         XCTAssertEqual(nav.crewPath, [])
         XCTAssertEqual(nav.place, .lines)
 
         model.open(yard: "laptop")
         try await waitRead()
         model.openBead("yd-train")
-        model.askYardmaster(about: "yd-train")
+        // An answer without the field opens the yardmaster, and the
+        // button says that name.
+        XCTAssertEqual(model.coordinatorName(for: "laptop"), "yardmaster")
+        model.askCoordinator(about: "yd-train")
         // The crew place shows the shown yard's conversation with the
         // yardmaster; the card stays pushed for the way back.
         XCTAssertEqual(nav.place, .crew)
@@ -1023,9 +1026,25 @@ final class LineModelTests: XCTestCase {
         // Asked again with the conversation pushed already: pushed no
         // more, and the bead is still the first words, once.
         conversation.leave()
-        model.askYardmaster(about: "yd-train")
+        model.askCoordinator(about: "yd-train")
         XCTAssertEqual(nav.crewPath.count, 1)
         conversation.open(yard: "laptop", with: "yardmaster")
+        XCTAssertEqual(conversation.state.draft, "yd-train ")
+        // A yard whose coordinator has another name: the Ask opens that
+        // crew member's conversation, and the button says that name,
+        // while the other yard keeps the yardmaster.
+        conversation.leave()
+        var renamed = loaded()
+        renamed.me.yardmaster = "mayor"
+        laptop.up(renamed)
+        XCTAssertEqual(model.coordinatorName(for: "laptop"), "mayor")
+        XCTAssertEqual(model.coordinatorName(for: ""), "yardmaster")
+        nav.crewPath = []
+        model.askCoordinator(about: "yd-train")
+        XCTAssertEqual(nav.place, .crew)
+        XCTAssertEqual(nav.crewPath, [ConversationRoute(yard: "laptop", with: "mayor")])
+        conversation.open(yard: "laptop", with: "mayor")
+        XCTAssertEqual(conversation.state.title, "mayor")
         XCTAssertEqual(conversation.state.draft, "yd-train ")
     }
 

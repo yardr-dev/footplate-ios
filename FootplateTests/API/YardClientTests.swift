@@ -257,6 +257,17 @@ final class YardClientTests: XCTestCase {
         let laptopMe = try await f.laptop.me()
         XCTAssertEqual(laptopMe.yard, "laptop")
         assertHeaders(fake.taken(), token: f.laptopToken, yard: "laptop", session: f.session)
+        // The yard names its coordinator, whose conversation the Ask
+        // opens; a yard older than the field answers none, and the Ask
+        // goes to the yardmaster.
+        fake.setCoordinator(yardName: "laptop", coordinator: "mayor")
+        let renamed = try await f.laptop.me()
+        XCTAssertEqual(renamed.yardmaster, "mayor")
+        _ = fake.taken()
+        fake.setCoordinator(yardName: "", coordinator: nil)
+        let older = try await f.home.me()
+        XCTAssertEqual(older, Me(user: "jo", saidBy: "phone", yard: "south"))
+        _ = fake.taken()
     }
 
     func testABlobIsFetchedByHashAndAnsweredWhole() async throws {

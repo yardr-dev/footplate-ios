@@ -167,6 +167,9 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
         let user: String
         let device: String
         let yard: String
+        /// The coordinator /user/me names; nil, and the answer holds no
+        /// such field, as a yard older than the field answers.
+        var coordinator: String? = "yardmaster"
         var code: String?
         var tokens: Set<String> = []
         var blobs: [String: Data] = [:]
@@ -291,6 +294,15 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
     func setBlob(yardName: String, hash: String, bytes: Data) {
         lock.lock()
         yards.first { $0.name == yardName }?.blobs[hash] = bytes
+        lock.unlock()
+    }
+
+    /// The name the yard named `yardName` answers as its coordinator;
+    /// nil, and /user/me holds no such field, as a yard older than the
+    /// field answers.
+    func setCoordinator(yardName: String, coordinator: String?) {
+        lock.lock()
+        yards.first { $0.name == yardName }?.coordinator = coordinator
         lock.unlock()
     }
 
@@ -683,7 +695,8 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
             return FakeResponse.json(200, #"{"status": "unregistered"}"#)
         }
         if path == "/user/me" {
-            return FakeResponse.json(200, "{\"user\": \"\(yard.user)\", \"said_by\": \"\(yard.device)\", \"yard\": \"\(yard.yard)\"}")
+            let coordinator = yard.coordinator.map { ", \"yardmaster\": \"\($0)\"" } ?? ""
+            return FakeResponse.json(200, "{\"user\": \"\(yard.user)\", \"said_by\": \"\(yard.device)\", \"yard\": \"\(yard.yard)\"\(coordinator)}")
         }
         if path == "/user/events" {
             return FakeResponse(status: 200, headers: ["Content-Type": "application/x-ndjson"], body: Data())

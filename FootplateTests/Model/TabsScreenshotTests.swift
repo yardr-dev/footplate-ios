@@ -133,11 +133,11 @@ final class TabsScreenshotTests: XCTestCase {
         XCTAssertEqual(line.card(for: BeadRoute(yard: "", bead: "yd-fence"))?.head, "yard · Elsewhere")
         try await render(tabs(), scene: scene, size: phone, to: dir.appendingPathComponent("bead-elsewhere-iphone.png"))
 
-        // Ask yardmaster on the card: the crew place on the yardmaster's
+        // The card's Ask: the crew place on the coordinator's
         // conversation, its field started with the bead's id.
         nav.linesPath = []
         line.openBead("yd-train")
-        line.askYardmaster(about: "yd-train")
+        line.askCoordinator(about: "yd-train")
         XCTAssertEqual(nav.place, .crew)
         XCTAssertEqual(nav.crewPath, [ConversationRoute(yard: "", with: "yardmaster")])
         // The screen's open starts the draft; the test makes it, as the

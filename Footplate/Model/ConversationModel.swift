@@ -97,7 +97,8 @@ private enum Picture: Equatable {
 /// How many letters a page is.
 let conversationPage: Int64 = 30
 
-/// The crew member a bead card's Ask writes to.
+/// The crew member a bead card's Ask writes to where the yard names
+/// none of its own: a yard older than /user/me's `yardmaster` field.
 let yardmaster = "yardmaster"
 
 /// The draft with `bead` as its first words, keeping what is there.
@@ -331,11 +332,11 @@ final class ConversationModel {
     }
 
     /// The bead card's Ask: the next open of `yard`'s conversation with
-    /// the yardmaster starts its draft with `bead` as the first words.
-    /// Taken before the screen is shown, as `open` clears the draft of
-    /// a conversation it was not showing.
-    func askAbout(yard: String, bead: String) {
-        pendingAsk = (ConversationKey(yard: yard, with: yardmaster), bead)
+    /// the coordinator named `with` starts its draft with `bead` as the
+    /// first words. Taken before the screen is shown, as `open` clears
+    /// the draft of a conversation it was not showing.
+    func askAbout(yard: String, bead: String, with: String = yardmaster) {
+        pendingAsk = (ConversationKey(yard: yard, with: with), bead)
     }
 
     /// The picture picked under `name` is shrunk for the letter,
