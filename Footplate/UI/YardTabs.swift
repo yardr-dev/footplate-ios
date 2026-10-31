@@ -3,9 +3,11 @@ import UIKit
 import UserNotifications
 
 // The three places as tabs (design 3.5): Crew, Decide with the waiting
-// count as its badge, and Lines, each a NavigationStack. Pair another
-// yard and Sign in are covers over the tabs; the notification
-// permission is asked once the tabs open.
+// count as its badge, and Lines, each a NavigationStack. The yard
+// switch is one sheet over the tabs, since a sheet in every place on
+// the one flag opens on no first tap, with Forget's confirmation
+// after it; Pair another yard and Sign in are covers over the tabs;
+// the notification permission is asked once the tabs open.
 struct TabsView: View {
     @Bindable var nav: Nav
     @Bindable var inbox: InboxModel
@@ -47,6 +49,33 @@ struct TabsView: View {
         }
         .fullScreenCover(isPresented: tabsSignIn) {
             signInScreen
+        }
+        .sheet(isPresented: $nav.yardListShown) {
+            YardSwitchView(
+                state: inbox.state,
+                onSelect: { name in
+                    inbox.select(name)
+                    nav.yardListShown = false
+                },
+                onPairAnother: {
+                    nav.yardListShown = false
+                    inbox.pairAnother()
+                },
+                onForget: {
+                    nav.yardListShown = false
+                    nav.confirmingForget = true
+                }
+            )
+        }
+        .alert("Forget this yard", isPresented: $nav.confirmingForget) {
+            Button("Keep", role: .cancel) {}
+            Button("Forget", role: .destructive) {
+                Task { await inbox.forget() }
+            }
+        } message: {
+            if let sentence = inbox.forgetting() {
+                Text(sentence)
+            }
         }
         .alert("Notifications", isPresented: $askingNotifications) {
             Button("Continue") {

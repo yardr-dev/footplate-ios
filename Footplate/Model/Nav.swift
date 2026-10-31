@@ -88,6 +88,9 @@ final class Nav {
     var pairing: Bool
     /// The paired-yards sheet, opened by a wake with no usable target.
     var yardListShown: Bool
+    /// Forget this yard's confirmation, asked after the switch
+    /// sheet shuts.
+    var confirmingForget: Bool
     /// Sign in, over the Pair screen or the tabs.
     var signIn: SignInRequest?
     /// What the person is told after a yard left on its own, over the
@@ -102,6 +105,7 @@ final class Nav {
         self.linesPath = []
         self.pairing = false
         self.yardListShown = false
+        self.confirmingForget = false
         self.signIn = nil
         self.notice = nil
     }
@@ -196,6 +200,8 @@ final class Nav {
     /// Every yard forgotten: the stacks are cleared for the Pair root.
     func didForgetAll() {
         pairing = false
+        yardListShown = false
+        confirmingForget = false
         signIn = nil
         place = .crew
         crewPath = []

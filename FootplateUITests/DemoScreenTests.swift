@@ -5,7 +5,8 @@ import XCTest
 // stand-in edge: the demo answers in the app. From the first screen a person
 // with no yard sees, Try a demo opens the demo yard under its banner with no
 // permission asked; the yard switch offers the way out in place of pairing
-// another yard; the crew's mail, a letter sent, the one question answered and
+// another yard, on the first tap in a place visited for the first time too;
+// the crew's mail, a letter sent, the one question answered and
 // the line are walked; and Pair a real yard leaves for the first screen with
 // no place of the tabs left, to enter a demo as new, its question open again,
 // and leave by the yard switch. The gate never runs it.
@@ -45,6 +46,18 @@ final class DemoScreenTests: XCTestCase {
         attach(app, "Demo yard switch")
         app.swipeDown(velocity: .fast)
         XCTAssertTrue(waitFor { !self.yardSwitchLeave(app).exists })
+
+        // The switch opens on the first tap in a place visited for the
+        // first time too, tapped straight after the tab change.
+        app.tabBars.buttons["Decide"].tap()
+        XCTAssertTrue(app.buttons["Switch yard"].waitForExistence(timeout: 10))
+        app.buttons["Switch yard"].tap()
+        XCTAssertTrue(yardSwitchLeave(app).waitForExistence(timeout: 5))
+        attach(app, "Demo switch in first-visited Decide")
+        app.swipeDown(velocity: .fast)
+        XCTAssertTrue(waitFor { !self.yardSwitchLeave(app).exists })
+        app.tabBars.buttons["Crew"].tap()
+        XCTAssertTrue(master.waitForExistence(timeout: 10))
 
         // A letter to the yardmaster appears in the conversation once sent.
         master.tap()

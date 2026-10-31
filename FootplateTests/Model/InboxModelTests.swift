@@ -428,6 +428,11 @@ final class InboxModelTests: XCTestCase {
         home.up(loaded())
         laptop.state.status = .down(words: "The yard is away: the edge cannot reach it.", short: "yard away")
         let model = inbox()
+        // The switch sheet and Forget's confirmation stand open.
+        XCTAssertFalse(nav.yardListShown)
+        XCTAssertFalse(nav.confirmingForget)
+        nav.yardListShown = true
+        nav.confirmingForget = true
         let state = await waitFor("the switch", state: { model.state }) { s in s.yards.contains { $0.waiting != nil } }
         let south = state.yards.first { $0.name == "" }!
         XCTAssertEqual(south.waiting, "2 waiting")
@@ -455,6 +460,9 @@ final class InboxModelTests: XCTestCase {
         XCTAssertEqual(nav.decidePath, [DecisionRoute(yard: "", bead: "yd-map", ask: 7)])
         XCTAssertEqual(nav.linesPath, [])
         XCTAssertEqual(records.kept.yards.map(\.name), [""])
+        // Yards stand: the switch and its confirmation are untouched.
+        XCTAssertTrue(nav.yardListShown)
+        XCTAssertTrue(nav.confirmingForget)
 
         // The last yard forgotten clears every stack for the Pair root.
         nav.linesPath = [.bead(BeadRoute(yard: "", bead: "yd-train"))]
@@ -462,6 +470,9 @@ final class InboxModelTests: XCTestCase {
         XCTAssertEqual(nav.decidePath, [])
         XCTAssertEqual(nav.linesPath, [])
         XCTAssertEqual(records.kept.yards.map(\.name), [])
+        // The tabs go with it: the switch and its confirmation shut.
+        XCTAssertFalse(nav.yardListShown)
+        XCTAssertFalse(nav.confirmingForget)
     }
 
     func testAMemberYardSaysWhoseYardItIsInTheHeadLineAndTheSwitch() {

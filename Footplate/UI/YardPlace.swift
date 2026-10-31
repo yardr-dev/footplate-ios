@@ -2,13 +2,13 @@ import SwiftUI
 
 // The chrome the places share (design 3.5): the place's title in the
 // navigation bar, the yard switch as its leading button, the follow's
-// word at its trailing end, the switch as a sheet and Forget as an
-// alert. The tab bar and the back button are the system's own.
+// word at its trailing end. The switch sheet and Forget's alert stand
+// once over the tabs, not here. The tab bar and the back button are
+// the system's own.
 struct YardPlace: ViewModifier {
     @Bindable var inbox: InboxModel
     @Bindable var nav: Nav
     var title: String
-    @State private var confirmingForget = false
 
     func body(content: Content) -> some View {
         let state = inbox.state
@@ -57,33 +57,6 @@ struct YardPlace: ViewModifier {
                             .foregroundStyle(ThemeColor.textSecondary.color)
                     }
                 }
-            }
-        }
-        .sheet(isPresented: $nav.yardListShown) {
-            YardSwitchView(
-                state: state,
-                onSelect: { name in
-                    inbox.select(name)
-                    nav.yardListShown = false
-                },
-                onPairAnother: {
-                    nav.yardListShown = false
-                    inbox.pairAnother()
-                },
-                onForget: {
-                    nav.yardListShown = false
-                    confirmingForget = true
-                }
-            )
-        }
-        .alert("Forget this yard", isPresented: $confirmingForget) {
-            Button("Keep", role: .cancel) {}
-            Button("Forget", role: .destructive) {
-                Task { await inbox.forget() }
-            }
-        } message: {
-            if let sentence = inbox.forgetting() {
-                Text(sentence)
             }
         }
     }
