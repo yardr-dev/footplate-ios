@@ -143,6 +143,46 @@ final class YardClientTests: XCTestCase {
                 XCTAssertEqual(ask.about.map(\.title), ["Release train"])
                 XCTAssertEqual(ask.about.map(\.stage), ["new"])
             }),
+            // A depot pack's card: starter's summary, whose files are tied
+            // to the sentences that name them and whose texts stand behind
+            // them; a summary that folds a file into the closing count and
+            // adds a source; and the same pack as a whole card.
+            ("Bead", #"{"bead":"yd-pack"}"#, {
+                let run = try await laptop.bead("yd-pack").asks[0].run
+                let pack = run?.pack
+                XCTAssertEqual(pack?.summary, true)
+                XCTAssertEqual(pack?.digest, PackCards.digest)
+                XCTAssertEqual(pack?.files.map(\.name), PackCards.files.map(\.name))
+                for file in pack?.files ?? [] {
+                    XCTAssertTrue(run?.does[file.line].hasPrefix("file \(file.name): create, sha256 (none) -> sha256 ") == true, file.name)
+                }
+                let builder = pack?.plan?.objects.first { $0.name == "roles/builder.md" }
+                XCTAssertEqual(builder?.kind, "file")
+                XCTAssertEqual(builder?.action, "create")
+                XCTAssertEqual(builder?.oldSHA256, "")
+                XCTAssertEqual(builder?.newSHA256, PackCards.files[0].newSHA)
+                XCTAssertEqual(builder?.text, PackCards.files[0].text)
+                // What the phone reads none of is passed over.
+                XCTAssertEqual(pack?.plan?.objects.filter { $0.kind == "group" }.map(\.name), ["yard-builders", "yard-reviewers", "yard-assembly"])
+                XCTAssertEqual(run?.carried.count, 0)
+            }),
+            ("Bead", #"{"bead":"yd-pack-moved"}"#, {
+                let run = try await laptop.bead("yd-pack-moved").asks[0].run
+                // A folded file has no line: -1, never the first sentence's 0,
+                // and so is a line the yard left out.
+                XCTAssertEqual(run?.pack?.files.map(\.line).last, -1)
+                XCTAssertEqual(try JSONDecoder().decode(PackFile.self, from: Data(#"{"name":"x"}"#.utf8)).line, -1)
+                XCTAssertEqual(run?.pack?.plan?.objects.first?.oldSHA256, PackCards.sha256("# Builder\n\nYou implement a bead.\n"))
+                XCTAssertEqual(run?.carried.map(\.name), ["wired"])
+                XCTAssertEqual(run?.carried.first?.files.map(\.program), ["wired/limits"])
+                XCTAssertEqual(run?.carried.first?.files.first?.sha256, PackCards.sha256("#!/bin/sh\nexit 0\n"))
+            }),
+            ("Bead", #"{"bead":"yd-pack-whole"}"#, {
+                let pack = try await laptop.bead("yd-pack-whole").asks[0].run?.pack
+                XCTAssertEqual(pack?.summary, false)
+                XCTAssertEqual(pack?.files.count, 0)
+                XCTAssertEqual(pack?.plan?.objects.count, 8)
+            }),
             // The marks of a secret ask: the login a code goes to, the
             // harness an API key is for, the user whose own login it is.
             ("Bead", #"{"bead":"yd-login"}"#, {

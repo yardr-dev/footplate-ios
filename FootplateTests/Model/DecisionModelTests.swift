@@ -219,6 +219,7 @@ final class DecisionModelTests: XCTestCase {
         XCTAssertTrue(state.approvable)
         XCTAssertNil(state.elsewhere)
         XCTAssertEqual(state.proposes, ["yardr depot tidy --merged", "removes the worktrees of landed beads", "deletes 12 directories under ~/.yardr/worktrees"])
+        XCTAssertNil(state.pack, "no other run card opens a text")
         // A run ask is approved, not picked, and wants nothing chosen.
         await card.pick()
         XCTAssertTrue(calls("AnswerAsk").isEmpty)
@@ -247,6 +248,121 @@ final class DecisionModelTests: XCTestCase {
         typed.typed("9")
         await typed.approve()
         XCTAssertEqual(calls("ApproveAsk").count, 2)
+    }
+
+    // A depot pack too large to read whole (yardr design y6gp 3.3): its
+    // sentences stay the card's first screen, each file's line opens that
+    // file's whole text under the hashes the line gives, and nothing about
+    // approving it changes.
+    func testASummaryCardReadsItsSummaryFirstAndEachFileOpensItsText() async throws {
+        let card = await opened("yd-pack", 61)
+        let state = card.state
+
+        // The lines of a whole card: the command, what it is, the yard's
+        // sentences, and what takes it back.
+        let does = PackCards.sentences(files: PackCards.files).does
+        XCTAssertEqual(state.proposes[0], "yardr pack apply starter --depot yard --flow default")
+        XCTAssertEqual(state.proposes[1], "Import a pack into a depot: set the yard to what the pack says")
+        XCTAssertEqual(Array(state.proposes[2 ..< 2 + does.count]), does)
+        XCTAssertTrue(state.proposes[2].contains("digest sha256:\(PackCards.digest)"), "the pack line names the pack by its digest")
+        XCTAssertTrue(state.proposes.last?.hasPrefix("back: no one command takes it back") == true)
+        XCTAssertEqual(state.weighty.count, 1)
+        XCTAssertTrue(state.weighty[0].hasPrefix("WEIGHTY · code: the first install of pack starter into depot yard makes file roles/builder.md, "))
+        XCTAssertTrue(state.approvable)
+
+        // Every file opens from its own line, found by the line the yard
+        // tied it to; no other line opens anything, and nothing is open.
+        let pack = try XCTUnwrap(state.pack)
+        XCTAssertEqual(pack.opens.count, PackCards.files.count)
+        XCTAssertEqual(pack.more, [])
+        XCTAssertNil(pack.text)
+        for file in PackCards.files {
+            let (index, entry) = try XCTUnwrap(pack.opens.first { $0.value.name == file.name }, file.name)
+            XCTAssertEqual(entry, PackEntry(kind: .file, name: file.name, action: "create"))
+            XCTAssertTrue(state.proposes[index].hasPrefix("file \(file.name): create, sha256 (none) -> sha256 \(file.newSHA)"), file.name)
+        }
+
+        // A create opens as its text, headed by the hashes of its line.
+        let builder = PackCards.files[0]
+        let (index, entry) = try XCTUnwrap(pack.opens.first { $0.value.name == builder.name })
+        card.openText(entry)
+        let text = try XCTUnwrap(card.state.pack?.text)
+        XCTAssertEqual(text.entry, entry)
+        XCTAssertEqual(text.hashes, PackHashes(old: "", new: builder.newSHA))
+        XCTAssertEqual(text.parts, [PackPart(title: "Text", body: builder.text)])
+        XCTAssertTrue(state.proposes[index].contains(try XCTUnwrap(text.hashes).new), "the hash on the line is the hash over the text")
+        let lines = text.parts[0].lines
+        XCTAssertEqual(lines.count, builder.lines.count, "the newline that ends the text is no line")
+        XCTAssertEqual(lines[1], PackLine(text: ""), "a blank line is kept")
+        XCTAssertTrue(lines.allSatisfy { !$0.quiet })
+        card.closeText()
+        XCTAssertNil(card.state.pack?.text)
+
+        // A text open is shut with the card.
+        card.openText(entry)
+        card.leave()
+        card.open(yard: "laptop", bead: "yd-pack", ask: 61)
+        XCTAssertNil(card.state.pack?.text)
+
+        // Approving is the run card's: behind the unlock, always with
+        // `weighed`. A strong card the yard refuses from a device shows
+        // the yard's sentence and the command, and its texts stay readable.
+        let strong = "ask 61 is strong (code): this approval arrived through the device phone, and a strong card is not approved through a device. Approve it at a terminal on the yard's machine. Nothing ran, and the ask stays open"
+        fake.nextFor(yard: "laptop", path: "/user/call/ApproveAsk", FakeResponse.json(200, #"{"error": {"code": "error", "message": "\#(strong)"}}"#))
+        unlock.promptResults = [true]
+        await card.approve()
+        let refused = await waitFor("the refusal shown", state: { card.state }) { $0.elsewhere != nil }
+        XCTAssertEqual(unlock.reasons, ["approve yardr pack apply starter --depot yard --flow default in laptop"])
+        XCTAssertEqual(calls("ApproveAsk").count, 1)
+        XCTAssertEqual(calls("ApproveAsk")[0]["weighed"] as? Bool, true)
+        XCTAssertEqual(refused.elsewhere, "yardr bead answer yd-pack 61 --approve")
+        XCTAssertEqual(refused.refusal, strong)
+        XCTAssertEqual(refused.pack?.opens.count, PackCards.files.count)
+        card.openText(entry)
+        XCTAssertNotNil(card.state.pack?.text)
+        card.leave()
+
+        // What the sentences give no line: a file the closing count folded
+        // in and a source the import adds, listed after them. A change opens
+        // as its diff, header lines quiet, with its new text behind it.
+        let moved = await opened("yd-pack-moved", 61)
+        let movedPack = try XCTUnwrap(moved.state.pack)
+        let folded = try XCTUnwrap(PackCards.files.last)
+        XCTAssertEqual(movedPack.more, [PackEntry(kind: .file, name: folded.name, action: "create"), PackEntry(kind: .source, name: "wired", action: "added")])
+        XCTAssertEqual(movedPack.opens.count, 4)
+        XCTAssertFalse(movedPack.opens.values.contains { $0.name == folded.name })
+        let (_, changed) = try XCTUnwrap(movedPack.opens.first { $0.value.action == "change" })
+        moved.openText(changed)
+        let diff = try XCTUnwrap(moved.state.pack?.text)
+        XCTAssertEqual(diff.hashes, PackHashes(old: PackCards.sha256("# Builder\n\nYou implement a bead.\n"), new: PackCards.sha256("# Builder\n\nYou implement one bead.\n")))
+        XCTAssertEqual(diff.parts.map(\.title), ["Diff", "New text"])
+        XCTAssertEqual(diff.parts[0].lines.map(\.quiet), [true, true, true, false, false, false, false])
+        XCTAssertEqual(Array(diff.parts[0].lines.map(\.text).suffix(2)), ["-You implement a bead.", "+You implement one bead."])
+        XCTAssertEqual(diff.parts[1].body, "# Builder\n\nYou implement one bead.\n")
+        moved.openText(movedPack.more[0])
+        XCTAssertEqual(moved.state.pack?.text?.parts, [PackPart(title: "Text", body: folded.text)])
+        moved.openText(movedPack.more[1])
+        let source = try XCTUnwrap(moved.state.pack?.text)
+        XCTAssertNil(source.hashes)
+        XCTAssertEqual(source.parts, [
+            PackPart(title: "Declaration", body: "name: wired\nbase: https://wired.example.com/v1\n"),
+            PackPart(title: "Command file wired/limits", body: "#!/bin/sh\nexit 0\n", sha256: PackCards.sha256("#!/bin/sh\nexit 0\n")),
+        ])
+        moved.openText(PackEntry(kind: .file, name: "roles/gone.md", action: "create"))
+        XCTAssertNil(moved.state.pack?.text, "a text the card does not hold opens nothing")
+        moved.leave()
+
+        // A whole card has no summary, and a card cut for a device that is
+        // no operator's has neither the sentences nor the texts: both read
+        // as they did.
+        let whole = await opened("yd-pack-whole", 61)
+        XCTAssertNil(whole.state.pack)
+        XCTAssertTrue(whole.state.proposes.contains { $0.hasPrefix("file roles/builder.md: create") })
+        whole.leave()
+        fake.nextFor(yard: "laptop", path: "/user/call/Bead", FakeResponse.json(200, #"{"result": {"id": "yd-pack-cut", "title": "Install starter", "stage": "new", "labels": [], "notes": [], "asks": [{"ask": 62, "to": "jo", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "question": "Install the starter pack into depot yard?", "context": [], "options": [], "state": "open", "run": {"argv": [], "command": "", "does": [], "back": "", "pack": {"name": "starter", "depot": "yard", "label": "embedded in yardr 0.9.4"}}}]}}"#))
+        let cut = await opened("yd-pack-cut", 62)
+        XCTAssertNil(cut.state.pack)
+        XCTAssertEqual(cut.state.proposes, [])
     }
 
     func testASetupAskIsApprovedWithItsPresetBehindTheUnlock() async {

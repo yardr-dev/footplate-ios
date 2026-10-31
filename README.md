@@ -27,7 +27,10 @@ unlock; API keys and every other secret are answered on the yard's machine.
 A bead opened from the lines place shows what the yard holds of it, its
 labels, description and notes, with its page in the web view one tap away
 for the rest. A decision's context stands shut behind a row, Show context,
-until it is tapped.
+until it is tapped. A depot pack too large to read whole comes as a summary
+card: its summary is the first screen, and each file's line opens that
+file's whole text over the card, under its name, its action and its old and
+new SHA-256.
 
 Tracked in the yard as the `footplate-ios` depot. `.yardr/` holds its flow,
 roles and merge gate. Every change is reviewed twice before it lands:

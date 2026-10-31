@@ -24,6 +24,11 @@ private func refusalWords(_ error: ApiError) -> String { words(error) }
 // press; on a secret card it sends at the first, with no words and no
 // field, since the yard takes none there. What was sent leaves the card;
 // the list moves it to Decided when the yard's `noted` event comes.
+// A depot pack too large to read whole is a summary card (yardr design
+// y6gp 3.3): its sentences, which are `run.does`, are the first screen,
+// and each file's line opens that file's whole text over the card, read
+// from the ask the yard already sent. Approving it is the run card's,
+// and a strong one is refused from a device by the yard, not here.
 
 /// One option of a card, numbered from 1, `you decide` last.
 struct Choice: Equatable, Sendable {
@@ -51,6 +56,81 @@ struct AboutDetail: Equatable, Sendable {
     var error: String? = nil
 }
 
+/// A text behind a summary card's sentences: a file of the plan the
+/// import writes, or a source it adds.
+struct PackEntry: Equatable, Hashable, Sendable {
+    enum Kind: Hashable, Sendable { case file, source }
+    var kind: Kind
+    var name: String
+    /// What the import does with it, in the yard's word: `create` or
+    /// `change` of a file, `added` of a source.
+    var action: String
+}
+
+/// A file's SHA-256 as the copy that stands has it and as the import
+/// writes it, whole. The old is empty on a create.
+struct PackHashes: Equatable, Sendable {
+    var old: String
+    var new: String
+}
+
+/// One part of an opened text: a diff or a text, with the SHA-256 the
+/// yard gave it where it gave one (a command file's).
+struct PackPart: Equatable, Sendable {
+    var title: String
+    var body: String
+    var diff: Bool = false
+    var sha256: String = ""
+}
+
+/// One line of a part's body, and whether it is quiet: a diff's header,
+/// the file names and the hunk markers, drawn quieter than the lines it
+/// frames.
+struct PackLine: Equatable, Sendable {
+    var text: String
+    var quiet: Bool = false
+}
+
+extension PackPart {
+    /// The body as its lines. The newline that ends the last one is not a
+    /// line of its own. In a diff, what comes before the first hunk and
+    /// each hunk's marker are quiet; the lines of a hunk are not, whatever
+    /// they begin with.
+    var lines: [PackLine] {
+        var split = body.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).map(String.init)
+        if split.last?.isEmpty == true { split.removeLast() }
+        var inHunk = false
+        return split.map { line in
+            guard diff else { return PackLine(text: line) }
+            if line.hasPrefix("@@") { inHunk = true }
+            return PackLine(text: line, quiet: !inHunk || line.hasPrefix("@@"))
+        }
+    }
+}
+
+/// A text opened over a summary card, headed by its name, its action and
+/// its hashes as the card's line gives them.
+struct PackText: Equatable, Identifiable, Sendable {
+    var entry: PackEntry
+    /// A file's hashes; nil of a source, whose command files carry theirs.
+    var hashes: PackHashes? = nil
+    var parts: [PackPart]
+
+    var id: String { "\(entry.kind)/\(entry.name)" }
+}
+
+/// What a summary card opens behind its sentences.
+struct PackSummary: Equatable, Sendable {
+    /// The lines of `proposes` that open a file, by their index there.
+    var opens: [Int: PackEntry] = [:]
+    /// What the sentences give no line of its own: the files the closing
+    /// count folded in, then the sources the import adds. None of it hides
+    /// behind a count.
+    var more: [PackEntry] = []
+    /// The text open over the card; nil while none is.
+    var text: PackText? = nil
+}
+
 struct DecisionState: Equatable, Sendable {
     /// The bead was read: the card can be drawn.
     var read: Bool = false
@@ -73,6 +153,9 @@ struct DecisionState: Equatable, Sendable {
     var words: String = ""
     /// What a card the edge cannot approve proposes, line by line.
     var proposes: [String] = []
+    /// What a summary card opens behind those lines; nil on every other
+    /// card, a whole pack card among them.
+    var pack: PackSummary? = nil
     /// The card is approved with Approve behind the gate, not picked: a
     /// run or setup ask the yard has not refused.
     var approvable: Bool = false
@@ -131,6 +214,9 @@ final class DecisionModel {
     /// the card is open; a failed row's error is forgotten when the row
     /// shuts, so opening it again reads anew.
     private var expandedDetails: Set<String> = []
+    /// The text of a summary card open over it. Per ask and kept nowhere,
+    /// like the toggles above.
+    private var shownText: PackEntry? = nil
     private var detailBodies: [String: String] = [:]
     /// Identifies the read that owns each loading row, so a stale read
     /// cannot clear a newer read for the same bead.
@@ -218,6 +304,7 @@ final class DecisionModel {
             chosen: chosen,
             words: wordsText,
             proposes: proposes(ask),
+            pack: packSummary(ask, shown: shownText),
             approvable: approvable,
             elsewhere: elsewhereCommand(bead: bead, ask: ask, chosen: chosen, refused: refused),
             refusal: refusal,
@@ -256,6 +343,7 @@ final class DecisionModel {
             sending = false
             contextShown = false
             expandedDetails = []
+            shownText = nil
             detailBodies = [:]
             detailReads = [:]
             detailErrors = [:]
@@ -278,6 +366,7 @@ final class DecisionModel {
         readTask?.cancel()
         readTask = nil
         unlocking = nil
+        shownText = nil
         // A read finishing off-screen is discarded. Shut its empty row
         // so reopening the card offers a fresh tap instead of a blank one.
         for id in detailReads.keys where detailBodies[id] == nil {
@@ -312,6 +401,21 @@ final class DecisionModel {
     func toggleContext() {
         guard readAsk != nil else { return }
         contextShown.toggle()
+    }
+
+    /// A line of a summary card tapped: the whole text of its file, or of
+    /// a source the import adds, opens over the card. It is read from the
+    /// ask already read, so nothing is called; the text shown is whatever
+    /// the card holds when it is drawn, and none once the card no longer
+    /// holds it.
+    func openText(_ entry: PackEntry) {
+        guard readAsk != nil else { return }
+        shownText = entry
+    }
+
+    /// The text shut: the card as it was.
+    func closeText() {
+        shownText = nil
     }
 
     /// A details row tapped: shut where open, and where shut opened
@@ -664,10 +768,7 @@ private func weightOf(board: Board?, bead: String, askNumber: Int64, ask: BeadAs
 /// or what a secret is asked for.
 func proposes(_ ask: BeadAsk) -> [String] {
     if let run = ask.run {
-        var lines: [String] = []
-        let command = run.command.isEmpty ? run.argv.joined(separator: " ") : run.command
-        if !command.isEmpty { lines.append(command) }
-        if !run.description.isEmpty { lines.append(run.description) }
+        var lines = runHead(run)
         lines += run.does
         if !run.back.isEmpty { lines.append("back: \(run.back)") }
         return lines
@@ -687,4 +788,64 @@ func proposes(_ ask: BeadAsk) -> [String] {
         return lines
     }
     return []
+}
+
+/// The lines a run card has before its own sentences: the command whole,
+/// then what the command is.
+private func runHead(_ run: Run) -> [String] {
+    var lines: [String] = []
+    let command = run.command.isEmpty ? run.argv.joined(separator: " ") : run.command
+    if !command.isEmpty { lines.append(command) }
+    if !run.description.isEmpty { lines.append(run.description) }
+    return lines
+}
+
+/// What a summary card opens behind its sentences, nil on any other card.
+/// A file is opened from the line the yard tied it to (`files`, by the
+/// index in `does`), never from the line's words; the files with no line
+/// of their own, and the sources the import adds, are listed after the
+/// lines, so that everything the card's closing count names can be read.
+/// `shown` is the text asked for, found again in the ask as it is now.
+func packSummary(_ ask: BeadAsk, shown: PackEntry?) -> PackSummary? {
+    guard let run = ask.run, let pack = run.pack, pack.summary else { return nil }
+    let objects = pack.plan?.objects ?? []
+    let head = runHead(run).count
+    var summary = PackSummary()
+    for file in pack.files {
+        guard let object = objects.first(where: { $0.kind == "file" && $0.name == file.name }) else { continue }
+        let entry = PackEntry(kind: .file, name: object.name, action: object.action)
+        if run.does.indices.contains(file.line) {
+            summary.opens[head + file.line] = entry
+        } else {
+            summary.more.append(entry)
+        }
+    }
+    summary.more += run.carried.map { PackEntry(kind: .source, name: $0.name, action: "added") }
+    summary.text = shown.flatMap { packText($0, of: run) }
+    return summary
+}
+
+/// The text of `entry` as the ask carries it: a create's whole text, a
+/// change's diff with its new text behind it, a source's declaration with
+/// its command files. Nil where the ask no longer holds it.
+private func packText(_ entry: PackEntry, of run: Run) -> PackText? {
+    switch entry.kind {
+    case .file:
+        guard let object = run.pack?.plan?.objects.first(where: { $0.kind == "file" && $0.name == entry.name }) else { return nil }
+        let parts = object.action == "change"
+            ? [PackPart(title: "Diff", body: object.diff, diff: true), PackPart(title: "New text", body: object.text)]
+            : [PackPart(title: "Text", body: object.text)]
+        return PackText(
+            entry: PackEntry(kind: .file, name: object.name, action: object.action),
+            hashes: PackHashes(old: object.oldSHA256, new: object.newSHA256),
+            parts: parts
+        )
+    case .source:
+        guard let source = run.carried.first(where: { $0.name == entry.name }) else { return nil }
+        let files = source.files.map { PackPart(title: "Command file \($0.program)", body: $0.text, sha256: $0.sha256) }
+        return PackText(
+            entry: PackEntry(kind: .source, name: source.name, action: "added"),
+            parts: [PackPart(title: "Declaration", body: source.text)] + files
+        )
+    }
 }

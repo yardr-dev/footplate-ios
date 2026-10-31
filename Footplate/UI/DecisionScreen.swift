@@ -14,7 +14,10 @@ import UIKit
 // one secret it can, a harness login's one-time code, takes the code in
 // a field that does not echo and Give behind the unlock; the web
 // addresses in a card's question and context, the sign-in page among
-// them, are links.
+// them, are links. A depot pack too large to read whole is a summary
+// card: its sentences are the first screen, each file's line a row that
+// opens that file's whole text in a sheet over the card, under its name,
+// its action and its SHA-256s.
 
 /// The decisions list, in the place's own stack.
 struct DecisionsScreen: View {
@@ -151,6 +154,11 @@ struct DecisionScreen: View {
         .onChange(of: state.givesCode) { _, gives in
             if !gives { codeField = "" }
         }
+        // A summary card's text: shut on a swipe down, and gone once the
+        // card no longer holds it.
+        .sheet(item: Binding(get: { model.state.pack?.text }, set: { if $0 == nil { model.closeText() } })) { text in
+            PackTextScreen(text: text)
+        }
     }
 
     @ViewBuilder
@@ -175,10 +183,37 @@ struct DecisionScreen: View {
         if state.approvable {
             options(state, enabled: approving && canChoose)
         }
-        ForEach(Array(state.proposes.enumerated()), id: \.offset) { _, line in
-            Text(line)
-                .themeType(.code)
+        ForEach(Array(state.proposes.enumerated()), id: \.offset) { index, line in
+            if let entry = state.pack?.opens[index] {
+                textRow(entry) {
+                    Text(line)
+                        .themeType(.code)
+                        .foregroundStyle(ThemeColor.textPrimary.color)
+                }
+            } else {
+                Text(line)
+                    .themeType(.code)
+                    .foregroundStyle(ThemeColor.textPrimary.color)
+            }
+        }
+        if let more = state.pack?.more, !more.isEmpty {
+            Text("More in the full text")
+                .themeType(.section)
                 .foregroundStyle(ThemeColor.textPrimary.color)
+                .accessibilityAddTraits(.isHeader)
+                .padding(.top, 8)
+            ForEach(more, id: \.self) { entry in
+                textRow(entry) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(entry.kind == .source ? "source \(entry.name)" : entry.name)
+                            .themeType(.code)
+                            .foregroundStyle(ThemeColor.textPrimary.color)
+                        Text(entry.action)
+                            .themeType(.meta)
+                            .foregroundStyle(ThemeColor.textSecondary.color)
+                    }
+                }
+            }
         }
         if !state.approvable {
             options(state, enabled: picking && canChoose)
@@ -339,6 +374,27 @@ struct DecisionScreen: View {
         [detail.title, detail.stage].filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
+    /// A row of a summary card that opens a text: the line it stands
+    /// for, and the chevron every row that opens something has.
+    private func textRow<Label: View>(_ entry: PackEntry, @ViewBuilder label: () -> Label) -> some View {
+        Button {
+            model.openText(entry)
+        } label: {
+            HStack(spacing: 8) {
+                label()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(ThemeColor.textSecondary.color)
+            }
+            .frame(minHeight: 48)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Opens the whole text")
+        .accessibilityIdentifier("text/\(entry.name)")
+    }
+
     private func elsewhere(_ command: String, state: DecisionState) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             if state.secretElsewhere {
@@ -430,5 +486,122 @@ struct DecisionScreen: View {
             .textInputAutocapitalization(.never)
             .themeType(.body)
             .fieldBox()
+    }
+}
+
+/// A text of a summary card read whole, over the card: its name, what the
+/// import does with it and, of a file, its old and new SHA-256 as the
+/// card's line gives them, whole, so that the hash on the line and the
+/// hash over the text can be seen to be one. Then the text: a create's,
+/// a change's diff with its new text behind it, a source's declaration
+/// with each command file under its SHA-256. The lines are drawn lazily,
+/// since a file can run to thousands.
+struct PackTextScreen: View {
+    var text: PackText
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    header
+                    ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                        self.row(row)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 16)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .foregroundStyle(ThemeColor.textPrimary.color)
+            .background(ThemeColor.surfaceApp.color.ignoresSafeArea())
+            .navigationTitle(String(text.entry.name.split(separator: "/").last ?? ""))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                        .accessibilityIdentifier("text-done")
+                }
+            }
+        }
+        .presentationDetents([.large])
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(text.entry.name)
+                .themeType(.title)
+                .foregroundStyle(ThemeColor.textPrimary.color)
+                .textSelection(.enabled)
+                .accessibilityAddTraits(.isHeader)
+            Text(text.entry.kind == .source ? "source, \(text.entry.action)" : text.entry.action)
+                .themeType(.meta)
+                .foregroundStyle(ThemeColor.textSecondary.color)
+                .padding(.top, 4)
+            if let hashes = text.hashes {
+                hash("Old SHA-256", hashes.old.isEmpty ? "(none)" : hashes.old)
+                hash("New SHA-256", hashes.new.isEmpty ? "(none)" : hashes.new)
+            }
+        }
+    }
+
+    private func hash(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(label)
+                .themeType(.meta)
+                .foregroundStyle(ThemeColor.textSecondary.color)
+            Text(value)
+                .themeType(.code)
+                .foregroundStyle(ThemeColor.textPrimary.color)
+                .textSelection(.enabled)
+        }
+        .padding(.top, 12)
+    }
+
+    /// What the parts of the text are drawn as, one row to a line under one
+    /// ForEach: a ForEach of ForEachs, in a LazyVStack in a sheet, left the
+    /// lines of a short second part unbuilt (a part of three drew its title
+    /// and nothing under it).
+    private enum Row {
+        case title(String)
+        case hash(String)
+        case line(PackLine)
+        case empty
+    }
+
+    private var rows: [Row] {
+        text.parts.flatMap { part -> [Row] in
+            var rows: [Row] = [.title(part.title)]
+            if !part.sha256.isEmpty { rows.append(.hash(part.sha256)) }
+            return rows + (part.body.isEmpty ? [.empty] : part.lines.map(Row.line))
+        }
+    }
+
+    @ViewBuilder
+    private func row(_ row: Row) -> some View {
+        switch row {
+        case .title(let title):
+            Text(title)
+                .themeType(.section)
+                .foregroundStyle(ThemeColor.textPrimary.color)
+                .accessibilityAddTraits(.isHeader)
+                .padding(.top, 24)
+                .padding(.bottom, 4)
+        case .hash(let sha256):
+            hash("SHA-256", sha256)
+                .padding(.bottom, 8)
+        case .line(let line):
+            // An empty line has no height: a space keeps the gap.
+            Text(line.text.isEmpty ? " " : line.text)
+                .themeType(.code)
+                .foregroundStyle(line.quiet ? ThemeColor.textSecondary.color : ThemeColor.textPrimary.color)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+        case .empty:
+            Text("Empty")
+                .themeType(.meta)
+                .foregroundStyle(ThemeColor.textSecondary.color)
+        }
     }
 }

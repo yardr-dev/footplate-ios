@@ -264,6 +264,68 @@ struct Secret: Equatable, Sendable {
     var `as`: String = ""
 }
 
+/// A command file of a source a card adds: the program as the
+/// declaration names it, its whole text and the SHA-256 of that text.
+struct CarriedFile: Equatable, Sendable {
+    var program: String = ""
+    var text: String = ""
+    var sha256: String = ""
+}
+
+/// A source a card adds, as the ask carries it: the declaration's whole
+/// text and each command file it names.
+struct CarriedSource: Equatable, Sendable {
+    var name: String = ""
+    var text: String = ""
+    var files: [CarriedFile] = []
+}
+
+/// One object of a depot pack's plan, as far as a text is read from it.
+/// Of a file: the SHA-256 of the copy that stands and of the one the
+/// import writes, whole, then the new text and the unified diff old
+/// against new.
+struct PlanObject: Equatable, Sendable {
+    var kind: String = ""
+    var name: String = ""
+    /// `create`, `change`, `unchanged` or `dropped` among others.
+    var action: String = ""
+    var oldSHA256: String = ""
+    var newSHA256: String = ""
+    var text: String = ""
+    var diff: String = ""
+}
+
+struct PackPlan: Equatable, Sendable {
+    var objects: [PlanObject] = []
+}
+
+/// A file of a summary card tied to its line, so a client opens the text
+/// from the line and never parses the sentences: `name` is the plan
+/// object of kind file that holds the text and the hashes, `line` the
+/// index of the file's line in the run's `does`, or -1 for a file the
+/// closing count folded in.
+struct PackFile: Equatable, Sendable {
+    var name: String = ""
+    var line: Int = -1
+}
+
+/// The pack a pack apply card names. A whole card has no `summary` and
+/// no `files`; a summary card is one too large to read whole, whose
+/// `does` names the pack by its digest and each file by its hash, with
+/// the texts behind it in `plan` and in the run's `carried`. Both are an
+/// operator's alone: a device that is no operator's is told the name,
+/// the depot and the label.
+struct RunPack: Equatable, Sendable {
+    var name: String = ""
+    var kind: String = ""
+    var depot: String = ""
+    var label: String = ""
+    var digest: String = ""
+    var summary: Bool = false
+    var files: [PackFile] = []
+    var plan: PackPlan? = nil
+}
+
 /// The command a run ask proposes: what a card says of it. The phone
 /// sends no `ask` values; an approval the yard refuses for them shows
 /// the yard command instead (design 3.5).
@@ -277,6 +339,11 @@ struct Run: Equatable, Sendable {
     var backBy: String = ""
     /// The names the approval gives values for in the clear.
     var ask: [String] = []
+    /// The declarations and command files a card that adds a source
+    /// brings, for the texts behind the sentences.
+    var carried: [CarriedSource] = []
+    /// The pack a pack apply card names; nil on any other command.
+    var pack: RunPack? = nil
 }
 
 /// A yard source whose account a setup card offers to reuse.
@@ -703,9 +770,81 @@ extension Secret: Codable {
     }
 }
 
+extension CarriedFile: Codable {
+    enum CodingKeys: String, CodingKey { case program, text, sha256 }
+    init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        program = box.string(.program)
+        text = box.string(.text)
+        sha256 = box.string(.sha256)
+    }
+}
+
+extension CarriedSource: Codable {
+    enum CodingKeys: String, CodingKey { case name, text, files }
+    init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        name = box.string(.name)
+        text = box.string(.text)
+        files = box.list(.files, of: CarriedFile.self)
+    }
+}
+
+extension PlanObject: Codable {
+    enum CodingKeys: String, CodingKey {
+        case kind, name, action, text, diff
+        case oldSHA256 = "file_old_sha256"
+        case newSHA256 = "file_new_sha256"
+    }
+    init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        kind = box.string(.kind)
+        name = box.string(.name)
+        action = box.string(.action)
+        oldSHA256 = box.string(.oldSHA256)
+        newSHA256 = box.string(.newSHA256)
+        text = box.string(.text)
+        diff = box.string(.diff)
+    }
+}
+
+extension PackPlan: Codable {
+    enum CodingKeys: String, CodingKey { case objects }
+    init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        objects = box.list(.objects, of: PlanObject.self)
+    }
+}
+
+extension PackFile: Codable {
+    enum CodingKeys: String, CodingKey { case name, line }
+    init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        name = box.string(.name)
+        // A line the yard left out is no line: 0 would tie the file to the
+        // card's first sentence.
+        line = Int(box.int64(.line, -1))
+    }
+}
+
+extension RunPack: Codable {
+    enum CodingKeys: String, CodingKey { case name, kind, depot, label, digest, summary, files, plan }
+    init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        name = box.string(.name)
+        kind = box.string(.kind)
+        depot = box.string(.depot)
+        label = box.string(.label)
+        digest = box.string(.digest)
+        summary = box.bool(.summary)
+        files = box.list(.files, of: PackFile.self)
+        plan = box.optional(.plan, of: PackPlan.self)
+    }
+}
+
 extension Run: Codable {
     enum CodingKeys: String, CodingKey {
-        case argv, command, description, does, back, ask
+        case argv, command, description, does, back, ask, carried, pack
         case backBy = "back_by"
     }
     init(from decoder: Decoder) throws {
@@ -717,6 +856,8 @@ extension Run: Codable {
         back = box.string(.back)
         backBy = box.string(.backBy)
         ask = box.list(.ask, of: String.self)
+        carried = box.list(.carried, of: CarriedSource.self)
+        pack = box.optional(.pack, of: RunPack.self)
     }
 }
 
