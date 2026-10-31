@@ -44,6 +44,9 @@ struct InboxState: Equatable, Sendable {
     var notice: String? = nil
     /// The selected yard's open asks, for a later place's count.
     var waiting: Int = 0
+    /// The yard is the demo's: the switch offers the way out in place of
+    /// pairing another yard or forgetting this one.
+    var demo: Bool = false
 }
 
 @MainActor
@@ -58,6 +61,9 @@ final class InboxModel {
     var followers: @MainActor () -> [String: any Followed]
     private let mailroom: Mailroom
     private let nav: Nav
+    /// The way out of a demo yard, which pairs nothing: set by the demo
+    /// alone, and then the model is the demo's.
+    private let leave: (@MainActor () -> Void)?
     private let now: @Sendable () -> Date
     private let zone: @Sendable () -> TimeZone
 
@@ -67,6 +73,7 @@ final class InboxModel {
         followers: @escaping @MainActor () -> [String: any Followed],
         mailroom: Mailroom,
         nav: Nav,
+        leave: (@MainActor () -> Void)? = nil,
         now: @escaping @Sendable () -> Date = { Date() },
         zone: @escaping @Sendable () -> TimeZone = { .current }
     ) {
@@ -75,6 +82,7 @@ final class InboxModel {
         self.followers = followers
         self.mailroom = mailroom
         self.nav = nav
+        self.leave = leave
         self.now = now
         self.zone = zone
     }
@@ -100,8 +108,13 @@ final class InboxModel {
         nav.openConversation(yard: yard, with: name)
     }
 
+    /// Pair another yard; in a demo, the way out of it to the Pair screen.
     func pairAnother() {
-        nav.showPair()
+        if let leave {
+            leave()
+        } else {
+            nav.showPair()
+        }
     }
 
     /// What the follow word does: sign in again with the password
@@ -202,7 +215,8 @@ final class InboxModel {
                 : nil,
             error: forgetError,
             notice: nav.notice,
-            waiting: board?.open.count ?? 0
+            waiting: board?.open.count ?? 0,
+            demo: leave != nil
         )
     }
 }

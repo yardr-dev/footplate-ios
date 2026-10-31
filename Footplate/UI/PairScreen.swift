@@ -5,11 +5,14 @@ import SwiftUI
 // error colour under the button. Type the code shows the address as
 // a line of text, the build's edge, with a quiet choice for a yard's
 // own address, which opens the address field and hides the yard's.
+// Where no yard is paired, Try a demo opens a made-up one to look
+// around in (`onDemo`); the cover that pairs another yard offers none.
 struct PairScreen: View {
     @Bindable var model: PairModel
     var scannerAvailable: Bool = ScannerAvailability.isAvailable
     var canGoBack: Bool = false
     var onBack: (() -> Void)? = nil
+    var onDemo: (() -> Void)? = nil
     @State private var scanning = false
 
     var body: some View {
@@ -90,6 +93,15 @@ struct PairScreen: View {
                 .buttonStyle(FootplateButtonStyle(primary: true))
                 Button("Type the code") { model.typeCode() }
                     .buttonStyle(FootplateButtonStyle(primary: false))
+                if let onDemo {
+                    Button("Try a demo", action: onDemo)
+                        .buttonStyle(FootplateButtonStyle(primary: false))
+                        .accessibilityIdentifier("pair-demo")
+                    Text("A made-up yard to look around in, with nothing to pair")
+                        .themeType(.meta)
+                        .foregroundStyle(ThemeColor.textSecondary.color)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
         case .typing(let yard, let code, let address):
             VStack(alignment: .leading, spacing: 12) {

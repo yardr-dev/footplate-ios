@@ -28,7 +28,8 @@ Under `Footplate/`:
 - `API/`: the edge (Kratos sign-in, logout and session identity lookup,
   pairing), one paired yard's client and events stream, the wire types and
   the refusal reading, over a transport seam that `URLSession` implements;
-  `FootplateTests/FakeYard/` implements the same seam in the tests.
+  `FootplateTests/FakeYard/` implements the same seam in the tests, and
+  `Demo/` serves a made-up yard on it.
 - `Session/`: one follower per paired yard, with `load`, the stream after
   the head, the retries, the clock and the network watch, and the
   `Followed` seam the screen models read a followed yard through;
@@ -43,9 +44,10 @@ Under `Footplate/`:
   addresses in a card's words) stand beside them.
 - `UI/`: SwiftUI screens (Pair, Sign in, Crew, Decide, Decision,
   Conversation, and the Lines place's Lines, Route map and Bead card),
-  the tabs (`YardTabs`) and the chrome the places share (`YardPlace`,
-  `YardSwitchView`), the shared controls, the scanner, theme and
-  resources (catalogue, Plex fonts and licence).
+  the tabs (`YardTabs`, and `DemoTabs` with the demo's banner) and the
+  chrome the places share (`YardPlace`, `YardSwitchView`), the shared
+  controls, the scanner, theme and resources (catalogue, Plex fonts and
+  licence).
 - `Unlock/`: which picks pass the gate and its reasons as plain
   functions, and the `LAContext` prompt behind its protocol.
 - `Notify/`: what is told of as plain functions with the 3-second
@@ -61,6 +63,13 @@ Under `Footplate/`:
   them against the fake yard.
 - `Yard/`: the account and per-yard records in the Keychain, the QR
   read, and the pairer (sign-in, pairing, forgetting).
+- `Demo/`: the demo yard behind Try a demo on the Pair screen, for a
+  person with no yard (and for App Review): `DemoYard` is a made-up
+  yard's state and writes, `DemoTransport` the `HTTPTransport` that
+  serves it in memory (no `URLSession`, no request leaves the phone),
+  and `Demo` the app's models over it, on records in memory, with no
+  registrar, so leaving it leaves no token, saved yard or push
+  registration; `FootplateTests/Demo/` drives them.
 
 `NotifyService/` holds the extension itself: a thin
 `UNNotificationServiceExtension` over the shared core, with its own

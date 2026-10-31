@@ -24,6 +24,14 @@ One secret crosses the edge: the one-time code a harness's sign-in page
 gives. Its decision card links the page and takes the code behind the
 unlock; API keys and every other secret are answered on the yard's machine.
 
+A phone with no yard to pair can look around in a made-up one: the Pair
+screen's Try a demo opens a demo yard with some crew, mail, a few beads and
+one question to answer, under a banner that says it is made up and has Pair
+a real yard to leave by. The demo lives in the app: no request leaves the
+phone in it, what is sent or answered in it stays in memory, and leaving it
+leaves nothing behind (no token in the Keychain, no yard in the saved list,
+no push registration).
+
 A bead opened from the lines place shows what the yard holds of it, its
 labels, description and notes, with its page in the web view one tap away
 for the rest. A decision's context stands shut behind a row, Show context,
@@ -111,7 +119,9 @@ xcrun simctl uninstall 7EC91353-EDF5-4E93-B644-46A44BA6CFCB dev.yardr.footplate.
 ```
 
 `PairScreenTests` walks the unpaired journey, so it runs alone, without
-`AAPairForHand`, on a fresh install. Nothing runs the stand-in from
+`AAPairForHand`, on a fresh install. So does `DemoScreenTests`, which
+walks the demo from the first screen and out again, and needs no stand-in
+edge: the demo answers in the app. Nothing runs the stand-in from
 the gate: the UI tests stay by hand.
 
 The build settings live in `Config/`. The default edge is

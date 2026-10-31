@@ -401,6 +401,29 @@ final class InboxModelTests: XCTestCase {
         XCTAssertNil(rows[""]?.word)
     }
 
+    func testTheDemoYardsSwitchLeavesInPlaceOfPairingAnother() {
+        // The demo's model is made with its way out: the switch offers
+        // that, and pairing another yard is leaving for the Pair screen.
+        var left = 0
+        let now = fixedNow
+        let demo = InboxModel(
+            pairer: pairer, records: records,
+            followers: { ["": self.home, "laptop": self.laptop] },
+            mailroom: mailroom, nav: nav, leave: { left += 1 },
+            now: { now }, zone: { TimeZone(secondsFromGMT: 0)! }
+        )
+        XCTAssertTrue(demo.state.demo)
+        demo.pairAnother()
+        XCTAssertEqual(left, 1)
+        XCTAssertFalse(nav.pairing)
+        // The app's own model pairs another yard, as ever.
+        let live = inbox()
+        XCTAssertFalse(live.state.demo)
+        live.pairAnother()
+        XCTAssertTrue(nav.pairing)
+        XCTAssertEqual(left, 1)
+    }
+
     func testSwitchSaysWhatWaitsAndForgettingClearsOnlyThatYardsRoutes() async {
         home.up(loaded())
         laptop.state.status = .down(words: "The yard is away: the edge cannot reach it.", short: "yard away")

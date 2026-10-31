@@ -9,6 +9,8 @@ final class PairScreenTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["footplate"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Scan"].isHittable)
         XCTAssertTrue(app.buttons["Type the code"].isHittable)
+        // The first screen of a phone with no yard offers the demo.
+        XCTAssertTrue(app.buttons["Try a demo"].isHittable)
         let shot = XCTAttachment(screenshot: app.screenshot())
         shot.name = "Pair screen"
         shot.lifetime = .keepAlways

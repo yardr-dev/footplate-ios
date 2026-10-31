@@ -56,7 +56,9 @@ struct BeadCardScreen: View {
         now(card.bead)
         ask(card)
         details(card.details)
-        web()
+        if !card.webView.isEmpty {
+            web()
+        }
         if let error = model.webViewError {
             Text(error)
                 .themeType(.body)

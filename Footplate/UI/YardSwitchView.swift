@@ -60,10 +60,17 @@ struct YardSwitchView: View {
                 .buttonStyle(.plain)
             }
             VStack(alignment: .leading, spacing: 12) {
-                Button("Pair another yard") { onPairAnother() }
-                    .buttonStyle(FootplateButtonStyle(primary: false))
-                Button("Forget this yard") { onForget() }
-                    .buttonStyle(FootplateButtonStyle(primary: false))
+                // The demo yard is nothing to forget, and pairing is
+                // what leaving it is for.
+                if state.demo {
+                    Button("Pair a real yard") { onPairAnother() }
+                        .buttonStyle(FootplateButtonStyle(primary: false))
+                } else {
+                    Button("Pair another yard") { onPairAnother() }
+                        .buttonStyle(FootplateButtonStyle(primary: false))
+                    Button("Forget this yard") { onForget() }
+                        .buttonStyle(FootplateButtonStyle(primary: false))
+                }
                 if let error = state.error {
                     Text(error)
                         .themeType(.body)

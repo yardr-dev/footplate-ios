@@ -1110,9 +1110,11 @@ func cardHead(line: String, stage: String, bead: StationBead) -> String {
 /// by the account's `handle`, as the edge takes it. A session kept
 /// before the handle was resolves it before the card opens this link.
 /// A yard of its own serves its pages itself, at its own address, with
-/// no yard named. The id arrives from the yard: it stays one path
-/// segment whatever it holds, never the URL's shape.
+/// no yard named. A yard with no address has no pages: the demo yard's,
+/// and its card draws no link. The id arrives from the yard: it stays
+/// one path segment whatever it holds, never the URL's shape.
 func webViewUrl(origin: String, yard: String, handle: String, bead: String) -> String {
+    if origin.isEmpty { return "" }
     let page = "\(origin)/beads/\(urlEscaped(bead))"
     let name = yard.isEmpty ? handle : yard
     return name.isEmpty ? page : "\(page)?yard=\(urlEscaped(name))"

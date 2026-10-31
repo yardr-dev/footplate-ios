@@ -994,6 +994,9 @@ final class LineModelTests: XCTestCase {
             webViewUrl(origin: "https://edge.example", yard: "", handle: "jo&x=1", bead: "yd-é"),
             "https://edge.example/beads/yd-%C3%A9?yard=jo%26x%3D1"
         )
+        // A yard with no address has no pages, the demo yard's among
+        // them: no link at all, so its card draws none.
+        XCTAssertEqual(webViewUrl(origin: "", yard: "demo", handle: "", bead: "yd-4k2m"), "")
     }
 
     func testAskingTheCoordinatorOpensItsConversationWithTheBeadFirst() async throws {

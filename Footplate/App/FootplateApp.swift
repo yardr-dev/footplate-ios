@@ -65,6 +65,11 @@ final class AppServices {
     let wakeTargets: any WakeTargetStore
     private let notifyDelegate: NotifyDelegate
 
+    /// The demo yard while one is open (Try a demo): a second set of
+    /// services, apart from everything above, so that nothing of it is
+    /// kept, registered or sent.
+    private(set) var demo: Demo?
+
     private(set) var followers: [String: Follower] = [:]
     private var yards: Yards?
     private var foreground = false
@@ -72,17 +77,13 @@ final class AppServices {
     private var followSignature: String = ""
     private var recordsObserver: UUID?
 
-    init() {
-        let edge: Edge
-        do {
-            edge = try Edge.live()
-        } catch {
-            // The built edge is a valid origin by construction; this
-            // only stands in where the bundle's is unreadable.
-            edge = try! Edge(origin: "https://my.yardr.dev", transport: URLSessionTransport())
-        }
+    /// The app is made with nothing: the built edge on `URLSession`, the
+    /// Keychain and the app group's defaults. The tests give their own
+    /// edge, records and secret shelf, to see what a path leaves on them.
+    init(edge: Edge? = nil, records: Records? = nil, secret: (any Shelf)? = nil) {
+        let edge = edge ?? Self.liveEdge()
         self.edge = edge
-        let records = Records.live(origin: edge.origin)
+        let records = records ?? Records.live(origin: edge.origin)
         self.records = records
         if records.migratedYardName != nil {
             // A yard of its own just moved from "": its delivered
@@ -97,7 +98,7 @@ final class AppServices {
         self.wakeTargets = FileWakeTargetStore.shared() ?? MemoryWakeTargetStore()
         let registrar = PushRegistrar(
             edge: edge, records: records,
-            secret: KeychainShelf(accessGroup: pushKeychainGroup)
+            secret: secret ?? KeychainShelf(accessGroup: pushKeychainGroup)
         )
         self.registrar = registrar
         pairer.onForget = { [weak registrar] yard in
@@ -151,6 +152,30 @@ final class AppServices {
         refollow()
     }
 
+    private static func liveEdge() -> Edge {
+        do {
+            return try Edge.live()
+        } catch {
+            // The built edge is a valid origin by construction; this
+            // only stands in where the bundle's is unreadable.
+            return try! Edge(origin: "https://my.yardr.dev", transport: URLSessionTransport())
+        }
+    }
+
+    /// Try a demo: opens the made-up yard over the Pair screen. Nothing of
+    /// the app's own is touched, and a demo already open is kept.
+    func enterDemo() {
+        guard demo == nil else { return }
+        demo = Demo(foreground: foreground, leave: { [weak self] in self?.leaveDemo() })
+    }
+
+    /// Leaves the demo for the Pair screen: it is shut, and with it
+    /// everything it held.
+    func leaveDemo() {
+        demo?.close()
+        demo = nil
+    }
+
     func start() {
         guard networkWatch == nil else { return }
         let watch = NetworkWatch { [weak self] in
@@ -189,6 +214,7 @@ final class AppServices {
     func setForeground(_ foreground: Bool) {
         self.foreground = foreground
         yards?.foreground = foreground
+        demo?.setForeground(foreground)
     }
 
     /// What the screen shows, as far as a notification cares: what
@@ -260,10 +286,12 @@ private struct FootplateScene: View {
 
     var body: some View {
         Group {
-            if services.records.kept.yards.isEmpty {
+            if let demo = services.demo {
+                DemoTabs(demo: demo, onLeave: { services.leaveDemo() })
+            } else if services.records.kept.yards.isEmpty {
                 PairScreen(model: services.pairModel, onBack: {
                     _ = services.pairModel.back()
-                })
+                }, onDemo: { services.enterDemo() })
                 .fullScreenCover(isPresented: signInShown) {
                     SignInScreen(model: services.signInModel, again: services.nav.signIn?.again ?? false, onBack: {
                         services.nav.signIn = nil
