@@ -10,7 +10,21 @@ for icon in Footplate/UI/Resources/Assets.xcassets/AppIcon.appiconset/*.png; do
     exit 1
   fi
 done
-xcodebuild test \
+# Every run installs and launches the same app on the one simulator, so two at
+# once (two worktrees, or a worktree and a landing) kill each other's test host
+# ("Test crashed with signal kill") though no test failed. So hold a lock from
+# before xcodebuild to its end. getconf names the directory, not $TMPDIR, which
+# an environment may move or unset, and a lock split in two is no lock. -o keeps
+# the lock off xcodebuild's children, so a daemon it leaves behind cannot hold
+# it on. Without flock the run fails rather than going unlocked.
+if ! command -v flock >/dev/null; then
+  echo "flock not found: the gate runs one simulator test at a time under it (brew install flock)" >&2
+  exit 1
+fi
+lock="$(getconf DARWIN_USER_TEMP_DIR)footplate-ios-sim.lock"
+# Shared: two runs starting together must not read each other's probe as a run.
+flock -s -n "$lock" true || echo "waiting for another run on the simulator ($lock)" >&2
+flock -o "$lock" xcodebuild test \
   -project Footplate.xcodeproj \
   -scheme Footplate \
   -destination 'platform=iOS Simulator,id=7EC91353-EDF5-4E93-B644-46A44BA6CFCB' \
