@@ -2,8 +2,8 @@
 # The iPhone simulator gate; UI/instrumentation and iPad runs are by hand.
 # A suite name (sh .yardr/test PushRegisterTests) runs that FootplateTests suite
 # alone, under the same lock: an xcodebuild typed by hand on the simulator takes
-# no lock and can kill a gate run's test host. The name is not checked: one that
-# matches nothing runs 0 tests and still ends in TEST SUCCEEDED.
+# no lock and can kill a gate run's test host. A named run that executes no
+# tests fails: xcodebuild ends a name that matches nothing in TEST SUCCEEDED.
 # A missing destination must fail rather than silently testing another phone.
 set -e
 # A second name would be dropped without a word, and the pass would hide it.
@@ -40,12 +40,38 @@ flock -s -n "$lock" true || echo "waiting for another run on the simulator ($loc
 # xcodebuild shuts down only a simulator it booted itself, so this one stays
 # booted after the run: leave it, the next run starts warm. The quoted script is
 # the inner shell's own: its $1 is the simulator, its $@ the xcodebuild arguments.
-flock -o "$lock" sh -ec '
-  xcrun simctl bootstatus "$1" -b
-  shift
-  exec xcodebuild test "$@"
-' sh "$sim" \
-  -project Footplate.xcodeproj \
-  -scheme Footplate \
-  -destination "platform=iOS Simulator,id=$sim" \
-  -only-testing:"FootplateTests${1:+/$1}"
+# The bare run and a named one both go through this function, so the lock, the
+# boot and the destination have one copy: its own $1, if any, is the suite.
+gate() {
+  flock -o "$lock" sh -ec '
+    xcrun simctl bootstatus "$1" -b
+    shift
+    exec xcodebuild test "$@"
+  ' sh "$sim" \
+    -project Footplate.xcodeproj \
+    -scheme Footplate \
+    -destination "platform=iOS Simulator,id=$sim" \
+    -only-testing:"FootplateTests${1:+/$1}"
+}
+if [ "$#" -eq 0 ]; then
+  gate
+else
+  # A name that matches nothing runs 0 tests, and xcodebuild still prints TEST
+  # SUCCEEDED and exits 0, so a named run must show it executed some. tee shows
+  # the output as it comes and keeps it in a file to count from. sh has no
+  # pipefail, so the pipe's status is tee's: the subshell writes xcodebuild's to
+  # a second file, with set +e so that the set -e above cannot end it before.
+  log=$(mktemp)
+  status=$(mktemp)
+  trap 'rm -f "$log" "$status"' EXIT
+  (set +e; gate "$1"; echo $? >"$status") | tee "$log"
+  rc=$(cat "$status")
+  [ "$rc" = 0 ] || exit "${rc:-1}"
+  # XCTest prints its count on stdout, and says "Executed 1 test" for one. A log
+  # without such a line fails, and so does one Apple rewords: that breaks loud,
+  # where a count read loosely would reopen the hole without a word.
+  if ! grep -Eq 'Executed [1-9][0-9]* tests?' "$log"; then
+    echo "$1: no tests ran (no \"Executed N tests\" line with N above 0): is the name right?" >&2
+    exit 1
+  fi
+fi
