@@ -67,23 +67,29 @@ struct NoticeRow: View {
 /// in a conversation.
 func linkedText(_ line: String, beads: Set<String> = []) -> Text {
     var words = linked(line, beads: beads)
+    styleLinks(&words)
+    return Text(words)
+}
+
+/// The links and the chips of `words` drawn as `linkedText` draws them.
+func styleLinks(_ words: inout AttributedString) {
     for run in words.runs {
         if let link = run.link, chippedBead(link) != nil {
             words[run.range].swiftUI.foregroundColor = ThemeColor.textAccent.color
             words[run.range].swiftUI.backgroundColor = ThemeColor.surfaceSunken.color
-            words[run.range].swiftUI.font = chipFont()
+            words[run.range].swiftUI.font = codeFont()
         } else if run.link != nil {
             words[run.range].swiftUI.underlineStyle = .single
             words[run.range].swiftUI.foregroundColor = ThemeColor.textAccent.color
         }
     }
-    return Text(words)
 }
 
-/// A chip's face: Plex Mono at the body's size, scaled with the system's
-/// text size.
-private func chipFont() -> Font {
-    Font.custom(ThemeType.code.face, size: ThemeType.body.size, relativeTo: ThemeType.body.textStyle)
+/// The face of a chip and of code in a line of words: Plex Mono at the
+/// size of `role`, the body's by default, scaled with the system's text
+/// size.
+func codeFont(in role: ThemeType = .body) -> Font {
+    Font.custom(ThemeType.code.face, size: role.size, relativeTo: role.textStyle)
 }
 
 /// A label and its value, one row of what was read.

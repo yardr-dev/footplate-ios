@@ -19,8 +19,8 @@ final class LinksTests: XCTestCase {
 
     /// The chips of `text`: the words each is drawn with, and the bead
     /// id its tap opens.
-    private func chips(_ text: String, beads: Set<String>) -> [(words: String, bead: String)] {
-        let drawn = linked(text, beads: beads)
+    private func chips(_ text: String, beads: Set<String>, code: [Range<String.Index>]? = nil) -> [(words: String, bead: String)] {
+        let drawn = linked(text, beads: beads, code: code)
         return drawn.runs.compactMap { run in
             run.link.flatMap(chippedBead).map { (String(drawn[run.range].characters), $0) }
         }
@@ -123,6 +123,14 @@ final class LinksTests: XCTestCase {
             XCTAssertTrue(chips(text, beads: beads).isEmpty, text)
             XCTAssertEqual(String(linked(text, beads: beads).characters), text, text)
         }
+        // Where the caller names the code, as a message's blocks do with
+        // their backticks left out, what it names is code and chips
+        // nothing; the text's own fences and spans are looked for no more.
+        let named = "yd-crm and yd-crm and `yd-crm`"
+        let first = named.startIndex..<named.index(named.startIndex, offsetBy: 6)
+        XCTAssertEqual(chips(named, beads: beads, code: [first]).count, 2, "the second, and the one a span would have kept")
+        XCTAssertEqual(chips(named, beads: beads).count, 2, "the span alone is code where none is named")
+        XCTAssertEqual(chips(named, beads: beads, code: []).count, 3)
         // The qualified ask names its bead, which chips as the bead
         // alone; the ask's number never chips.
         let qualified = chips("ask 18 on yd-crm", beads: beads)

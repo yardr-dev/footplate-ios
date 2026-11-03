@@ -41,13 +41,16 @@ Under `Footplate/`:
   overview, a line's route map and a bead's card with the bead's
   details and its web view link. The conversation's pictures (`Images` shrinks one for a letter,
   `Pictures` keeps the ones shown, by hash) and `Links` (the web
-  addresses in a card's words) stand beside them.
+  addresses in a card's words) stand beside them, and so does `Markdown`,
+  which reads a letter's words into the blocks they are drawn as, as the
+  desktop's `markdown.rs` does and over Unicode scalars as it does.
 - `UI/`: SwiftUI screens (Pair, Sign in, Crew, Decide, Decision,
   Conversation, and the Lines place's Lines, Route map and Bead card),
   the tabs (`YardTabs`, and `DemoTabs` with the demo's banner) and the
   chrome the places share (`YardPlace`, `YardSwitchView`), the shared
-  controls, the scanner, theme and resources (catalogue, Plex fonts and
-  licence).
+  controls, `MessageText` (a letter's words drawn by their `Markdown`
+  blocks, a code block with its Copy), the scanner, theme and resources
+  (catalogue, Plex fonts and licence).
 - `Unlock/`: which picks pass the gate and its reasons as plain
   functions, and the `LAContext` prompt behind its protocol.
 - `Notify/`: what is told of as plain functions with the 3-second

@@ -38,9 +38,10 @@ struct ConversationScrollTracking: Equatable {
 
 // One conversation (design 3.5), pushed onto the crew stack: the name
 // in the navigation bar with its state word; the letters oldest first
-// with the newest at the foot, the correspondent's on the raised
-// surface at the left and the person's own on none at the right; its
-// images under its text, opened full on tap; the field and Send, with
+// with the newest at the foot, the correspondent's the width of the
+// screen on no surface and the person's own in a bubble at the right,
+// each drawn by its Markdown (`MessageText`); its images under its
+// text, opened full on tap; the field and Send, with
 // a picture picked from the gallery or the camera above it.
 // Scrolling to the oldest letter reads the page before it. The
 // yard's notices are drawn the same way, with no field. A chip
@@ -88,7 +89,7 @@ struct ConversationScreen: View {
             VStack(spacing: 0) {
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 12) {
+                        LazyVStack(alignment: .leading, spacing: 20) {
                             ForEach(state.letters, id: \.seq) { letter in
                                 letterBubble(letter)
                                     .id(letter.seq)
@@ -313,47 +314,45 @@ struct ConversationScreen: View {
         .padding(.top, 8)
     }
 
+    /// The person's own letter is a bubble on the right, kept 60 points
+    /// from the left; any other (the crew's, the yard's notices) is
+    /// drawn the width of the conversation on no surface.
     private func letterBubble(_ letter: Shown) -> some View {
-        HStack {
-            if letter.mine { Spacer(minLength: 60) }
-            VStack(alignment: letter.mine ? .trailing : .leading, spacing: 2) {
-                VStack(alignment: .leading, spacing: 4) {
-                    if let copy = copyableMessage(letter) {
-                        linkedText(letter.text, beads: model.state.knownBeads)
-                            .themeType(.body)
-                            .foregroundStyle(ThemeColor.textPrimary.color)
-                            .environment(\.openURL, letterLinks)
-                            .contextMenu {
-                                Button("Copy message") {
-                                    UIPasteboard.general.string = copy
-                                }
+        let bubble = RoundedRectangle(cornerRadius: 8)
+        return VStack(alignment: letter.mine ? .trailing : .leading, spacing: letter.mine ? 2 : 6) {
+            VStack(alignment: .leading, spacing: 4) {
+                if let copy = copyableMessage(letter) {
+                    MessageText(text: letter.text, beads: model.state.knownBeads)
+                        .environment(\.openURL, letterLinks)
+                        .contextMenu {
+                            Button("Copy message") {
+                                UIPasteboard.general.string = copy
                             }
-                    }
-                    ForEach(letter.images, id: \.hash) { image in
-                        pictureRow(image, textAbove: !letter.text.isEmpty)
-                    }
-                    if let files = letter.files {
-                        Text(files)
-                            .themeType(.meta)
-                            .foregroundStyle(ThemeColor.textSecondary.color)
-                    }
+                        }
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(
-                    letter.mine ? Color.clear : ThemeColor.surfaceRaised.color,
-                    in: RoundedRectangle(cornerRadius: 8)
-                )
-                if !letter.time.isEmpty {
-                    Text(letter.time)
+                ForEach(letter.images, id: \.hash) { image in
+                    pictureRow(image, textAbove: !letter.text.isEmpty)
+                }
+                if let files = letter.files {
+                    Text(files)
                         .themeType(.meta)
                         .foregroundStyle(ThemeColor.textSecondary.color)
-                        .padding(.horizontal, 12)
                 }
             }
-            if !letter.mine { Spacer(minLength: 60) }
+            .frame(maxWidth: letter.mine ? nil : .infinity, alignment: .leading)
+            .padding(.horizontal, letter.mine ? 12 : 0)
+            .padding(.vertical, letter.mine ? 8 : 0)
+            .background(letter.mine ? ThemeColor.surfaceRaised.color : Color.clear, in: bubble)
+            .overlay { if letter.mine { bubble.strokeBorder(ThemeColor.borderSubtle.color, lineWidth: 1) } }
+            if !letter.time.isEmpty {
+                Text(letter.time)
+                    .themeType(.meta)
+                    .foregroundStyle(ThemeColor.textSecondary.color)
+                    .padding(.horizontal, letter.mine ? 12 : 0)
+            }
         }
-        .frame(maxWidth: .infinity)
+        .padding(.leading, letter.mine ? 60 : 0)
+        .frame(maxWidth: .infinity, alignment: letter.mine ? .trailing : .leading)
     }
 
     /// One image of a letter under its text, at the

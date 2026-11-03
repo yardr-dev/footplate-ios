@@ -6,7 +6,8 @@ import XCTest
 // with no yard sees, Try a demo opens the demo yard under its banner with no
 // permission asked; the yard switch offers the way out in place of pairing
 // another yard, on the first tap in a place visited for the first time too;
-// the crew's mail, a letter sent, the one question answered and
+// the crew's mail, a letter sent, a fenced one whose Copy puts its code
+// alone on the pasteboard, the one question answered and
 // the line are walked; and Pair a real yard leaves for the first screen with
 // no place of the tabs left, to enter a demo as new, its question open again,
 // and leave by the yard switch. The gate never runs it.
@@ -69,6 +70,34 @@ final class DemoScreenTests: XCTestCase {
         app.buttons["Send"].tap()
         XCTAssertTrue(app.staticTexts["Land it today if it is green"].waitForExistence(timeout: 10))
         attach(app, "Demo conversation")
+        // A fenced letter draws its code in a block of its own, and the
+        // block's Copy puts the code alone on the pasteboard: pasted into
+        // the field it stands without its fences.
+        field.tap()
+        field.typeText("Run this:\n```\nselect 1;\nselect 2;\n```")
+        app.buttons["Send"].tap()
+        let copy = app.buttons["code-copy"]
+        XCTAssertTrue(copy.waitForExistence(timeout: 10))
+        XCTAssertEqual(copy.label, "Copy code")
+        attach(app, "Demo conversation with a code block")
+        copy.tap()
+        XCTAssertEqual(copy.label, "Copied")
+        field.press(forDuration: 1.2)
+        app.menuItems["Paste"].tap()
+        XCTAssertEqual(field.value as? String, "select 1;\nselect 2;")
+        attach(app, "Demo code pasted")
+        // A long-press on the letter still offers the whole of it, fences
+        // and all, over its code block as over its words.
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "select 1;\nselect 2;".count))
+        let code = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'select 1;'")).firstMatch
+        XCTAssertTrue(code.waitForExistence(timeout: 10))
+        code.press(forDuration: 1.2)
+        XCTAssertTrue(app.buttons["Copy message"].waitForExistence(timeout: 5))
+        attach(app, "Demo copy message over a code block")
+        app.buttons["Copy message"].tap()
+        field.press(forDuration: 1.2)
+        app.menuItems["Paste"].tap()
+        XCTAssertEqual(field.value as? String, "Run this:\n```\nselect 1;\nselect 2;\n```")
         app.navigationBars.buttons.element(boundBy: 0).tap()
 
         // The one question: opened, a pick made, answered and gone from

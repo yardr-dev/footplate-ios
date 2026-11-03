@@ -13,7 +13,8 @@ import Foundation
 /// One letter as the conversation shows it.
 struct Shown: Equatable, Sendable {
     var seq: Int64
-    /// The person's own: drawn at the other side, on no surface.
+    /// The person's own: drawn in a bubble at the right. Any other is
+    /// drawn the width of the conversation on no surface.
     var mine: Bool
     var text: String
     var time: String

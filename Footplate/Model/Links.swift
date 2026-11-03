@@ -19,10 +19,13 @@ import Foundation
 /// another host than it shows. The punctuation of the sentence it stands
 /// in is not part of it: a full stop, a comma, a closing quote, a bracket
 /// the address did not open. An id chips only where `beads` holds it, the
-/// app knowing it or the yard having confirmed it.
-func linked(_ text: String, beads: Set<String> = []) -> AttributedString {
+/// app knowing it or the yard having confirmed it. `code` says where the
+/// code stands where the caller has read it already, as a letter's blocks
+/// are with their backticks left out; without it the fences and spans in
+/// `text` are the code.
+func linked(_ text: String, beads: Set<String> = [], code: [Range<String.Index>]? = nil) -> AttributedString {
     let links = linkRanges(text)
-    let tokens = beads.isEmpty ? [] : chipTokens(text, links: links, code: codeRanges(text), beads: beads)
+    let tokens = beads.isEmpty ? [] : chipTokens(text, links: links, code: code ?? codeRanges(text), beads: beads)
     let cuts = (links.map { Cut(range: $0.range, url: $0.url) } + tokens.map { Cut(range: $0.range, url: $0.url) })
         .sorted { $0.range.lowerBound < $1.range.lowerBound }
     var out = AttributedString()

@@ -169,6 +169,168 @@ final class CrewScreenshotTests: XCTestCase {
         conversation.leave()
     }
 
+    /// Letters drawn by their Markdown (footplate-ios-qzxm): mckean's
+    /// Snowflake message, whose code block holds one long line, stands
+    /// the width of the conversation, scrolls sideways and does not wrap.
+    func testAMessageWithACodeBlockDrawsItScrollingSideways() async throws {
+        let scene = try XCTUnwrap(
+            UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first,
+            "no window scene to render in"
+        )
+        let (conversation, line) = try await openConversation([
+            Letter(seq: 13, at: "2026-10-08T09:30:00Z", from: "yardmaster", to: "jo", text: MarkdownFixture.snowflake),
+        ])
+        let dir = try shotsDirectory()
+        let window = try await renderWindow(
+            ConversationScreen(model: conversation, line: line, yard: "", with: "yardmaster"),
+            scene: scene, to: dir.appendingPathComponent("conversation-markdown.png")
+        )
+        defer { window.isHidden = true }
+        let blocks = horizontalScrolls(in: window)
+        XCTAssertEqual(blocks.count, 1, "the one code block scrolls")
+        let code = try XCTUnwrap(blocks.first)
+        // The long line is one line, a screen wide many times over.
+        XCTAssertGreaterThan(code.contentSize.width, 4 * code.bounds.width)
+        XCTAssertEqual(code.convert(code.bounds, to: window).width, 402 - 2 * 16, accuracy: 1)
+        try await shootAppearances(of: window, named: "conversation-markdown", in: dir)
+        // Scrolled to the end of the long line.
+        code.contentOffset.x = code.contentSize.width - code.bounds.width
+        try await Task.sleep(for: .milliseconds(300))
+        try await shootAppearances(of: window, named: "conversation-markdown-scrolled", in: dir)
+        conversation.leave()
+    }
+
+    /// The crew's letter is the width of the conversation on no surface,
+    /// and the person's own is a bubble at the right, short of the left
+    /// edge (footplate-ios-qzxm); each is drawn by its Markdown, and a
+    /// bead's chip still chips in a list and not in code.
+    func testTheCrewsLetterIsFullWidthAndThePersonsIsABubble() async throws {
+        let scene = try XCTUnwrap(
+            UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first,
+            "no window scene to render in"
+        )
+        let (conversation, line) = try await openConversation([
+            Letter(seq: 13, at: "2026-10-08T09:30:00Z", from: "yardmaster", to: "jo", text: """
+            ## What moved
+
+            Two beads **landed**, in this order:
+
+            - yd-links is in, and `yd-map` waits in review
+            - _Checked_ against https://example.org/docs
+              - the second pass reads *clean*
+            1. Land the shed
+            2. Tell the signalman
+            """),
+            Letter(seq: 14, at: "2026-10-08T09:31:00Z", from: "yardmaster", to: "jo", text: "Look at it with:\n\n```\nyardr bead show yd-links\n```"),
+            Letter(seq: 15, at: "2026-10-08T09:32:00Z", from: "jo", to: "yardmaster", text: "Run this on the **Mac**:\n\n```sh\nyardr bead show yd-links --json | head -20\n```\n\nThen `land` it."),
+        ])
+        XCTAssertTrue(conversation.state.letters.map(\.mine) == [false, false, true])
+        let dir = try shotsDirectory()
+        let window = try await renderWindow(
+            ConversationScreen(model: conversation, line: line, yard: "", with: "yardmaster"),
+            scene: scene, to: dir.appendingPathComponent("conversation-letters.png")
+        )
+        defer { window.isHidden = true }
+        let blocks = horizontalScrolls(in: window).map { $0.convert($0.bounds, to: window) }.sorted { $0.minY < $1.minY }
+        XCTAssertEqual(blocks.count, 2, "a code block in the crew's letter and one in the person's")
+        guard blocks.count == 2 else { return }
+        // The crew's: the width of the conversation, 16 points in from each side.
+        XCTAssertEqual(blocks[0].minX, 16, accuracy: 1)
+        XCTAssertEqual(blocks[0].maxX, 402 - 16, accuracy: 1)
+        // The person's: inside a bubble at the right, 12 points in from its
+        // edge, and short of the left by 60 points and the bubble's padding.
+        XCTAssertEqual(blocks[1].maxX, 402 - 16 - 12, accuracy: 1)
+        XCTAssertGreaterThanOrEqual(blocks[1].minX, 16 + 60 + 12 - 1)
+        try await shootAppearances(of: window, named: "conversation-letters", in: dir)
+        // At an accessibility text size the markers, the words and the code
+        // grow together: the same letters, none standing on another.
+        let large = try await renderWindow(
+            ConversationScreen(model: conversation, line: line, yard: "", with: "yardmaster")
+                .environment(\.dynamicTypeSize, .accessibility2),
+            scene: scene, to: dir.appendingPathComponent("conversation-letters-ax.png")
+        )
+        defer { large.isHidden = true }
+        conversation.leave()
+    }
+
+    /// A conversation with the yardmaster holding `letters`, open and read.
+    private func openConversation(_ letters: [Letter]) async throws -> (ConversationModel, LineModel) {
+        let fake = FakeYard()
+        let records = Records(secret: MemoryShelf(), plain: MemoryShelf(), origin: fake.origin)
+        records.keepSession(account: fake.email, session: fake.session())
+        records.keepYard(PairedYard(name: "", yard: "south", user: "jo", device: "phone", token: "yardr-dev-south-1"))
+        records.noteNotificationsAsked()
+        let home = FakeFollowed()
+        let mailroom = Mailroom()
+        mailroom.setFollowers(["": home])
+        let now = parseInstant("2026-10-08T12:00:00Z")!
+        // No inbox mail: the board's letters would stand in for the
+        // page's where their seqs meet.
+        var quiet = loaded()
+        quiet.inbox = Inbox()
+        home.up(quiet)
+        home.pages["yardmaster|0"] = Page(letters: letters, more: false)
+        // The yard knows no bead by the id-shaped words of a message
+        // (read-only, ORGNAME-ACCOUNTNAME), as a real yard says.
+        home.beadRefuse = ApiError.refused(code: "no_bead", message: "no such bead")
+        let conversation = ConversationModel(mailroom: mailroom, now: { now }, zone: { TimeZone(secondsFromGMT: 0)! })
+        let line = LineModel(
+            followers: { ["": home] }, records: records, pairer: Pairer(edge: try fake.edge(), records: records),
+            nav: Nav(), conversation: conversation, origins: { _ in "https://edge.example" },
+            now: { now }, zone: { TimeZone(secondsFromGMT: 0)! }
+        )
+        conversation.open(yard: "", with: "yardmaster")
+        let deadline = ContinuousClock.now + .seconds(10)
+        while conversation.state.letters.count < letters.count
+            || !conversation.state.knownBeads.isSuperset(of: ["yd-links", "yd-map"]),
+            ContinuousClock.now <= deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(conversation.state.letters.count, letters.count)
+        return (conversation, line)
+    }
+
+    private func shotsDirectory() throws -> URL {
+        let dir = ProcessInfo.processInfo.environment["CREW_SHOTS_DIR"]
+            .map { URL(fileURLWithPath: $0) }
+            ?? FileManager.default.temporaryDirectory.appendingPathComponent("crew-shots")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    /// The scroll views that scroll sideways: the code blocks, which are
+    /// short, beside the conversation's own, which fills the window, and
+    /// the field's text view.
+    private func horizontalScrolls(in view: UIView) -> [UIScrollView] {
+        var found = view.subviews.flatMap { horizontalScrolls(in: $0) }
+        if let scroll = view as? UIScrollView, !(scroll is UITextView), scroll.bounds.height < 400 { found.append(scroll) }
+        return found
+    }
+
+    /// The window drawn light and then dark, as `<name>-light.png` and
+    /// `<name>-dark.png`, whatever the simulator is set to.
+    private func shootAppearances(of window: UIWindow, named name: String, in dir: URL) async throws {
+        for (style, word) in [(UIUserInterfaceStyle.light, "light"), (.dark, "dark")] {
+            window.overrideUserInterfaceStyle = style
+            try await Task.sleep(for: .milliseconds(400))
+            try snapshot(window, to: dir.appendingPathComponent("\(name)-\(word).png"))
+        }
+        window.overrideUserInterfaceStyle = .unspecified
+    }
+
+    /// The window as it stands, written as a PNG.
+    private func snapshot(_ window: UIWindow, to file: URL) throws {
+        window.layoutIfNeeded()
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 3
+        let image = UIGraphicsImageRenderer(bounds: window.bounds, format: format).image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        }
+        let png = try XCTUnwrap(image.pngData(), "the rendered screen has no PNG")
+        try png.write(to: file)
+        XCTAssertGreaterThan(png.count, 10000, "the rendered screen looks blank")
+    }
+
     /// A chip's tap (footplate-ios-f9qs): the bead's card as a sheet
     /// over the chat, with Open on the line under it, the tab left on
     /// the crew and nothing pushed.
