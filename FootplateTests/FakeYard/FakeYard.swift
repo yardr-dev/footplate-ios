@@ -170,6 +170,10 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
         /// The coordinator /user/me names; nil, and the answer holds no
         /// such field, as a yard older than the field answers.
         var coordinator: String? = "yardmaster"
+        /// What the yard takes in a method where that is fewer arguments
+        /// than docs/api.md lists today, as a yard from before the others
+        /// were added: a call that names one it does not take is refused.
+        var takes: [String: [String]] = [:]
         var code: String?
         var tokens: Set<String> = []
         var blobs: [String: Data] = [:]
@@ -303,6 +307,16 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
     func setCoordinator(yardName: String, coordinator: String?) {
         lock.lock()
         yards.first { $0.name == yardName }?.coordinator = coordinator
+        lock.unlock()
+    }
+
+    /// The yard named `yardName` takes only `names` in `method`, as a
+    /// yard from before the others were added does; nil lifts it. A call
+    /// that names another is refused in the yard's own words, as yardr's
+    /// `named` words it.
+    func setTakes(yardName: String, method: String, _ names: [String]?) {
+        lock.lock()
+        yards.first { $0.name == yardName }?.takes[method] = names
         lock.unlock()
     }
 
@@ -713,7 +727,13 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
         }
         if path.hasPrefix("/user/call/") {
             let method = String(path.dropFirst("/user/call/".count))
-            let bead = recorded.bodyObject()["bead"] as? String
+            let body = recorded.bodyObject()
+            // One stray name refuses the call, the first by order.
+            if let takes = yard.takes[method], let stray = body.keys.filter({ !takes.contains($0) }).min() {
+                let list = takes.isEmpty ? "none" : takes.joined(separator: ", ")
+                return FakeResponse.json(200, #"{"error": {"code": "error", "message": "argument \"\#(stray)\": \#(method) has none of that name (it takes \#(list))"}}"#)
+            }
+            let bead = body["bead"] as? String
             let canned = (method == "Bead" ? bead.flatMap { Canned.beads[$0] } : nil)
                 ?? Canned.replies[method]
                 ?? "{\"error\": {\"code\": \"error\", \"message\": \"no such method \(method)\"}}"

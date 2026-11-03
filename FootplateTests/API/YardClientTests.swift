@@ -108,8 +108,10 @@ final class YardClientTests: XCTestCase {
                 XCTAssertEqual(asks.open[2].run?.command, "yardr depot tidy --merged")
                 XCTAssertEqual(asks.decided.map(\.state), ["declined"])
             }),
-            ("Flows", #"{"viewer":"jo"}"#, {
-                let flows = try await laptop.flows(viewer: "jo")
+            // No viewer is sent: the yard reads a device's viewer from its
+            // token.
+            ("Flows", "{}", {
+                let flows = try await laptop.flows()
                 XCTAssertEqual(flows.travelling, 7)
                 XCTAssertEqual(flows.depots.map(\.name), ["yard", "drafts"])
                 let stages = flows.depots[0].flows[0].stages
@@ -245,6 +247,13 @@ final class YardClientTests: XCTestCase {
             assertBody(request, args)
             assertHeaders(request, token: f.laptopToken, yard: "laptop", session: f.session)
         }
+        // A yard from before yardr v0.15.0 takes no argument on Flows and
+        // refuses a name it does not know (`argument "viewer": Flows has
+        // none of that name (it takes none)`): the board is still read.
+        fake.setTakes(yardName: "laptop", method: "Flows", [])
+        let older = try await laptop.flows()
+        XCTAssertEqual(older.depots.map(\.name), ["yard", "drafts"])
+        assertBody(fake.taken(), "{}")
     }
 
     func testAYardOfItsOwnCarriesTheDeviceTokenAlone() async throws {

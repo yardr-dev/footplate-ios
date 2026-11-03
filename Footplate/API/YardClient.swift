@@ -192,9 +192,12 @@ final class YardClient: Sendable {
     }
 
     /// The flows view: the depots as lines with the open beads on
-    /// each. A device's viewer is its user.
-    func flows(viewer: String) async throws -> Flows {
-        try await answer(method: "Flows", args: ["viewer": viewer], as: Flows.self)
+    /// each. A device's viewer is its user, which the yard reads from
+    /// the token and fills in where the call leaves it out, so none is
+    /// sent: a yard from before yardr v0.15.0 takes no argument here
+    /// and refuses one.
+    func flows() async throws -> Flows {
+        try await answer(method: "Flows", args: [:], as: Flows.self)
     }
 
     /// Picks `option` with `words` beside it (left out where empty).

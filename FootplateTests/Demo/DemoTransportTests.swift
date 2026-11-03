@@ -63,7 +63,7 @@ final class DemoTransportTests: XCTestCase {
         let bead = try await client.bead("yd-4k2m")
         XCTAssertEqual(bead.title, "Cache the departures board")
         XCTAssertEqual(bead.asks.first?.options.count, 3)
-        let flows = try await client.flows(viewer: "guest")
+        let flows = try await client.flows()
         XCTAssertEqual(flows.depots.map(\.name), ["timetable"])
         XCTAssertEqual(flows.travelling, 2)
         try await client.ackUserInbox(name: "guest", through: 5)

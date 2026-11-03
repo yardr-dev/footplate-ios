@@ -583,7 +583,7 @@ extension Follower: Followed {
     }
 
     func flows() async throws -> Flows {
-        try await client.flows(viewer: me())
+        try await client.flows()
     }
 
     func answer(bead: String, ask: Int64, option: Int64, words: String, weighed: Bool) async throws {
