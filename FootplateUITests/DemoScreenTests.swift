@@ -38,10 +38,11 @@ final class DemoScreenTests: XCTestCase {
         attach(app, "Demo crew")
 
         // The yard switch: the demo yard and the way out, and nothing to
-        // pair another yard with or to forget.
+        // pair another yard with, to rename or to forget.
         app.buttons["Switch yard"].tap()
         XCTAssertTrue(yardSwitchLeave(app).waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["Pair another yard"].exists)
+        XCTAssertFalse(app.buttons["Rename this yard"].exists)
         XCTAssertFalse(app.buttons["Forget this yard"].exists)
         attach(app, "Demo yard switch")
         app.swipeDown(velocity: .fast)

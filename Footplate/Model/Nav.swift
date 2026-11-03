@@ -91,6 +91,8 @@ final class Nav {
     /// Forget this yard's confirmation, asked after the switch
     /// sheet shuts.
     var confirmingForget: Bool
+    /// Rename this yard's prompt, asked after the switch sheet shuts.
+    var renaming: Bool
     /// Sign in, over the Pair screen or the tabs.
     var signIn: SignInRequest?
     /// What the person is told after a yard left on its own, over the
@@ -106,6 +108,7 @@ final class Nav {
         self.pairing = false
         self.yardListShown = false
         self.confirmingForget = false
+        self.renaming = false
         self.signIn = nil
         self.notice = nil
     }
@@ -202,6 +205,7 @@ final class Nav {
         pairing = false
         yardListShown = false
         confirmingForget = false
+        renaming = false
         signIn = nil
         place = .crew
         crewPath = []

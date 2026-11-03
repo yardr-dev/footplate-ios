@@ -486,6 +486,19 @@ final class InboxModelTests: XCTestCase {
         XCTAssertEqual(state.yards.map(\.title), ["laptop", "south", "lab — member of alice's yard"])
         XCTAssertEqual(state.yards.map(\.user), ["jo", "jo", "joe"])
         XCTAssertEqual(state.yards.map(\.selected), [false, false, true])
+        // The name the person gives it stands in place of the yard's own,
+        // with the note beside it; clearing it brings the yard's own back.
+        XCTAssertEqual(model.renaming()?.given, "")
+        XCTAssertEqual(model.renaming()?.original, "lab")
+        model.rename("Bench")
+        state = model.state
+        XCTAssertEqual(state.head, "Bench — member of alice's yard · joe")
+        XCTAssertEqual(state.yards.map(\.title), ["laptop", "south", "Bench — member of alice's yard"])
+        XCTAssertEqual(model.renaming()?.given, "Bench")
+        XCTAssertEqual(model.renaming()?.original, "lab")
+        model.rename("  ")
+        XCTAssertEqual(model.state.head, "lab — member of alice's yard · joe")
+        XCTAssertEqual(model.renaming()?.given, "")
         model.select("")
         state = model.state
         XCTAssertEqual(state.head, "south · jo")
@@ -556,6 +569,20 @@ final class InboxModelTests: XCTestCase {
         let again = inbox(records: makeRecords())
         XCTAssertEqual(again.state.head, "laptop · jo")
         XCTAssertTrue(again.state.yards.first { $0.name == "laptop" }!.selected)
+
+        // So does the name the person gave a yard: the head line, the
+        // switch's rows and the sentences that name the yard call it so.
+        again.rename("Back shed")
+        let renamed = inbox(records: makeRecords())
+        let state = renamed.state
+        XCTAssertEqual(state.head, "Back shed · jo")
+        XCTAssertEqual(state.yards.first { $0.name == "laptop" }?.title, "Back shed")
+        XCTAssertEqual(state.yards.first { $0.name == "" }?.title, "south")
+        XCTAssertEqual(state.nothing, "Nothing from Back shed yet")
+        XCTAssertEqual(
+            renamed.forgetting(),
+            "footplate forgets Back shed. The device stays at the yard until its operator runs yardr user device rm jo pixel"
+        )
     }
 
     func testCrewEventChangesTheStateWord() async {

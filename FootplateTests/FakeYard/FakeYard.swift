@@ -360,6 +360,16 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
         return recorded
     }
 
+    /// The requests that carry `text` anywhere: in the path and its
+    /// query, in a header's value or in the body.
+    func requests(carrying text: String) -> [RecordedRequest] {
+        allRequests.filter { request in
+            request.path.contains(text)
+                || request.headers.values.contains { $0.contains(text) }
+                || request.bodyText.contains(text)
+        }
+    }
+
     /// The next request, recorded, in the order requests arrived.
     func taken() -> RecordedRequest {
         lock.lock()

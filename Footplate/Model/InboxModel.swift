@@ -4,8 +4,8 @@ import Foundation
 // model/InboxModel.kt): the head line with the selected yard's
 // follow, the selected yard's rows from its `Board`, and the yard
 // switch's rows, each with its waiting count or its follow's word,
-// with Pair another yard and Forget this yard. The selection is the
-// records', so the app opens on it.
+// with Pair another yard, Rename this yard and Forget this yard. The
+// selection is the records', so the app opens on it.
 
 /// What tapping the head line's word does, where it does anything.
 enum HeadAction: Equatable, Sendable {
@@ -125,6 +125,21 @@ final class InboxModel {
         case .pairAgain: nav.showPair()
         case nil: break
         }
+    }
+
+    /// What Rename this yard starts from: the name the person gave the
+    /// selected yard (empty where they gave none), and the name clearing
+    /// it brings back.
+    func renaming() -> (given: String, original: String)? {
+        guard let yard = records.kept.selectedYard else { return nil }
+        return (yard.localName ?? "", yard.defaultName)
+    }
+
+    /// Names the selected yard as the person typed; empty brings its old
+    /// name back. The name stays on this phone.
+    func rename(_ name: String) {
+        guard let selected = records.kept.selected else { return }
+        records.renameYard(selected, to: name)
     }
 
     /// The sentence Forget this yard says first: the device stays at

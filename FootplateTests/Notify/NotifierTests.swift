@@ -171,6 +171,18 @@ final class NotifierTests: XCTestCase {
         XCTAssertEqual("south · A decision from yardmaster", told[0].title)
         XCTAssertEqual("", told[0].yard)
         XCTAssertEqual(.decision(bead: "footplate-1", ask: 2), told[0].target)
+
+        // The name the person gives the yard is what the next one calls
+        // it, and it still leads to the yard by its name at the edge.
+        records.renameYard("", to: "Signal box")
+        home.up(loaded(open: [ask(), ask(bead: "footplate-2", ask: 3)]))
+        _ = await waitPending("the next burst", count: 1)
+        clock.advance(.seconds(3))
+        let next = await waitTold("the next decision", count: 2)
+        guard next.count == 2 else { return }
+        XCTAssertEqual("Signal box · A decision from yardmaster", next[1].title)
+        XCTAssertEqual("", next[1].yard)
+        XCTAssertEqual(.decision(bead: "footplate-2", ask: 3), next[1].target)
     }
 
     func testNothingIsToldWithoutThePermissionAndNothingWaitsForIt() async {

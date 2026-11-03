@@ -5,9 +5,10 @@ import UserNotifications
 // The three places as tabs (design 3.5): Crew, Decide with the waiting
 // count as its badge, and Lines, each a NavigationStack. The yard
 // switch is one sheet over the tabs, since a sheet in every place on
-// the one flag opens on no first tap, with Forget's confirmation
-// after it; Pair another yard and Sign in are covers over the tabs;
-// the notification permission is asked once the tabs open.
+// the one flag opens on no first tap, with Forget's confirmation and
+// Rename's prompt after it; Pair another yard and Sign in are covers
+// over the tabs; the notification permission is asked once the tabs
+// open.
 struct TabsView: View {
     @Bindable var nav: Nav
     @Bindable var inbox: InboxModel
@@ -20,6 +21,9 @@ struct TabsView: View {
     @Bindable var signIn: SignInModel
     @Bindable var notifier: Notifier
     @State private var askingNotifications = false
+    /// What the rename prompt's field holds: the name given so far, then
+    /// whatever is typed.
+    @State private var newName = ""
 
     var body: some View {
         TabView(selection: $nav.place) {
@@ -61,11 +65,27 @@ struct TabsView: View {
                     nav.yardListShown = false
                     inbox.pairAnother()
                 },
+                onRename: {
+                    nav.yardListShown = false
+                    newName = inbox.renaming()?.given ?? ""
+                    nav.renaming = true
+                },
                 onForget: {
                     nav.yardListShown = false
                     nav.confirmingForget = true
                 }
             )
+        }
+        .alert("Rename this yard", isPresented: $nav.renaming) {
+            // The yard's own name stands in the field while none is
+            // given, and is what an empty field brings back.
+            TextField(inbox.renaming()?.original ?? "", text: $newName)
+            Button("Rename") { inbox.rename(newName) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            if let original = inbox.renaming()?.original {
+                Text("The name stays on this phone. Leave it empty to bring back \(original)")
+            }
         }
         .alert("Forget this yard", isPresented: $nav.confirmingForget) {
             Button("Keep", role: .cancel) {}

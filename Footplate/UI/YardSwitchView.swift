@@ -1,18 +1,32 @@
 import SwiftUI
 
-// The yard switch (design 3.5): each paired yard by its name (the
-// account's own by the yard's own, a yard of its own by its address's
-// host and port) with its waiting count as words or its follow's word,
-// the selected one marked by the rust yard line at its left; an
-// unreachable yard stays selectable. Pair another yard and Forget this
-// yard stand under the rows.
+// The yard switch (design 3.5): each paired yard by its name (the name
+// the person gave it, else the account's own by the yard's own, a yard
+// of its own by its address's host and port) with its waiting count as
+// words or its follow's word, the selected one marked by the rust yard
+// line at its left; an unreachable yard stays selectable. Pair another
+// yard, Rename this yard and Forget this yard stand under the rows.
 struct YardSwitchView: View {
     var state: InboxState
     var onSelect: (String) -> Void = { _ in }
     var onPairAnother: () -> Void = {}
+    var onRename: () -> Void = {}
     var onForget: () -> Void = {}
 
+    // The rows and the buttons under them scroll together: a person with
+    // a dozen yards has more rows than the sheet is tall, and the buttons
+    // would stand below its edge.
     var body: some View {
+        ScrollView {
+            content
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(ThemeColor.surfaceApp.color.ignoresSafeArea())
+        .foregroundStyle(ThemeColor.textPrimary.color)
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(state.yards, id: \.name) { yard in
                 Button {
@@ -60,13 +74,15 @@ struct YardSwitchView: View {
                 .buttonStyle(.plain)
             }
             VStack(alignment: .leading, spacing: 12) {
-                // The demo yard is nothing to forget, and pairing is
-                // what leaving it is for.
+                // The demo yard is nothing to rename or forget, and
+                // pairing is what leaving it is for.
                 if state.demo {
                     Button("Pair a real yard") { onPairAnother() }
                         .buttonStyle(FootplateButtonStyle(primary: false))
                 } else {
                     Button("Pair another yard") { onPairAnother() }
+                        .buttonStyle(FootplateButtonStyle(primary: false))
+                    Button("Rename this yard") { onRename() }
                         .buttonStyle(FootplateButtonStyle(primary: false))
                     Button("Forget this yard") { onForget() }
                         .buttonStyle(FootplateButtonStyle(primary: false))
@@ -78,12 +94,9 @@ struct YardSwitchView: View {
                 }
             }
             .padding(.horizontal, 20)
-            .padding(.top, 12)
-            Spacer()
+            .padding(.vertical, 12)
         }
         .padding(.top, 16)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(ThemeColor.surfaceApp.color.ignoresSafeArea())
-        .foregroundStyle(ThemeColor.textPrimary.color)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

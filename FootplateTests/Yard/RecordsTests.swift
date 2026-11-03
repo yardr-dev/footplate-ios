@@ -16,6 +16,12 @@ final class RecordsTests: XCTestCase {
         Records(secret: secret, plain: plain, origin: origin ?? edge)
     }
 
+    /// How often the records told their observers of a change.
+    @MainActor
+    private final class Published {
+        var count = 0
+    }
+
     func testTheTokensAreKeptAndReadBackAfterARestart() {
         let secret = MemoryShelf()
         let plain = MemoryShelf()
@@ -67,6 +73,50 @@ final class RecordsTests: XCTestCase {
         XCTAssertEqual(member?.owner, "alice")
         XCTAssertEqual(member?.title, "lab — member of alice's yard")
         XCTAssertEqual(makeRecords(secret: secret, plain: plain).kept.selected, "alice/lab")
+
+        // A name the person gives a yard on this phone lies with the yard's
+        // record on the plain shelf and nowhere else, trimmed, and is read
+        // back after a restart; `name` and `yard`, which requests carry, are
+        // as they were. A record kept before the field reads as it always
+        // did, and a yard never named is written without it.
+        let unnamed = plain.map["yard-meta:laptop"] ?? ""
+        XCTAssertFalse(unnamed.contains("localName"), unnamed)
+        plain.write(put: ["yard-meta:laptop": #"{"name":"laptop","yard":"laptop","user":"mckean","device":"pixel"}"#])
+        let old = makeRecords(secret: secret, plain: plain).kept.yards.first { $0.name == "laptop" }
+        XCTAssertNil(old?.localName)
+        XCTAssertEqual(old?.title, "laptop")
+        let published = Published()
+        _ = records.observe { _ in published.count += 1 }
+        records.renameYard("laptop", to: "  Back shed\n")
+        records.renameYard("alice/lab", to: "Bench")
+        records.renameYard("nowhere", to: "Ghost")
+        XCTAssertEqual(published.count, 0, "what follows and registers yards reads their names at the edge, which a name of the person's own leaves be")
+        XCTAssertFalse(secret.map.values.joined().contains("Back shed"), "\(secret.map)")
+        let named = Dictionary(uniqueKeysWithValues: makeRecords(secret: secret, plain: plain).kept.yards.map { ($0.name, $0) })
+        XCTAssertEqual(named.keys.sorted(), ["", "alice/lab", "laptop"])
+        XCTAssertEqual(named["laptop"]?.title, "Back shed")
+        XCTAssertEqual(named["laptop"].map { "\($0.name) · \($0.yard)" }, "laptop · laptop")
+        XCTAssertEqual(named["alice/lab"]?.title, "Bench — member of alice's yard")
+        XCTAssertEqual(named["alice/lab"].map { "\($0.name) · \($0.yard)" }, "alice/lab · lab")
+        XCTAssertEqual(named[""]?.title, "south")
+
+        // Clearing it, with nothing or only space, brings the old name back.
+        records.renameYard("laptop", to: " ")
+        records.renameYard("alice/lab", to: "")
+        let cleared = makeRecords(secret: secret, plain: plain).kept
+        XCTAssertEqual(cleared.yards.map(\.title).sorted(), ["lab — member of alice's yard", "laptop", "south"])
+        XCTAssertFalse((plain.map["yard-meta:laptop"] ?? "").contains("localName"), "\(plain.map)")
+
+        // Pairing the same yard again keeps the name, and forgetting the
+        // yard takes it with the rest of its record.
+        records.renameYard("laptop", to: "Back shed")
+        records.keepYard(PairedYard(name: "laptop", yard: "laptop", user: "mckean", device: "pixel", token: "yardr-dev-laptop-2"))
+        XCTAssertEqual(published.count, 1, "a pairing is told, so the silence above is the rename's")
+        XCTAssertEqual(records.kept.yards.first { $0.name == "laptop" }?.localName, "Back shed")
+        XCTAssertEqual(makeRecords(secret: secret, plain: plain).kept.yards.first { $0.name == "laptop" }?.title, "Back shed")
+        records.forgetYard("laptop")
+        records.keepYard(PairedYard(name: "laptop", yard: "laptop", user: "mckean", device: "pixel", token: "yardr-dev-laptop-3"))
+        XCTAssertNil(records.kept.yards.first { $0.name == "laptop" }?.localName)
     }
 
     func testAYardOfItsOwnKeepsItsAddressWithItsToken() {

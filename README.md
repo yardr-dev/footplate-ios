@@ -20,6 +20,14 @@ signed in as themselves. The head line and the yard switch call it
 `lab — member of alice's yard`. When its owner removes the membership, the
 yard leaves the phone with one sentence that says so.
 
+A paired yard can be given a name of the person's own, since the name the
+edge gives it, or its address's host and port, tells few yards apart. Rename
+this yard, on the yard switch beside Forget this yard, sets it for the
+selected yard, and clearing it brings the old name back. The head line, the
+switch and the notifications that name a yard show it, and a yard of another
+account keeps its `member of …'s yard` note beside it. The name stays on the
+phone: no yard is told it.
+
 One secret crosses the edge: the one-time code a harness's sign-in page
 gives. Its decision card links the page and takes the code behind the
 unlock; API keys and every other secret are answered on the yard's machine.

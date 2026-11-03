@@ -346,6 +346,112 @@ final class CrewScreenshotTests: XCTestCase {
         try await render(YardSwitchView(state: inbox.state), scene: scene, to: dir.appendingPathComponent("switch-member.png"))
     }
 
+    /// The yard switch with yards the person named themselves: an edge
+    /// yard and a yard of its own under the names given them, a yard of
+    /// another account with its note beside the name given, and one
+    /// never named, called as it was (footplate-ios-jyh8). Rename this
+    /// yard stands under the rows beside Forget this yard.
+    func testYardSwitchShowsTheNamesAPersonGaveTheirYards() async throws {
+        let scene = try XCTUnwrap(
+            UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first,
+            "no window scene to render in"
+        )
+        let fake = FakeYard()
+        let records = Records(secret: MemoryShelf(), plain: MemoryShelf(), origin: fake.origin)
+        records.keepSession(account: fake.email, session: fake.session())
+        records.keepYard(PairedYard(name: "", yard: "south", user: "jo", device: "phone", token: "yardr-dev-south-1"))
+        records.keepYard(PairedYard(name: "laptop", yard: "laptop", user: "jo", device: "pixel", token: "yardr-dev-laptop-1"))
+        let plantime = "workshop-mini.tail1a2b3c.ts.net:8446"
+        records.keepYard(PairedYard(
+            name: plantime, yard: "plantime", user: "jo", device: "phone", token: "yardr-dev-plantime-1",
+            origin: "https://workshop-mini.tail1a2b3c.ts.net:8446"
+        ))
+        records.keepYard(PairedYard(name: "alice/lab", yard: "lab", user: "joe", device: "phone", token: "yardr-dev-lab-1"))
+        records.renameYard("laptop", to: "Back shed")
+        records.renameYard(plantime, to: "Workshop")
+        records.renameYard("alice/lab", to: "Bench")
+        records.select("laptop")
+        let home = FakeFollowed()
+        let shed = FakeFollowed()
+        let own = FakeFollowed()
+        let lab = FakeFollowed()
+        let mailroom = Mailroom()
+        let followed: [String: FakeFollowed] = ["": home, "laptop": shed, plantime: own, "alice/lab": lab]
+        mailroom.setFollowers(followed)
+        let inbox = InboxModel(
+            pairer: Pairer(edge: try fake.edge(), records: records), records: records,
+            followers: { followed }, mailroom: mailroom, nav: Nav()
+        )
+        home.up(loaded())
+        for (name, follow) in [("laptop", shed), (plantime, own), ("alice/lab", lab)] {
+            var one = loaded()
+            one.me = Me(user: name == "alice/lab" ? "joe" : "jo", saidBy: "phone", yard: name)
+            one.asks = Asks(open: [OpenAsk(bead: "yd-\(follow === own ? "shift" : "gate")", ask: 2, question: "Land it?", asker: "yardmaster")], decided: [])
+            follow.up(one)
+        }
+
+        let deadline = ContinuousClock.now + .seconds(10)
+        while inbox.state.yards.contains(where: { $0.waiting == nil }), ContinuousClock.now <= deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(inbox.state.yards.map(\.title), ["south", "Back shed", "Workshop", "Bench — member of alice's yard"])
+        XCTAssertEqual(inbox.state.yards.map(\.waiting), ["2 waiting", "1 waiting", "1 waiting", "1 waiting"])
+        XCTAssertEqual(inbox.state.head, "Back shed · jo")
+
+        let dir = ProcessInfo.processInfo.environment["CREW_SHOTS_DIR"]
+            .map { URL(fileURLWithPath: $0) }
+            ?? FileManager.default.temporaryDirectory.appendingPathComponent("crew-shots")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try await render(YardSwitchView(state: inbox.state), scene: scene, to: dir.appendingPathComponent("switch-named.png"))
+    }
+
+    /// A person with a dozen yards (footplate-ios-jyh8): their rows are
+    /// taller than the sheet, so the switch scrolls, and what it holds
+    /// takes in the buttons under the rows, Rename this yard among them.
+    func testYardSwitchOfThirteenYardsScrollsToItsButtons() async throws {
+        let scene = try XCTUnwrap(
+            UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first,
+            "no window scene to render in"
+        )
+        let rows = (1...13).map { n in
+            YardRow(
+                name: "yard\(n)", title: "Yard \(n)", user: "jo", device: "phone",
+                selected: n == 4, word: nil, waiting: n % 3 == 0 ? "\(n) waiting" : nil
+            )
+        }
+        let dir = ProcessInfo.processInfo.environment["CREW_SHOTS_DIR"]
+            .map { URL(fileURLWithPath: $0) }
+            ?? FileManager.default.temporaryDirectory.appendingPathComponent("crew-shots")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let window = try await renderWindow(
+            YardSwitchView(state: InboxState(head: "Yard 4 · jo", yards: rows)),
+            scene: scene, to: dir.appendingPathComponent("switch-thirteen.png")
+        )
+        defer { window.isHidden = true }
+        func scrollViews(in view: UIView) -> [UIScrollView] {
+            var found = view.subviews.flatMap { scrollViews(in: $0) }
+            if let scroll = view as? UIScrollView { found.append(scroll) }
+            return found
+        }
+        let scroll = try XCTUnwrap(scrollViews(in: window).first, "the switch does not scroll")
+        // Thirteen rows of 64 and three buttons of 48 are more than the
+        // window is tall, and all of it is in what scrolls.
+        XCTAssertGreaterThan(scroll.contentSize.height, 13 * 64 + 3 * 48)
+        XCTAssertGreaterThan(scroll.contentSize.height, scroll.bounds.height)
+        // Scrolled to its end, the buttons stand in view.
+        scroll.contentOffset.y = scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom
+        try await Task.sleep(for: .milliseconds(300))
+        window.layoutIfNeeded()
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 3
+        let image = UIGraphicsImageRenderer(bounds: window.bounds, format: format).image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        }
+        let png = try XCTUnwrap(image.pngData(), "the rendered screen has no PNG")
+        try png.write(to: dir.appendingPathComponent("switch-thirteen-end.png"))
+        XCTAssertGreaterThan(png.count, 10000, "the rendered screen looks blank")
+    }
+
     private func render(_ view: some View, scene: UIWindowScene, to file: URL) async throws {
         let hosting = UIHostingController(rootView: AnyView(view))
         let window = UIWindow(windowScene: scene)

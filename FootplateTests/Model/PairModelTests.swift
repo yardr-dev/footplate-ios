@@ -435,7 +435,10 @@ final class PairModelTests: XCTestCase {
         XCTAssertEqual(world.records.kept.selected, "other.example.net")
 
         // The same address again, spelled another way, pairs as before:
-        // the record of that name is replaced by the new pairing's.
+        // the record of that name is replaced by the new pairing's, and
+        // keeps the name the person gave it, which no request carries.
+        world.records.renameYard("yard.example.net:8446", to: "Plantroom7")
+        let renamed = world.fake.requestCount
         await pairOwn("https://YARD.EXAMPLE.NET:8446/", code: "EEEE-FFFF")
         XCTAssertNil(world.pair.state.error)
         let names = world.records.kept.yards.map(\.name)
@@ -443,12 +446,16 @@ final class PairModelTests: XCTestCase {
         let again = try XCTUnwrap(world.records.kept.yards.first { $0.name == "yard.example.net:8446" })
         XCTAssertNotEqual(again.token, firstToken)
         XCTAssertEqual(again.origin, "https://yard.example.net:8446")
+        XCTAssertEqual(again.title, "Plantroom7")
         XCTAssertEqual(world.records.kept.selected, "yard.example.net:8446")
+        XCTAssertGreaterThan(world.fake.requestCount, renamed)
+        XCTAssertTrue(world.fake.requests(carrying: "Plantroom7").isEmpty, "\(world.fake.allRequests.map(\.path))")
 
         // And the app reopens on all three.
         let reopened = Records(secret: world.secret, plain: world.plain, origin: world.fake.origin).kept
         XCTAssertEqual(reopened.yards.map(\.name), ["", "other.example.net", "yard.example.net:8446"])
         XCTAssertEqual(reopened.yards.map(\.origin), ["", "https://other.example.net", "https://yard.example.net:8446"])
+        XCTAssertEqual(reopened.yards.map(\.title), ["south", "other.example.net", "Plantroom7"])
         XCTAssertEqual(reopened.yards.first?.token, edgeToken)
     }
 

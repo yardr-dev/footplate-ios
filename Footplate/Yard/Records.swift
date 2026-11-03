@@ -248,7 +248,10 @@ extension Account: CustomStringConvertible {
 /// the records call it by the name its address gives it (`ownName`),
 /// which no request carries. A yard of another account, one the account
 /// is a member of, is named `owner/yard` at the edge, which every
-/// request carries as it is (`memberYard`).
+/// request carries as it is (`memberYard`). `localName` is the name the
+/// person gave the yard on this phone: kept with the records and shown
+/// wherever the app names the yard, and in no request, since `name` and
+/// `yard` are what requests carry.
 struct PairedYard: Equatable, Sendable {
     var name: String
     var yard: String
@@ -256,18 +259,27 @@ struct PairedYard: Equatable, Sendable {
     var device: String
     var token: String
     var origin: String = ""
+    var localName: String? = nil
 
     /// The handle of the account the yard belongs to, where it is
     /// another's; empty for the account's own yard and a yard of its
     /// own, whose names hold no slash.
     var owner: String { memberYard(name)?.owner ?? "" }
 
-    /// What the head line calls it: its name at the edge, else its own.
-    /// A yard of another account says so beside its name, so a member
-    /// never takes it for one of their own.
+    /// What the yard is called with no name of the person's own: its
+    /// name at the edge, else its own. It is what clearing the local
+    /// name brings back.
+    var defaultName: String {
+        memberYard(name)?.yard ?? (name.isEmpty ? yard : name)
+    }
+
+    /// What the head line calls it: the name the person gave it, else
+    /// its default. A yard of another account says so beside its name,
+    /// so a member never takes it for one of their own.
     var title: String {
-        if let member = memberYard(name) { return "\(member.yard) — member of \(member.owner)'s yard" }
-        return name.isEmpty ? yard : name
+        let called = localName ?? defaultName
+        if let member = memberYard(name) { return "\(called) — member of \(member.owner)'s yard" }
+        return called
     }
 }
 
@@ -389,13 +401,33 @@ final class Records {
     }
 
     /// Keeps a paired yard, in place of one of the same name, and selects it.
+    /// The name the person gave the yard it replaces stays with it: pairing
+    /// the same yard again is no reason to name it afresh.
     func keepYard(_ yard: PairedYard) {
+        var yard = yard
+        if yard.localName == nil {
+            yard.localName = kept.yards.first { $0.name == yard.name }?.localName
+        }
         secret.write(put: [Self.yardPrefix + yard.name: yardSecret(token: yard.token, origin: yard.origin)])
-        let meta = StoredYard(name: yard.name, yard: yard.yard, user: yard.user, device: yard.device)
-        plain.write(put: [Self.yardMetaPrefix + yard.name: encoded(meta), Self.selectedKey: yard.name])
+        plain.write(put: [Self.yardMetaPrefix + yard.name: meta(of: yard), Self.selectedKey: yard.name])
         kept.yards = kept.yards.filter { $0.name != yard.name } + [yard]
         kept.selected = yard.name
         publish()
+    }
+
+    /// Gives the paired yard named `name` a name of the person's own, and
+    /// the app names it so from then on; empty text clears it, and the
+    /// yard is called as it was. It lies on the plain shelf with the rest
+    /// of the yard's record and is sent nowhere. The observers follow
+    /// and register yards by their names at the edge, which a name of the
+    /// person's own leaves as they were, so it publishes nothing: the
+    /// screens read `kept` and see it change.
+    func renameYard(_ name: String, to localName: String) {
+        guard let at = kept.yards.firstIndex(where: { $0.name == name }) else { return }
+        let given = Self.given(localName)
+        guard kept.yards[at].localName != given else { return }
+        kept.yards[at].localName = given
+        plain.write(put: [Self.yardMetaPrefix + name: meta(of: kept.yards[at])])
     }
 
     /// Selects the paired yard named `name`: the yard the app opens on.
@@ -490,7 +522,10 @@ final class Records {
                 continue
             }
             let (token, origin) = readYardSecret(stored)
-            yards.append(PairedYard(name: meta.name, yard: meta.yard, user: meta.user, device: meta.device, token: token, origin: origin))
+            yards.append(PairedYard(
+                name: meta.name, yard: meta.yard, user: meta.user, device: meta.device,
+                token: token, origin: origin, localName: Self.given(meta.localName)
+            ))
         }
         if !asideSecret.isEmpty { secret.write(remove: asideSecret) }
         if !asidePlain.isEmpty { plain.write(remove: asidePlain) }
@@ -534,11 +569,26 @@ final class Records {
         (try? JSONEncoder().encode(meta)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
     }
 
+    private func meta(of yard: PairedYard) -> String {
+        encoded(StoredYard(name: yard.name, yard: yard.yard, user: yard.user, device: yard.device, localName: yard.localName))
+    }
+
+    /// The name a person typed for a yard, without the space around it;
+    /// nil where nothing is left, which is no name of their own.
+    private static func given(_ text: String?) -> String? {
+        guard let text = text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
+        return text
+    }
+
+    /// The yard's plain record. `localName` is absent where none was
+    /// given, so a record kept before it reads as it always did and a
+    /// yard never named is written as it was.
     private struct StoredYard: Codable {
         var name: String
         var yard: String
         var user: String
         var device: String
+        var localName: String?
     }
 
     private static let accountKey = "account"

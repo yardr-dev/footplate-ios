@@ -390,6 +390,25 @@ final class WakeTests: XCTestCase {
         let board = try await engine.fetch("laptop")
         XCTAssertEqual("jo", board.me)
 
+        // The name the person gave the yard is what a wake calls it, and
+        // no request carries it: the yard is read by its name at the edge.
+        let named = await MainActor.run {
+            let records = Records(secret: MemoryShelf(), plain: MemoryShelf(), origin: edge.origin)
+            records.keepSession(account: "jo@example.com", session: session)
+            records.keepYard(PairedYard(name: "laptop", yard: "laptop", user: "jo", device: "pixel", token: laptop))
+            records.renameYard("laptop", to: "Backshed7")
+            return wakeEngine(
+                edge: edge, records: records,
+                checkpoints: MemoryCheckpointStore(), targets: MemoryWakeTargetStore(), canSuppress: false
+            )
+        }
+        XCTAssertEqual([WakeYard(name: "laptop", title: "Backshed7")], named.yards)
+        let before = fake.requestCount
+        _ = try await named.fetch("laptop")
+        XCTAssertGreaterThan(fake.requestCount, before)
+        XCTAssertTrue(fake.requests(carrying: "Backshed7").isEmpty, "\(fake.requests(carrying: "Backshed7").map(\.path))")
+        XCTAssertEqual(Set(fake.allRequests.dropFirst(before).compactMap { $0.header("X-Edge-Yard") }), ["laptop"])
+
         // Without a session the yard answers the door closed.
         let nosession = await MainActor.run {
             let records = Records(secret: MemoryShelf(), plain: MemoryShelf(), origin: edge.origin)
