@@ -1,7 +1,16 @@
 #!/bin/sh
 # The iPhone simulator gate; UI/instrumentation and iPad runs are by hand.
+# A suite name (sh .yardr/test PushRegisterTests) runs that FootplateTests suite
+# alone, under the same lock: an xcodebuild typed by hand on the simulator takes
+# no lock and can kill a gate run's test host. The name is not checked: one that
+# matches nothing runs 0 tests and still ends in TEST SUCCEEDED.
 # A missing destination must fail rather than silently testing another phone.
 set -e
+# A second name would be dropped without a word, and the pass would hide it.
+if [ "$#" -gt 1 ]; then
+  echo "usage: sh .yardr/test [Suite]: one suite at a time" >&2
+  exit 1
+fi
 # App Store Connect refuses a large icon with an alpha channel, so every PNG
 # in the app icon set must be opaque.
 for icon in Footplate/UI/Resources/Assets.xcassets/AppIcon.appiconset/*.png; do
@@ -22,10 +31,21 @@ if ! command -v flock >/dev/null; then
   exit 1
 fi
 lock="$(getconf DARWIN_USER_TEMP_DIR)footplate-ios-sim.lock"
+sim=7EC91353-EDF5-4E93-B644-46A44BA6CFCB
 # Shared: two runs starting together must not read each other's probe as a run.
 flock -s -n "$lock" true || echo "waiting for another run on the simulator ($lock)" >&2
-flock -o "$lock" xcodebuild test \
+# A cold simulator that xcodebuild boots for itself can refuse the app's launch
+# with Busy before any test runs (footplate-ios-ts3d). So under the lock, boot it
+# and wait until it is ready first; bootstatus returns at once for one that is.
+# xcodebuild shuts down only a simulator it booted itself, so this one stays
+# booted after the run: leave it, the next run starts warm. The quoted script is
+# the inner shell's own: its $1 is the simulator, its $@ the xcodebuild arguments.
+flock -o "$lock" sh -ec '
+  xcrun simctl bootstatus "$1" -b
+  shift
+  exec xcodebuild test "$@"
+' sh "$sim" \
   -project Footplate.xcodeproj \
   -scheme Footplate \
-  -destination 'platform=iOS Simulator,id=7EC91353-EDF5-4E93-B644-46A44BA6CFCB' \
-  -only-testing:FootplateTests
+  -destination "platform=iOS Simulator,id=$sim" \
+  -only-testing:"FootplateTests${1:+/$1}"
