@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 // One paired yard's calls, as its device: design 3.1's table, each
 // with its arguments by name and its answer read as docs/api.md has
@@ -21,6 +22,11 @@ final class YardClient: Sendable {
     /// The yard's name at the edge; empty for the account's own yard,
     /// and for a yard of its own, which has no name at any edge.
     let name: String
+    /// Whether this yard has said it takes no `weighed` (`refusesWeighed`):
+    /// one from before yardr v0.15.0, which has no weighty gate either.
+    /// Learned from its first refusal and kept for as long as this client
+    /// is: a new one, after a restart or a new sign-in, asks again.
+    private let takesNoWeighed = Mutex(false)
 
     init(edge: Edge, device: String, session: String, name: String) throws {
         try requireToken(device)
@@ -202,7 +208,8 @@ final class YardClient: Sendable {
 
     /// Picks `option` with `words` beside it (left out where empty).
     /// `weighed` is the phone's word that its person saw the card's
-    /// weight and passed the unlock: sent only where it is true.
+    /// weight and passed the unlock: sent only where it is true, and
+    /// not to a yard that takes none (`call`).
     func answerAsk(bead: String, ask: Int64, option: Int64, words: String, actor: String, weighed: Bool = false) async throws {
         var args: [String: Any] = ["bead": bead, "ask": ask, "option": option, "actor": actor]
         if !words.isEmpty { args["words"] = words }
@@ -393,9 +400,18 @@ final class YardClient: Sendable {
     /// Makes a call. A yard that is replacing itself did not run it:
     /// it is made again every 100 ms, also through the moment in
     /// which nothing answers between the two builds, for up to 30
-    /// seconds, and nothing is said meanwhile. Any other refusal is
-    /// the caller's.
+    /// seconds, and nothing is said meanwhile. A yard from before yardr
+    /// v0.15.0 refuses `weighed` as a name it does not know, and the call
+    /// is made once more without it, which is what the phone sent before
+    /// the word was added: its person passed the unlock already, and a
+    /// yard that has no weighty gate asks for none. That yard is told no
+    /// more of it, on this call or any other. Any other refusal is the
+    /// caller's, and so is a second one.
     private func call(method: String, args: [String: Any]) async throws -> Reply {
+        var args = args
+        if takesNoWeighed.withLock({ $0 }) {
+            args["weighed"] = nil
+        }
         var replacingSince: ContinuousClock.Instant?
         while true {
             do {
@@ -408,6 +424,10 @@ final class YardClient: Sendable {
                     if since.duration(to: ContinuousClock.now) >= YardClient.replacingPatience {
                         throw ApiError.down(why: "the yard is replacing itself")
                     }
+                case .refused(_, let message) where args["weighed"] != nil && refusesWeighed(message, method: method):
+                    takesNoWeighed.withLock { $0 = true }
+                    args["weighed"] = nil
+                    continue
                 case .down:
                     guard let since = replacingSince else { throw error }
                     if since.duration(to: ContinuousClock.now) >= YardClient.replacingPatience {

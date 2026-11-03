@@ -33,7 +33,8 @@ enum ApiError: Error, Equatable, Sendable {
     /// call is not made again by itself.
     case slow
     /// The yard, or Kratos, said no: `message` is a sentence for a person,
-    /// shown, never parsed.
+    /// shown, and read for one meaning alone: a yard saying it takes no
+    /// `weighed` (`refusesWeighed`).
     case refused(code: String, message: String)
     /// Nothing answers: no connection, a stream that went silent, or an
     /// answer no row of 3.1 reads. `why` is what was found, in a few words.
@@ -108,6 +109,28 @@ private let edgePrefix = "edge:"
 /// is the account's while its membership is active, so this is also the
 /// answer to a member the owner removed, before any yard is reached.
 let noYardWhy = "the account holds no yard of that name"
+
+/// Whether `message`, a yard's refusal of the call `method`, is a yard from
+/// before yardr v0.15.0 saying it takes no `weighed`: the word the phone
+/// adds once its person has passed the unlock. yardr's `named`
+/// (internal/rpc/api.go) words a stray name one of two ways, each ending in
+/// the names the call takes:
+///
+///     argument "weighed": AnswerAsk has none of that name (it takes bead, ask, ...)
+///     an argument: ApproveAsk has none of that name (it takes bead, ask, actor)
+///
+/// The second is how it words the calls that run a command or carry a
+/// secret (ApproveAsk, ApproveSetup, GiveSecret): it never says the name,
+/// in case a client put a secret's value where a name goes. So it counts
+/// only where the names it lists leave `weighed` out; a yard that takes
+/// `weighed` is refusing something else. The first form's list is not
+/// read, and both are matched for the called method alone.
+func refusesWeighed(_ message: String, method: String) -> Bool {
+    if message.hasPrefix("argument \"weighed\": \(method) has none of that name (it takes ") {
+        return true
+    }
+    return message.hasPrefix("an argument: \(method) has none of that name (it takes ") && !message.contains("weighed")
+}
 
 func bodyShape(_ body: String) -> Shape {
     guard let data = body.data(using: .utf8),

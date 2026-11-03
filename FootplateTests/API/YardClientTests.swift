@@ -416,6 +416,101 @@ final class YardClientTests: XCTestCase {
         XCTAssertEqual(fake.requestCount, 3)
     }
 
+    // A yard from before yardr v0.15.0 takes no `weighed` and refuses it in
+    // yardr's words (v0.14.0's lists of what each call takes). The call is
+    // made once more without it and answered; that client sends none from
+    // then on, on any call; and a client that has not met the refusal sends
+    // it first, as one does after a restart. A current yard is the table of
+    // the first test: weighed, once, on every call.
+    func testAYardThatTakesNoWeighedIsAnsweredWithoutItAndToldNoMoreOfIt() async throws {
+        let f = try fixtures()
+        let edge = try fake.edge()
+        func client() throws -> YardClient {
+            try edge.yard(device: f.laptopToken, session: f.session, name: "laptop")
+        }
+        let calls: [(method: String, takes: [String], call: (YardClient) async throws -> Void)] = [
+            ("AnswerAsk", ["bead", "ask", "option", "words", "actor"], {
+                try await $0.answerAsk(bead: "yd-map", ask: 7, option: 2, words: "", actor: "jo", weighed: true)
+            }),
+            ("ApproveAsk", ["bead", "ask", "actor"], {
+                try await $0.approveAsk(bead: "yd-tidy", ask: 9, actor: "jo", weighed: true)
+            }),
+            ("ApproveSetup", ["bead", "ask", "option", "values", "account", "actor"], {
+                try await $0.approveSetup(bead: "yd-courier", ask: 44, option: 1, actor: "jo", weighed: true)
+            }),
+            ("GiveSecret", ["bead", "ask", "values", "actor"], {
+                try await $0.giveSecret(bead: "yd-login", ask: 34, values: ["INPUT": "the-code"], actor: "jo", weighed: true)
+            }),
+        ]
+        for (method, takes, _) in calls {
+            fake.setTakes(yardName: "laptop", method: method, takes)
+        }
+        func made(_ method: String) -> [[String: Any]] {
+            fake.allRequests.filter { $0.path == "/user/call/\(method)" }.map { $0.bodyObject() }
+        }
+        for (method, _, call) in calls {
+            // A new client for each, so that none has heard of it already.
+            let fresh = try client()
+            try await call(fresh)
+            var bodies = made(method)
+            XCTAssertEqual(bodies.map { $0["weighed"] as? Bool }, [true, nil], "\(method): tried, refused, tried again")
+            if bodies.count == 2 {
+                var asked = bodies[0]
+                asked["weighed"] = nil
+                XCTAssertEqual(NSDictionary(dictionary: asked), NSDictionary(dictionary: bodies[1]), "\(method): the same call less weighed")
+            }
+            try await call(fresh)
+            bodies = made(method)
+            XCTAssertEqual(bodies.map { $0["weighed"] as? Bool }, [true, nil, nil], "\(method): told no more of it")
+        }
+        // What one call taught the client holds for the others, a pick too.
+        let taught = try client()
+        try await calls[1].call(taught)
+        let sent = fake.requestCount
+        for (method, _, call) in calls where method != "ApproveAsk" {
+            try await call(taught)
+            XCTAssertNil(made(method).last?["weighed"], method)
+        }
+        XCTAssertEqual(fake.requestCount - sent, 3, "one request each, with nothing left to learn")
+    }
+
+    // Only a yard saying it takes no `weighed` has the call made again
+    // without it. Any other refusal is the caller's, once, and teaches the
+    // client nothing; and so is a second one, the yard's sentence about
+    // `weighed` included: there is no third call.
+    func testAnyOtherRefusalOfAWeighedCallIsTheCallersAndNotMadeAgain() async throws {
+        let f = try fixtures()
+        let edge = try fake.edge()
+        func made() -> [[String: Any]] {
+            fake.allRequests.filter { $0.path == "/user/call/ApproveAsk" }.map { $0.bodyObject() }
+        }
+        func approve(_ client: YardClient) async throws {
+            try await client.approveAsk(bead: "yd-tidy", ask: 9, actor: "jo", weighed: true)
+        }
+        // A current yard refusing a weighty card, in words that name weighed.
+        let weighty = #"ask 9 is weighty (trust): approve it where its weight is shown; a client sends "weighed": true once its person has passed its gate"#
+        fake.nextFor(yard: "laptop", path: "/user/call/ApproveAsk", .refused(weighty))
+        let refused = await raisedApiError { try await approve(f.laptop) }
+        XCTAssertEqual(refused, .refused(code: "error", message: weighty))
+        XCTAssertEqual(made().map { $0["weighed"] as? Bool }, [true], "not made again")
+        try await approve(f.laptop)
+        XCTAssertEqual(made().map { $0["weighed"] as? Bool }, [true, true], "and nothing learned from it")
+
+        // Refused again once it is left out, in whatever words. A client
+        // for each, since one that has heard of it leaves weighed out first.
+        let old = "an argument: ApproveAsk has none of that name (it takes bead, ask, actor)"
+        let other = "this approval is the yard's own to make"
+        for second in [old, other] {
+            let fresh = try edge.yard(device: f.laptopToken, session: f.session, name: "laptop")
+            let before = made().count
+            fake.nextFor(yard: "laptop", path: "/user/call/ApproveAsk", .refused(old), .refused(second))
+            let error = await raisedApiError { try await approve(fresh) }
+            XCTAssertEqual(error, .refused(code: "error", message: second))
+            XCTAssertEqual(made().count - before, 2, "tried, refused, tried again, refused: \(second)")
+            XCTAssertNil(made().last?["weighed"], second)
+        }
+    }
+
     func testTheYardsBusyStreamIsBusyNotEdgeDown() async throws {
         let f = try fixtures()
         for header in ["5", nil, "soon"] as [String?] {

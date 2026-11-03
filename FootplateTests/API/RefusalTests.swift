@@ -82,6 +82,43 @@ final class RefusalTests: XCTestCase {
         }
     }
 
+    // The sentences a yard from before yardr v0.15.0 refuses `weighed` with,
+    // for each call that sends it: what yardr's `named` (internal/rpc/api.go)
+    // says of a name a call does not take, as v0.14.0's own `named` says it
+    // of the phone's bodies. A call of yardr's `Calls` names the stray; one of
+    // its `OperatorCalls` (an approval, a secret's giving) never does. A yardr
+    // that rewords either is a row to change here, and the matcher to read
+    // again by.
+    func testAYardThatTakesNoWeighedIsKnownByItsSentenceForEachCall() {
+        let sentences: [(method: String, sentence: String)] = [
+            ("AnswerAsk", #"argument "weighed": AnswerAsk has none of that name (it takes bead, ask, option, words, actor)"#),
+            ("ApproveAsk", "an argument: ApproveAsk has none of that name (it takes bead, ask, actor)"),
+            ("ApproveSetup", "an argument: ApproveSetup has none of that name (it takes bead, ask, option, values, account, actor)"),
+            ("GiveSecret", "an argument: GiveSecret has none of that name (it takes bead, ask, values, actor)"),
+        ]
+        for (method, sentence) in sentences {
+            XCTAssertTrue(refusesWeighed(sentence, method: method), method)
+            // The call is pinned: the same words said of another are not its.
+            for other in sentences.map(\.method) where other != method {
+                XCTAssertFalse(refusesWeighed(sentence, method: other), "\(method)'s sentence read for \(other)")
+            }
+        }
+        let others: [(what: String, method: String, sentence: String)] = [
+            // A current yard lists `weighed` among what it takes, so what it
+            // refuses is some other name.
+            ("a current yard's", "ApproveAsk", "an argument: ApproveAsk has none of that name (it takes bead, ask, actor, weighed, values)"),
+            ("another name than weighed", "AnswerAsk", #"argument "words": AnswerAsk has none of that name (it takes bead, ask, option, actor)"#),
+            ("weighed of the wrong type", "ApproveAsk", #"argument "weighed": json: cannot unmarshal string into Go value of type bool"#),
+            // A current yard refusing a weighty card, in words that name it.
+            ("a weighty card's", "ApproveAsk", #"ask 9 is weighty (trust): approve it where its weight is shown; a client sends "weighed": true once its person has passed its gate"#),
+            ("a rewording", "AnswerAsk", #"argument "weighed": AnswerAsk is not an argument"#),
+            ("no words", "GiveSecret", ""),
+        ]
+        for (what, method, sentence) in others {
+            XCTAssertFalse(refusesWeighed(sentence, method: method), what)
+        }
+    }
+
     func testRetryAfterIsFiveWhenMissingOrUnreadable() {
         XCTAssertEqual(retryAfterDuration(nil), .seconds(5))
         XCTAssertEqual(retryAfterDuration(""), .seconds(5))

@@ -248,6 +248,20 @@ final class DecisionModelTests: XCTestCase {
         typed.typed("9")
         await typed.approve()
         XCTAssertEqual(calls("ApproveAsk").count, 2)
+
+        // A yard from before yardr v0.15.0 takes no weighed: after the same
+        // unlock the call is made again without it and goes through, with
+        // no refusal or command in the card's place.
+        fake.setTakes(yardName: "laptop", method: "ApproveAsk", ["bead", "ask", "actor"])
+        typed.leave()
+        let older = await opened("yd-tidy", 9)
+        older.typed("9")
+        await older.approve()
+        // The two before went with weighed; this one with it, refused, and
+        // again without.
+        XCTAssertEqual(calls("ApproveAsk").map { $0["weighed"] as? Bool }, [true, true, true, nil])
+        XCTAssertNil(older.state.error)
+        XCTAssertEqual(nav.decidePath, [])
     }
 
     // A depot pack too large to read whole (yardr design y6gp 3.3): its
@@ -382,6 +396,20 @@ final class DecisionModelTests: XCTestCase {
         XCTAssertEqual(calls("ApproveSetup").count, 1)
         XCTAssertEqual(calls("ApproveSetup")[0]["option"] as? Int, 1)
         XCTAssertEqual(calls("ApproveSetup")[0]["weighed"] as? Bool, true)
+
+        // A yard from before yardr v0.15.0 takes no weighed: the same preset
+        // goes through the second time without it.
+        fake.setTakes(yardName: "laptop", method: "ApproveSetup", ["bead", "ask", "option", "values", "account", "actor"])
+        setup.leave()
+        let older = await opened("yd-courier", 44)
+        older.choose(1)
+        unlock.promptResults = [true]
+        await older.approve()
+        let approvals = calls("ApproveSetup")
+        XCTAssertEqual(approvals.map { $0["weighed"] as? Bool }, [true, true, nil], "tried with weighed, refused, tried again without")
+        XCTAssertEqual(approvals.last?["option"] as? Int, 1)
+        XCTAssertNil(older.state.error)
+        XCTAssertEqual(nav.decidePath, [])
     }
 
     func testARefusedRunApprovalShowsTheApproveCommandWithItsValues() async {
@@ -504,6 +532,20 @@ final class DecisionModelTests: XCTestCase {
         XCTAssertEqual(nav.decidePath, [])
         // The code is in the call alone: nowhere the card is described.
         XCTAssertFalse(String(describing: card.state).contains("the-code"))
+
+        // A yard from before yardr v0.15.0 takes no weighed: the code is
+        // given all the same, the second time without it.
+        fake.setTakes(yardName: "laptop", method: "GiveSecret", ["bead", "ask", "values", "actor"])
+        card.leave()
+        let older = await opened("yd-login", 34)
+        unlock.promptResults = [true]
+        await older.give(code: "the-code")
+        let givings = calls("GiveSecret")
+        XCTAssertEqual(givings.map { $0["weighed"] as? Bool }, [true, true, nil], "tried with weighed, refused, tried again without")
+        XCTAssertEqual(givings.last?["values"] as? [String: String], ["INPUT": "the-code"])
+        XCTAssertNil(older.state.error)
+        XCTAssertEqual(nav.decidePath, [])
+        XCTAssertFalse(String(describing: older.state).contains("the-code"))
     }
 
     func testAGivingTheYardRefusesShowsItsSentenceAndTheSecretCommand() async {

@@ -130,6 +130,13 @@ struct FakeResponse: Sendable {
         json(503, #"{"error": {"code": "replacing", "message": "the yard is replacing itself with a newer build"}}"#)
     }
 
+    /// A call the yard will not make, as it refuses one: `message` under
+    /// `code`, on a 200.
+    static func refused(_ message: String, code: String = "error") -> FakeResponse {
+        let refusal: [String: Any] = ["error": ["code": code, "message": message]]
+        return json(200, String(decoding: try! JSONSerialization.data(withJSONObject: refusal), as: UTF8.self))
+    }
+
     static func wrongCode() -> FakeResponse {
         json(403, #"{"refused": "wrong_code"}"#)
     }
@@ -309,6 +316,10 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
         yards.first { $0.name == yardName }?.coordinator = coordinator
         lock.unlock()
     }
+
+    /// The calls yardr keeps in its `OperatorCalls`, those the phone makes:
+    /// a run or setup approval and a secret's giving.
+    private static let operatorCalls: Set<String> = ["ApproveAsk", "ApproveSetup", "GiveSecret"]
 
     /// The yard named `yardName` takes only `names` in `method`, as a
     /// yard from before the others were added does; nil lifts it. A call
@@ -731,7 +742,12 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
             // One stray name refuses the call, the first by order.
             if let takes = yard.takes[method], let stray = body.keys.filter({ !takes.contains($0) }).min() {
                 let list = takes.isEmpty ? "none" : takes.joined(separator: ", ")
-                return FakeResponse.json(200, #"{"error": {"code": "error", "message": "argument \"\#(stray)\": \#(method) has none of that name (it takes \#(list))"}}"#)
+                // As yardr's `named` words it: a call of its OperatorCalls
+                // does not say the name, since a secret might be in it.
+                let message = FakeYard.operatorCalls.contains(method)
+                    ? "an argument: \(method) has none of that name (it takes \(list))"
+                    : "argument \"\(stray)\": \(method) has none of that name (it takes \(list))"
+                return FakeResponse.refused(message)
             }
             let bead = body["bead"] as? String
             let canned = (method == "Bead" ? bead.flatMap { Canned.beads[$0] } : nil)
