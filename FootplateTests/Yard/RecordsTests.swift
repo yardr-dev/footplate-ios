@@ -4,8 +4,9 @@ import XCTest
 // The records of design 3.2 on memory shelves: the tokens on the
 // secret shelf alone, read back by a new Records as a restart
 // would, set aside where their token is gone, and every record set
-// aside for another edge. The Keychain itself is the device check
-// named in the bead's note.
+// aside for another edge. The push token the registrar keeps beside
+// them stands where every record is forgotten. The Keychain itself
+// is the device check named in the bead's note.
 @MainActor
 final class RecordsTests: XCTestCase {
     private let edge = "https://my.yardr.dev"
@@ -298,7 +299,7 @@ final class RecordsTests: XCTestCase {
         XCTAssertTrue(plain.map.isEmpty, "\(plain.map)")
     }
 
-    func testForgettingMovesTheSelectionAndTheLastLeavesNothing() {
+    func testForgettingMovesTheSelectionAndTheLastLeavesNoCredential() {
         let secret = MemoryShelf()
         let plain = MemoryShelf()
         let records = makeRecords(secret: secret, plain: plain)
@@ -310,16 +311,64 @@ final class RecordsTests: XCTestCase {
         XCTAssertFalse(records.notificationsAsked)
         records.noteNotificationsAsked()
         XCTAssertTrue(records.notificationsAsked)
+        // The push token the registrar keeps on the secret shelf is a
+        // delivery address, no credential: it stands too, since the
+        // system hands it over again only at a launch.
+        secret.write(put: [pushTokenKey: "apns-token-1"])
         records.select("laptop")
         records.forgetYard("laptop")
         XCTAssertEqual(records.kept.selected, "")
         XCTAssertEqual(makeRecords(secret: secret, plain: plain).kept.selected, "")
         records.forgetAll()
         XCTAssertEqual(records.kept, Kept())
-        XCTAssertTrue(secret.map.isEmpty, "\(secret.map)")
+        XCTAssertEqual(secret.map, [pushTokenKey: "apns-token-1"], "the session and the yard's token are gone, the push token is not")
+        XCTAssertTrue(records.notificationsAsked)
         let recordKeys = plain.map.keys.filter {
             $0 == "origin" || $0 == "account" || $0 == "account-handle" || $0 == "selected" || $0.hasPrefix("yard-meta:")
         }
         XCTAssertTrue(recordKeys.isEmpty, "\(plain.map)")
+    }
+
+    func testAYardPairedAfterTheLastWasForgottenIsRegisteredWithoutALaunch() async throws {
+        // The records and the registrar on one shelf, as the app has
+        // them on the one Keychain, over the fake edge.
+        let fake = FakeYard()
+        let shelf = MemoryShelf()
+        let records = makeRecords(secret: shelf, plain: MemoryShelf(), origin: fake.origin)
+        let registrar = PushRegistrar(edge: try fake.edge(), records: records, secret: shelf)
+        func registers() -> [RecordedRequest] {
+            fake.allRequests.filter { $0.path == "/user/push/register" }
+        }
+        records.keepSession(account: fake.email, session: fake.session())
+        let laptop = PairedYard(name: "laptop", yard: "laptop", user: "jo", device: "pixel", token: fake.token(yardName: "laptop"))
+        records.keepYard(laptop)
+        await registrar.tokenReceived("apns-token-1")
+        XCTAssertEqual(registers().count, 1)
+        XCTAssertEqual(fake.pushToken(yardName: "laptop"), "apns-token-1")
+
+        // The last yard forgotten as the pairer forgets it: its row
+        // undone while its credentials stand, then every record
+        // deleted. The relay holds no row for it, and the push token
+        // is all the shelf holds.
+        await registrar.unregister(yard: laptop)
+        records.forgetAll()
+        XCTAssertNil(fake.pushToken(yardName: "laptop"))
+        XCTAssertEqual(registrar.token, "apns-token-1")
+        XCTAssertEqual(shelf.map, [pushTokenKey: "apns-token-1"])
+
+        // Signed in and paired again with no launch between, the system
+        // gives no token: the yard is registered with the one that
+        // stood, by one call as its new device.
+        let session = fake.session()
+        records.keepSession(account: fake.email, session: session)
+        let again = PairedYard(name: "laptop", yard: "laptop", user: "jo", device: "pixel", token: fake.token(yardName: "laptop"))
+        records.keepYard(again)
+        await registrar.yardsChanged()
+        XCTAssertEqual(registers().count, 2, "one call since the first, for the yard paired again")
+        let sent = try XCTUnwrap(registers().last)
+        XCTAssertEqual(sent.method, "POST")
+        assertHeaders(sent, token: again.token, yard: "laptop", session: session)
+        assertBody(sent, #"{"platform":"apns","token":"apns-token-1"}"#)
+        XCTAssertEqual(fake.pushToken(yardName: "laptop"), "apns-token-1")
     }
 }

@@ -52,7 +52,7 @@ final class PushRegistrar {
     }
 
     /// The token the system last gave, where it gave one.
-    var token: String? { secret.get(Self.tokenKey) }
+    var token: String? { secret.get(pushTokenKey) }
 
     /// A token the system gave, on launch or rotated: kept, and
     /// every edge yard registered with it where it is new. The same
@@ -60,7 +60,7 @@ final class PushRegistrar {
     func tokenReceived(_ token: String) async {
         guard isToken(token) else { return }
         let rotated = token != self.token
-        secret.write(put: [Self.tokenKey: token])
+        secret.write(put: [pushTokenKey: token])
         if rotated {
             await registerAll(token: token)
         }
@@ -121,6 +121,4 @@ final class PushRegistrar {
         guard yard.origin.isEmpty, let session = records.kept.account?.session else { return nil }
         return try? edge.yard(device: yard.token, session: session, name: yard.name)
     }
-
-    private static let tokenKey = "push-token"
 }

@@ -22,6 +22,11 @@ let pushAppGroup = Bundle.main.object(forInfoDictionaryKey: "PUSH_APP_GROUP") as
 let pushKeychainGroup = Bundle.main.object(forInfoDictionaryKey: "PUSH_KEYCHAIN_GROUP") as? String
     ?? "dev.yardr.footplate"
 
+/// The key the secret shelf keeps the push token the system last gave
+/// under: the registrar writes and reads it, and `Records.forgetAll`
+/// leaves it, since it is a delivery address and no credential.
+let pushTokenKey = "push-token"
+
 /// The one URL scheme a tap may open, and its one shape:
 /// `yardr-footplate://open/wake/<id>`, the id the relay's alone.
 let wakeScheme = "yardr-footplate"

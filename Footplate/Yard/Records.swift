@@ -455,9 +455,12 @@ final class Records {
     }
 
     /// Deletes every record: the phone holds no credential after.
-    /// The notifications-asked flag stays: it was asked once.
+    /// The notifications-asked flag stays: it was asked once. So does
+    /// the push token, which is a delivery address and no credential:
+    /// the system gives it again only at a launch, and a yard paired
+    /// before then is registered with it at once.
     func forgetAll() {
-        secret.write(remove: Array(secret.keys()))
+        secret.write(remove: Array(secret.keys().subtracting([pushTokenKey])))
         var plainRemove = [Self.originKey, Self.accountNameKey, Self.accountHandleKey, Self.selectedKey]
         plainRemove += plain.keys().filter { $0.hasPrefix(Self.yardMetaPrefix) }
         plain.write(remove: plainRemove)
