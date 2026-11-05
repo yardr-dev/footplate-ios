@@ -3,7 +3,8 @@
 # A suite name (sh .yardr/test PushRegisterTests) runs that FootplateTests suite
 # alone, under the same lock: an xcodebuild typed by hand on the simulator takes
 # no lock and can kill a gate run's test host. A named run that executes no
-# tests fails: xcodebuild ends a name that matches nothing in TEST SUCCEEDED.
+# tests fails, and a skipped test is not an executed one: xcodebuild ends a name
+# that matches nothing, or a suite that skips every test, in TEST SUCCEEDED.
 # A missing destination must fail rather than silently testing another phone.
 set -e
 # A second name would be dropped without a word, and the pass would hide it.
@@ -67,11 +68,34 @@ else
   (set +e; gate "$1"; echo $? >"$status") | tee "$log"
   rc=$(cat "$status")
   [ "$rc" = 0 ] || exit "${rc:-1}"
-  # XCTest prints its count on stdout, and says "Executed 1 test" for one. A log
-  # without such a line fails, and so does one Apple rewords: that breaks loud,
-  # where a count read loosely would reopen the hole without a word.
-  if ! grep -Eq 'Executed [1-9][0-9]* tests?' "$log"; then
-    echo "$1: no tests ran (no \"Executed N tests\" line with N above 0): is the name right?" >&2
+  # XCTest prints its count on stdout, says "Executed 1 test" for one, and
+  # counts a skipped test in N ("Executed 3 tests, with 1 test skipped and 0
+  # failures"). So a line passes when N is above its M skipped (0 where it has
+  # no such clause), which one grep cannot say; one passing line is enough, as
+  # a log has a line per suite and a total. A log with none fails, and so does
+  # one Apple rewords, a "skipped" in any other shape included: that breaks
+  # loud, where a count read loosely would reopen the hole without a word.
+  # POSIX awk only: this Mac's has no three-argument match or gensub.
+  if ! awk '
+    function num(s) {
+      sub(/^[^0-9]*/, "", s)
+      sub(/[^0-9].*$/, "", s)
+      return s + 0
+    }
+    match($0, /Executed [0-9]+ tests?/) {
+      n = num(substr($0, RSTART, RLENGTH))
+      m = 0
+      if (match($0, /with [0-9]+ tests? skipped/))
+        m = num(substr($0, RSTART, RLENGTH))
+      else if ($0 ~ /skipped/)
+        next
+      if (n > m)
+        ok = 1
+    }
+    END { exit !ok }
+  ' "$log"; then
+    echo "$1: no tests ran (no \"Executed N tests\" line with N above the tests skipped):" \
+      "is the name right, or is every test skipped?" >&2
     exit 1
   fi
 fi
