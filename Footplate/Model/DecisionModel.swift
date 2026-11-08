@@ -6,10 +6,11 @@ private func refusalWords(_ error: ApiError) -> String { words(error) }
 
 // One decision (design 3.5, after Android's model/DecisionModel.kt),
 // read with `Bead`: the weighty lines first, the question, its context
-// (always, as desktop draws it) and the beads it is about, each one row
-// away from its description and notes, the options with what each costs
-// and the recommended one, the words, and Pick, Later and Decline, with
-// Ask about this under them: the coordinator's conversation, its draft
+// (always, as desktop draws it), its own bead and the beads it is about,
+// each one row away from its description and notes (the own bead's from
+// the read that drew the card), the options with what each costs and
+// the recommended one, the words, and Pick, Later and Decline, with Ask
+// about this under them: the coordinator's conversation, its draft
 // started with the bead's id, as the bead card's Ask does. A pick that
 // passes the gate (3.4) goes with `weighed` only after the unlock was
 // passed, or the ask's number typed back where the phone has no screen
@@ -42,9 +43,12 @@ struct Choice: Equatable, Sendable {
     var recommended: Bool = false
 }
 
-/// One bead the ask is about, with its details row's state: shut
-/// until tapped, then the bead's description and its notes, read once
-/// with the whole-bead call when first opened.
+/// One bead a details row opens, with the row's state: shut until
+/// tapped, then the bead's description and its notes. The card's own
+/// bead is the first row, from the read that drew the card, so it has
+/// no loading or error of its own: a read that fails fails the card.
+/// Each bead the ask is about has a row after it, read once with the
+/// whole-bead call when first opened.
 struct AboutDetail: Equatable, Sendable {
     var id: String
     var title: String
@@ -52,7 +56,9 @@ struct AboutDetail: Equatable, Sendable {
     /// The row is open: the description and notes, their loading or
     /// their error shows.
     var expanded: Bool = false
-    /// The bead's description, read once and kept while the card is open.
+    /// The bead's description. An about-bead's is read once and kept
+    /// while the card is open; the card's own is replaced by every read
+    /// of the card.
     var body: String? = nil
     /// The bead's notes, newest last, read with the description.
     var notes: [CardNote] = []
@@ -145,7 +151,8 @@ struct DecisionState: Equatable, Sendable {
     var weighty: [String] = []
     var question: String = ""
     var context: [String] = []
-    /// The beads it is about, one details row each.
+    /// One details row for the card's own bead, first, then one for each
+    /// bead the ask is about but for the card's own.
     var details: [AboutDetail] = []
     var options: [Choice] = []
     /// Why the recommended option, under the list.
@@ -201,6 +208,13 @@ final class DecisionModel {
     private var openedBead: String? = nil
     private var openedAsk: Int64 = 0
     private var readAsk: BeadAsk? = nil
+    /// The card's own bead as its last read gave it, ready to be the
+    /// first details row: its title, stage, description and notes. Set
+    /// with `readAsk` and replaced by every read, since the read brings
+    /// them whether or not the row is open, so an open row shows the
+    /// notes of the latest read. Whether the row is open stays in
+    /// `expandedDetails`, as for the others, and it starts shut.
+    private var readOwn: AboutDetail? = nil
     private var chosen: Int64 = 0
     private var wordsText: String = ""
     private var typedText: String = ""
@@ -289,18 +303,7 @@ final class DecisionModel {
             weighty: weight.map(weightLine),
             question: ask.question,
             context: ask.context,
-            details: ask.about.map {
-                AboutDetail(
-                    id: $0.id,
-                    title: $0.title,
-                    stage: $0.stage,
-                    expanded: expandedDetails.contains($0.id),
-                    body: detailBodies[$0.id],
-                    notes: detailNotes[$0.id] ?? [],
-                    loading: detailReads[$0.id] != nil,
-                    error: detailErrors[$0.id]
-                )
-            },
+            details: detailRows(of: ask, bead: bead),
             options: ask.options.enumerated().map { index, option in
                 Choice(number: Int64(index + 1), label: option.label, consequence: option.consequence, recommended: ask.recommend == Int64(index + 1))
             },
@@ -338,6 +341,7 @@ final class DecisionModel {
             openedBead = bead
             openedAsk = ask
             readAsk = nil
+            readOwn = nil
             chosen = 0
             wordsText = ""
             typedText = ""
@@ -420,16 +424,20 @@ final class DecisionModel {
     /// row and the card stays usable; shutting the row forgets the
     /// error, so opening it again reads anew. A read description is kept
     /// with its notes while the card is open: opening the row again
-    /// reads nothing more.
+    /// reads nothing more. The card's own bead is the one row with no
+    /// call: it opens on what the card's read holds, which every read of
+    /// the card replaces.
     func toggleDetails(_ id: String) async {
         guard let target = screen(), let ask = readAsk else { return }
-        guard ask.about.contains(where: { $0.id == id }) else { return }
+        let own = id == target.bead
+        guard own || ask.about.contains(where: { $0.id == id }) else { return }
         if expandedDetails.contains(id) {
             expandedDetails.remove(id)
             detailErrors.removeValue(forKey: id)
             return
         }
         expandedDetails.insert(id)
+        if own { return }
         if detailBodies[id] != nil || detailReads[id] != nil { return }
         guard let followed = mailroom.followed(target.yard) else {
             expandedDetails.remove(id)
@@ -733,6 +741,16 @@ final class DecisionModel {
             guard active, self.activation == activation, screen() == target else { return }
             if let found = bead.asks.first(where: { $0.ask == target.ask }) {
                 readAsk = found
+                // The read holds the bead whole, so its own details row is
+                // made here, its notes in the bead card's order as an
+                // about-bead's are, and no call is ever made for it.
+                readOwn = AboutDetail(
+                    id: target.bead,
+                    title: bead.title,
+                    stage: bead.stage,
+                    body: bead.body,
+                    notes: cardDetails(bead, error: nil, now: now(), zone: zone()).notes
+                )
                 if errorText?.hasPrefix("The yard has no ask") == true { errorText = nil }
             } else {
                 errorText = "The yard has no ask \(target.ask) on \(target.bead)."
@@ -744,6 +762,31 @@ final class DecisionModel {
             guard active, self.activation == activation, screen() == target else { return }
             errorText = refusalWords(ApiError.down(why: "an unexpected error"))
         }
+    }
+
+    /// The card's details rows: its own bead first, from the last read,
+    /// then the beads the ask is about, each by what its row has read.
+    /// An ask that names its own bead gets that one row, built from the
+    /// read, not a second one from its about entry.
+    private func detailRows(of ask: BeadAsk, bead: String) -> [AboutDetail] {
+        var rows: [AboutDetail] = []
+        if var own = readOwn {
+            own.expanded = expandedDetails.contains(own.id)
+            rows.append(own)
+        }
+        for about in ask.about where about.id != bead {
+            rows.append(AboutDetail(
+                id: about.id,
+                title: about.title,
+                stage: about.stage,
+                expanded: expandedDetails.contains(about.id),
+                body: detailBodies[about.id],
+                notes: detailNotes[about.id] ?? [],
+                loading: detailReads[about.id] != nil,
+                error: detailErrors[about.id]
+            ))
+        }
+        return rows
     }
 
     private func approvable(_ ask: BeadAsk) -> Bool {

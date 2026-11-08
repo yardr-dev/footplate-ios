@@ -5,9 +5,9 @@ import UIKit
 // first, each a card — the only cards in the app — the weighty lines
 // first; then Decided, one line each. One decision is pushed onto the
 // place's stack: the weighty lines first, the question, its context
-// (always, its lines in place) and the beads it is about (each a row
-// that opens the bead's description and notes), the options with what
-// each costs and the recommended one, the words, and Pick, Later and
+// (always, its lines in place), its own bead and the beads it is about
+// (each a row opening that bead's description and notes), the options with
+// what each costs and the recommended one, the words, and Pick, Later and
 // Decline, with Ask about this under them while the ask is open. A run or
 // setup ask is approved with Approve behind the unlock. A card the edge
 // cannot approve shows what it proposes and the command that answers
@@ -309,9 +309,10 @@ struct DecisionScreen: View {
         }
     }
 
-    /// One bead the ask is about: shut, its row; tapped open, the
-    /// bead's description in place, selectable with its links as the
-    /// context's are, then its notes, or its loading or its error.
+    /// One bead the card shows, its own first and then each the ask is
+    /// about: shut, its row; tapped open, the bead's description in
+    /// place, selectable with its links as the context's are, then its
+    /// notes, or its loading or its error.
     private func detailsRow(_ detail: AboutDetail) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Button {

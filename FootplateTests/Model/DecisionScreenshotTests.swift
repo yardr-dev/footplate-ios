@@ -5,11 +5,13 @@ import XCTest
 
 // The decision screens rendered in the simulator against
 // fake-followed state (design 3.5, the bead's screenshots): the
-// decisions list, a routine card with its context and its Ask about
-// this, a routine card with a bead's details expanded to its description
-// and notes, the conversation Ask about this opens, a weighty card, a
-// harness login's code card with its sign-in link, an API key's
-// card, and starter's summary card with the text of one of its files.
+// decisions list, a routine card with its context, its details rows
+// (its own bead's first, then the bead it is about) and its Ask about
+// this, the card's own bead expanded to its description and notes, the
+// other bead expanded the same, the conversation Ask about this opens,
+// a weighty card with its own row shut, a harness login's code card
+// with its sign-in link, an API key's card, and starter's summary card
+// with the text of one of its files.
 // Hand-run for the bead note; the gate runs it too, and it only
 // asserts that each
 // screen renders non-empty at phone size. PNGs land in
@@ -71,9 +73,24 @@ final class DecisionScreenshotTests: XCTestCase {
             scene: scene, to: dir.appendingPathComponent("routine.png")
         )
         XCTAssertEqual(decision.state.context, ["The links file declares the new source; 64 links still point at the old one."])
+        // The card's own bead has its row first, the bead the ask is
+        // about the second, both shut.
+        XCTAssertEqual(decision.state.details.map(\.id), ["yd-links", "yd-train"])
+        XCTAssertEqual(decision.state.details.map(\.expanded), [false, false])
+        // The own row opens to the description and notes its card's read
+        // brought; the shot is tall enough to show the options under it.
+        await decision.toggleDetails("yd-links")
+        XCTAssertEqual(decision.state.details.first?.expanded, true)
+        XCTAssertEqual(decision.state.details.first?.notes.map(\.author), ["builder", "yardmaster"])
+        try await render(
+            DecisionScreen(model: decision, yard: "", bead: "yd-links", ask: 3),
+            scene: scene, to: dir.appendingPathComponent("own.png"), height: 1300
+        )
+        await decision.toggleDetails("yd-links")
         await decision.toggleDetails("yd-train")
-        XCTAssertTrue(decision.state.details.first?.expanded == true)
-        XCTAssertEqual(decision.state.details.first?.notes.map(\.author), ["builder", "reviewer"])
+        let train = try XCTUnwrap(decision.state.details.first { $0.id == "yd-train" })
+        XCTAssertTrue(train.expanded)
+        XCTAssertEqual(train.notes.map(\.author), ["builder", "reviewer"])
         try await render(
             DecisionScreen(model: decision, yard: "", bead: "yd-links", ask: 3),
             scene: scene, to: dir.appendingPathComponent("details.png")
@@ -94,6 +111,11 @@ final class DecisionScreenshotTests: XCTestCase {
             DecisionScreen(model: decision, yard: "", bead: "yd-map", ask: 7),
             scene: scene, to: dir.appendingPathComponent("weighty.png")
         )
+        // A weighty card about nothing still has its own bead's row, shut,
+        // between its context and its options.
+        XCTAssertFalse(decision.state.weighty.isEmpty)
+        XCTAssertEqual(decision.state.details.map(\.id), ["yd-map"])
+        XCTAssertEqual(decision.state.details.map(\.expanded), [false])
         decision.leave()
         try await render(
             DecisionScreen(model: decision, yard: "", bead: "yd-login", ask: 34),
@@ -287,18 +309,27 @@ final class DecisionScreenshotTests: XCTestCase {
 
     private func beads() -> [String: Bead] {
         [
-            "yd-links": Bead(id: "yd-links", asks: [
-                BeadAsk(
-                    ask: 3, question: "Move this yard's links to the declared source now?",
-                    context: ["The links file declares the new source; 64 links still point at the old one."],
-                    options: [
-                        AskOption(label: "Move them now", consequence: "all 64 links point at the new source tonight"),
-                        AskOption(label: "After Friday", consequence: "keep the old source until the release is out"),
-                        AskOption(label: "You decide", consequence: "leave it to yardmaster"),
-                    ],
-                    recommend: 1, why: "the test passed", about: [AboutBead(id: "yd-train", title: "Release train", stage: "new")]
-                ),
-            ]),
+            "yd-links": Bead(
+                id: "yd-links", title: "Move the links",
+                body: "The links file declares the new source. See https://example.com/links for the old and the new address.",
+                stage: "new",
+                notes: [
+                    BeadNote(seq: 1, kind: "note", author: "builder", text: "The test passed on a copy of the links file.", at: "2026-10-08T09:30:00Z"),
+                    BeadNote(seq: 2, kind: "note", author: "yardmaster", text: "64 links still point at the old source.", at: "2026-10-08T10:15:00Z"),
+                ],
+                asks: [
+                    BeadAsk(
+                        ask: 3, question: "Move this yard's links to the declared source now?",
+                        context: ["The links file declares the new source; 64 links still point at the old one."],
+                        options: [
+                            AskOption(label: "Move them now", consequence: "all 64 links point at the new source tonight"),
+                            AskOption(label: "After Friday", consequence: "keep the old source until the release is out"),
+                            AskOption(label: "You decide", consequence: "leave it to yardmaster"),
+                        ],
+                        recommend: 1, why: "the test passed", about: [AboutBead(id: "yd-train", title: "Release train", stage: "new")]
+                    ),
+                ]
+            ),
             "yd-train": Bead(
                 id: "yd-train", title: "Release train",
                 body: "The release train leaves nightly with what is green. See https://example.com/train for the timetable.",
@@ -309,7 +340,7 @@ final class DecisionScreenshotTests: XCTestCase {
                 ],
                 asks: []
             ),
-            "yd-login": Bead(id: "yd-login", asks: [
+            "yd-login": Bead(id: "yd-login", title: "Claude Code sign-in", stage: "new", asks: [
                 BeadAsk(
                     ask: 34, question: "Paste what Claude Code's sign-in page gave you",
                     context: [
@@ -321,7 +352,7 @@ final class DecisionScreenshotTests: XCTestCase {
                     weight: [AskWeight(kind: "credential", line: "INPUT, for the waiting login claude-ab12")]
                 ),
             ]),
-            "yd-key": Bead(id: "yd-key", asks: [
+            "yd-key": Bead(id: "yd-key", title: "Claude Code API key", stage: "new", asks: [
                 BeadAsk(
                     ask: 22, question: "What is the API key Claude Code runs with?",
                     context: ["yardmaster is at Claude Code's login screen."],
@@ -333,7 +364,7 @@ final class DecisionScreenshotTests: XCTestCase {
                     weight: [AskWeight(kind: "credential", line: "ANTHROPIC_API_KEY, the API key Claude Code runs with, asked for crew member yardmaster")]
                 ),
             ]),
-            "yd-map": Bead(id: "yd-map", asks: [
+            "yd-map": Bead(id: "yd-map", title: "Who wrote in", stage: "new", asks: [
                 BeadAsk(
                     ask: 7, question: "Who is U024BE7LH on slack?",
                     context: ["a delivery arrived from U024BE7LH in C1, who maps to nobody."],

@@ -12,9 +12,10 @@ import XCTest
 // per-type command;
 // Later and Decline move the card to Decided when the yard's `noted`
 // event comes, and not before; the ask's context is on the card from
-// the read, a details row opens to the bead's description and notes,
-// and Ask about this opens the coordinator's conversation with the
-// bead's id first in its draft.
+// the read, a details row for the card's own bead stands first on every
+// card and one for each bead the ask is about after it, each opening to
+// the bead's description and notes, and Ask about this opens the
+// coordinator's conversation with the bead's id first in its draft.
 @MainActor
 final class DecisionModelTests: XCTestCase {
     private var fake: FakeYard!
@@ -720,11 +721,28 @@ final class DecisionModelTests: XCTestCase {
 
     func testADetailsRowExpandsToTheBeadsDescriptionAndNotesAndPickStillWorks() async throws {
         let card = await opened("yd-links", 3)
+        // The card's own bead is the first row and the bead the ask is
+        // about the second, both shut.
         let shut = card.state.details
-        XCTAssertEqual(shut.map(\.id), ["yd-train"])
-        XCTAssertEqual(shut.map(\.title), ["Release train"])
-        XCTAssertFalse(shut[0].expanded)
-        XCTAssertEqual(shut[0].notes, [], "nothing of the bead is read before the row is tapped")
+        XCTAssertEqual(shut.map(\.id), ["yd-links", "yd-train"])
+        XCTAssertEqual(shut.map(\.title), ["Move the links", "Release train"])
+        XCTAssertEqual(shut.map(\.stage), ["new", "new"])
+        XCTAssertEqual(shut.map(\.expanded), [false, false])
+        XCTAssertEqual(shut[1].notes, [], "nothing of the bead the ask is about is read before its row is tapped")
+
+        // The own row holds its description and notes from the read that
+        // drew the card, so it opens and shuts with no call of its own.
+        XCTAssertEqual(shut[0].body, "The links file declares the new source.")
+        XCTAssertEqual(shut[0].notes.map(\.author), ["yardmaster"])
+        XCTAssertEqual(shut[0].notes.map(\.text), ["the test passed on a copy"])
+        XCTAssertFalse(shut[0].loading)
+        XCTAssertNil(shut[0].error)
+        let reads = calls("Bead").count
+        await card.toggleDetails("yd-links")
+        XCTAssertEqual(card.state.details.map(\.expanded), [true, false])
+        await card.toggleDetails("yd-links")
+        XCTAssertEqual(card.state.details.map(\.expanded), [false, false])
+        XCTAssertEqual(calls("Bead").count, reads, "opening and shutting its row calls nothing")
 
         let body = "The release train leaves nightly. See https://example.com/train for the timetable."
         // The yard serves the notes out of order: the row stands them
@@ -733,26 +751,26 @@ final class DecisionModelTests: XCTestCase {
         fake.nextFor(yard: "laptop", path: "/user/call/Bead", FakeResponse.json(200, #"{"result": {"id": "yd-train", "title": "Release train", "body": "\#(body)", "stage": "new", "labels": [], "notes": \#(notes), "asks": []}}"#))
         await card.toggleDetails("yd-train")
         let open = card.state.details
-        XCTAssertTrue(open[0].expanded)
-        XCTAssertFalse(open[0].loading)
-        XCTAssertNil(open[0].error)
-        XCTAssertEqual(open[0].body, body)
-        XCTAssertEqual(open[0].notes.map(\.author), ["builder", "reviewer"])
-        XCTAssertEqual(open[0].notes.map(\.text), ["Started on the train.", "Checked the timetable at https://example.com/timetable."])
+        XCTAssertTrue(open[1].expanded)
+        XCTAssertFalse(open[1].loading)
+        XCTAssertNil(open[1].error)
+        XCTAssertEqual(open[1].body, body)
+        XCTAssertEqual(open[1].notes.map(\.author), ["builder", "reviewer"])
+        XCTAssertEqual(open[1].notes.map(\.text), ["Started on the train.", "Checked the timetable at https://example.com/timetable."])
         XCTAssertEqual(calls("Bead").filter { $0["bead"] as? String == "yd-train" }.count, 1)
         // The web address in the description is a link, as the
         // context's are, and so is the one in a note.
         XCTAssertEqual(linked(body).runs.compactMap { $0.link }, [try XCTUnwrap(URL(string: "https://example.com/train"))])
-        XCTAssertEqual(linked(open[0].notes[1].text).runs.compactMap { $0.link }, [try XCTUnwrap(URL(string: "https://example.com/timetable"))])
+        XCTAssertEqual(linked(open[1].notes[1].text).runs.compactMap { $0.link }, [try XCTUnwrap(URL(string: "https://example.com/timetable"))])
 
         // A second tap shuts it; opening it again reads nothing more,
         // and the notes come back with the description.
         await card.toggleDetails("yd-train")
-        XCTAssertFalse(card.state.details[0].expanded)
+        XCTAssertFalse(card.state.details[1].expanded)
         await card.toggleDetails("yd-train")
-        XCTAssertTrue(card.state.details[0].expanded)
-        XCTAssertEqual(card.state.details[0].body, body)
-        XCTAssertEqual(card.state.details[0].notes.map(\.author), ["builder", "reviewer"])
+        XCTAssertTrue(card.state.details[1].expanded)
+        XCTAssertEqual(card.state.details[1].body, body)
+        XCTAssertEqual(card.state.details[1].notes.map(\.author), ["builder", "reviewer"])
         XCTAssertEqual(calls("Bead").filter { $0["bead"] as? String == "yd-train" }.count, 1, "the description and notes are read once")
 
         // Pick still works with the row open: the ask carries no
@@ -769,12 +787,17 @@ final class DecisionModelTests: XCTestCase {
         fake.nextFor(yard: "laptop", path: "/user/call/Bead", FakeResponse.json(200, #"{"error": {"code": "error", "message": "the yard is tired"}}"#))
         await card.toggleDetails("yd-train")
         let failed = card.state.details
-        XCTAssertTrue(failed[0].expanded)
-        XCTAssertFalse(failed[0].loading)
-        XCTAssertNil(failed[0].body)
-        XCTAssertEqual(failed[0].notes, [])
-        XCTAssertEqual(failed[0].error, "the yard is tired")
+        XCTAssertTrue(failed[1].expanded)
+        XCTAssertFalse(failed[1].loading)
+        XCTAssertNil(failed[1].body)
+        XCTAssertEqual(failed[1].notes, [])
+        XCTAssertEqual(failed[1].error, "the yard is tired")
         XCTAssertNil(card.state.error, "the card itself shows no error")
+        // The card's own row is made of the card's read, which did not
+        // fail: the other row's failure leaves it whole.
+        XCTAssertEqual(failed[0].id, "yd-links")
+        XCTAssertNil(failed[0].error)
+        XCTAssertEqual(failed[0].body, "The links file declares the new source.")
 
         // The card still picks with the failed row open.
         card.choose(3)
@@ -811,25 +834,100 @@ final class DecisionModelTests: XCTestCase {
         _ = await waitFor("the first bead read", state: { followed.pendingBeadReadCount("yd-train") }) { $0 == 1 }
 
         heldModel.leave()
-        XCTAssertFalse(heldModel.state.details[0].expanded)
-        XCTAssertFalse(heldModel.state.details[0].loading)
+        XCTAssertFalse(heldModel.state.details[1].expanded)
+        XCTAssertFalse(heldModel.state.details[1].loading)
         heldModel.open(yard: "laptop", bead: "yd-links", ask: 3)
 
         let currentRead = Task { @MainActor in await heldModel.toggleDetails("yd-train") }
         _ = await waitFor("the reopened card's bead read", state: { followed.pendingBeadReadCount("yd-train") }) { $0 == 2 }
-        XCTAssertTrue(heldModel.state.details[0].loading)
+        XCTAssertTrue(heldModel.state.details[1].loading)
 
         followed.releaseBeadRead("yd-train")
         await oldRead.value
-        XCTAssertTrue(heldModel.state.details[0].loading, "the stale read cannot clear the current read")
-        XCTAssertNil(heldModel.state.details[0].body, "the stale read keeps nothing")
-        XCTAssertEqual(heldModel.state.details[0].notes, [])
+        XCTAssertTrue(heldModel.state.details[1].loading, "the stale read cannot clear the current read")
+        XCTAssertNil(heldModel.state.details[1].body, "the stale read keeps nothing")
+        XCTAssertEqual(heldModel.state.details[1].notes, [])
 
         followed.releaseBeadRead("yd-train")
         await currentRead.value
-        XCTAssertFalse(heldModel.state.details[0].loading)
-        XCTAssertEqual(heldModel.state.details[0].body, "The train leaves nightly.")
-        XCTAssertEqual(heldModel.state.details[0].notes.map(\.author), ["builder"])
+        XCTAssertFalse(heldModel.state.details[1].loading)
+        XCTAssertEqual(heldModel.state.details[1].body, "The train leaves nightly.")
+        XCTAssertEqual(heldModel.state.details[1].notes.map(\.author), ["builder"])
+    }
+
+    func testEveryCardHasItsOwnBeadsRowShutWhateverItsKind() async {
+        // None of these asks names a bead it is about, as most do not,
+        // and each is a card whose options a row open by default would
+        // push down: a weighty pick, a run, a setup, a login's code and
+        // an answer in words. The row is there on each, shut, and opens
+        // to the bead the card is on; the next card starts shut again.
+        let cards: [(bead: String, ask: Int64, title: String)] = [
+            ("yd-map", 7, "Who wrote in"),
+            ("yd-tidy", 9, "Tidy the sidings"),
+            ("yd-courier", 44, "Set up courier"),
+            ("yd-login", 34, "Claude Code sign-in"),
+            ("yd-words", 12, "A words answer"),
+        ]
+        let card = decision()
+        for (bead, ask, title) in cards {
+            card.open(yard: "laptop", bead: bead, ask: ask)
+            let state = await waitFor("the card \(bead)", state: { card.state }) { $0.read && $0.ask == ask }
+            XCTAssertEqual(state.details.map(\.id), [bead])
+            XCTAssertEqual(state.details.map(\.title), [title])
+            XCTAssertEqual(state.details.map(\.stage), ["new"])
+            XCTAssertEqual(state.details.map(\.expanded), [false], "\(bead) starts shut")
+            await card.toggleDetails(bead)
+            XCTAssertEqual(card.state.details.map(\.expanded), [true], "\(bead) opens")
+        }
+        for (bead, _, _) in cards {
+            XCTAssertEqual(calls("Bead").filter { $0["bead"] as? String == bead }.count, 1, "\(bead): the card's read, none for its row")
+        }
+    }
+
+    func testAnAskAboutItsOwnBeadGetsOneRowThatFollowsTheCardsReads() async {
+        let started = BeadNote(seq: 1, kind: "note", author: "builder", text: "Started.", at: "2026-10-08T09:30:00Z")
+        let ask = BeadAsk(
+            ask: 3, question: "Move the links?", options: [AskOption(label: "Move")],
+            about: [
+                AboutBead(id: "yd-links", title: "Move the links", stage: "new"),
+                AboutBead(id: "yd-train", title: "Release train", stage: "new"),
+            ]
+        )
+        let followed = FakeFollowed()
+        followed.beads["yd-links"] = Bead(id: "yd-links", title: "Move the links", body: "Move them.", stage: "new", notes: [started], asks: [ask])
+        followed.up(loaded())
+        let readMailroom = Mailroom()
+        readMailroom.setFollowers(["laptop": followed])
+        let now = fixedNow
+        let card = DecisionModel(
+            mailroom: readMailroom, records: records, nav: Nav(place: .decide), conversation: conversation, unlock: unlock,
+            now: { now }, zone: { TimeZone(secondsFromGMT: 0)! }
+        )
+        defer { card.leave() }
+        card.open(yard: "laptop", bead: "yd-links", ask: 3)
+        _ = await waitFor("the card", state: { card.state }) { $0.read }
+
+        // The ask names the card's own bead and another: the own row once
+        // and first, from the read, and the other after it.
+        XCTAssertEqual(card.state.details.map(\.id), ["yd-links", "yd-train"])
+        XCTAssertEqual(card.state.details[0].notes.map(\.text), ["Started."])
+        await card.toggleDetails("yd-links")
+        XCTAssertEqual(card.state.details.map(\.expanded), [true, false])
+
+        // The bead moves on and the yard says so: the card reads again,
+        // and the open row shows the stage and notes of that read.
+        followed.beads["yd-links"] = Bead(
+            id: "yd-links", title: "Move the links", body: "Move them.", stage: "review",
+            notes: [started, BeadNote(seq: 2, kind: "note", author: "reviewer", text: "Looks right.", at: "2026-10-08T10:00:00Z")],
+            asks: [ask]
+        )
+        followed.event(Event(seq: 152, kind: "stage", bead: "yd-links"))
+        let fresh = await waitFor("the card read again", state: { card.state }) { $0.details.first?.notes.count == 2 }
+        XCTAssertEqual(fresh.details.map(\.id), ["yd-links", "yd-train"])
+        XCTAssertEqual(fresh.details[0].stage, "review")
+        XCTAssertEqual(fresh.details[0].notes.map(\.text), ["Started.", "Looks right."])
+        XCTAssertEqual(fresh.details.map(\.expanded), [true, false], "an open row stays open across the read")
+        XCTAssertEqual(followed.beadAsked, ["yd-links", "yd-links"], "two reads of the card, none for its row or the other bead")
     }
 
     func testAskingAboutTheCardOpensTheCoordinatorsConversationWithTheBeadFirst() async {
