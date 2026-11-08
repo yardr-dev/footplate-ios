@@ -42,11 +42,13 @@ no push registration).
 
 A bead opened from the lines place shows what the yard holds of it, its
 labels, description and notes, with its page in the web view one tap away
-for the rest. A decision's context stands shut behind a row, Show context,
-until it is tapped. A depot pack too large to read whole comes as a summary
-card: its summary is the first screen, and each file's line opens that
-file's whole text over the card, under its name, its action and its old and
-new SHA-256.
+for the rest. A decision's card shows the ask's context, with the bead it is
+about one row away (its description and notes), and Ask about this under
+Later and Decline, which opens the coordinator's conversation with the
+bead's id first in its draft. A depot pack too large to read whole comes as
+a summary card: its summary is the first screen, and each file's line opens
+that file's whole text over the card, under its name, its action and its old
+and new SHA-256.
 
 Tracked in the yard as the `footplate-ios` depot. `.yardr/` holds its flow,
 roles and merge gate. Every change is reviewed twice before it lands:

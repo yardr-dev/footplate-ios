@@ -6,9 +6,11 @@ private func refusalWords(_ error: ApiError) -> String { words(error) }
 
 // One decision (design 3.5, after Android's model/DecisionModel.kt),
 // read with `Bead`: the weighty lines first, the question, its context
-// (shut behind a toggle until it is tapped, and shut again for the next
-// ask) and the beads it is about, the options with what each costs and
-// the recommended one, the words, and Pick, Later and Decline. A pick that
+// (always, as desktop draws it) and the beads it is about, each one row
+// away from its description and notes, the options with what each costs
+// and the recommended one, the words, and Pick, Later and Decline, with
+// Ask about this under them: the coordinator's conversation, its draft
+// started with the bead's id, as the bead card's Ask does. A pick that
 // passes the gate (3.4) goes with `weighed` only after the unlock was
 // passed, or the ask's number typed back where the phone has no screen
 // lock; a cancelled unlock sends nothing and keeps the choice. A card
@@ -41,16 +43,19 @@ struct Choice: Equatable, Sendable {
 }
 
 /// One bead the ask is about, with its details row's state: shut
-/// until tapped, then the bead's description, read once with the
-/// whole-bead call when first opened.
+/// until tapped, then the bead's description and its notes, read once
+/// with the whole-bead call when first opened.
 struct AboutDetail: Equatable, Sendable {
     var id: String
     var title: String
     var stage: String
-    /// The row is open: the description, its loading or its error shows.
+    /// The row is open: the description and notes, their loading or
+    /// their error shows.
     var expanded: Bool = false
     /// The bead's description, read once and kept while the card is open.
     var body: String? = nil
+    /// The bead's notes, newest last, read with the description.
+    var notes: [CardNote] = []
     var loading: Bool = false
     /// Why the description was not read; the card stays usable.
     var error: String? = nil
@@ -140,9 +145,6 @@ struct DecisionState: Equatable, Sendable {
     var weighty: [String] = []
     var question: String = ""
     var context: [String] = []
-    /// The context lines are shown: shut when the card opens, until
-    /// the toggle is tapped.
-    var contextShown: Bool = false
     /// The beads it is about, one details row each.
     var details: [AboutDetail] = []
     var options: [Choice] = []
@@ -206,18 +208,17 @@ final class DecisionModel {
     private var declining: Bool = false
     private var declineWordsText: String = ""
     private var sending: Bool = false
-    /// The context toggle is open. Per ask and kept nowhere: shut again
-    /// whenever another ask opens.
-    private var contextShown: Bool = false
-    /// The details rows open, the descriptions read and their errors,
-    /// by the bead each row is about. A read description is kept while
-    /// the card is open; a failed row's error is forgotten when the row
-    /// shuts, so opening it again reads anew.
+    /// The details rows open, the descriptions and notes read and their
+    /// errors, by the bead each row is about. A read description and
+    /// its notes are kept while the card is open; a failed row's error
+    /// is forgotten when the row shuts, so opening it again reads anew.
     private var expandedDetails: Set<String> = []
     /// The text of a summary card open over it. Per ask and kept nowhere,
-    /// like the toggles above.
+    /// like the rows above.
     private var shownText: PackEntry? = nil
     private var detailBodies: [String: String] = [:]
+    /// Read with the body, so a bead with a body has its notes.
+    private var detailNotes: [String: [CardNote]] = [:]
     /// Identifies the read that owns each loading row, so a stale read
     /// cannot clear a newer read for the same bead.
     private var detailReads: [String: UUID] = [:]
@@ -230,6 +231,7 @@ final class DecisionModel {
     private let mailroom: Mailroom
     private let records: Records
     private let nav: Nav
+    private let conversation: ConversationModel
     private let unlock: any UnlockPrompt
     private let now: @Sendable () -> Date
     private let zone: @Sendable () -> TimeZone
@@ -245,6 +247,7 @@ final class DecisionModel {
         mailroom: Mailroom,
         records: Records,
         nav: Nav,
+        conversation: ConversationModel,
         unlock: any UnlockPrompt,
         now: @escaping @Sendable () -> Date = { Date() },
         zone: @escaping @Sendable () -> TimeZone = { .current }
@@ -252,6 +255,7 @@ final class DecisionModel {
         self.mailroom = mailroom
         self.records = records
         self.nav = nav
+        self.conversation = conversation
         self.unlock = unlock
         self.now = now
         self.zone = zone
@@ -285,7 +289,6 @@ final class DecisionModel {
             weighty: weight.map(weightLine),
             question: ask.question,
             context: ask.context,
-            contextShown: contextShown,
             details: ask.about.map {
                 AboutDetail(
                     id: $0.id,
@@ -293,6 +296,7 @@ final class DecisionModel {
                     stage: $0.stage,
                     expanded: expandedDetails.contains($0.id),
                     body: detailBodies[$0.id],
+                    notes: detailNotes[$0.id] ?? [],
                     loading: detailReads[$0.id] != nil,
                     error: detailErrors[$0.id]
                 )
@@ -341,10 +345,10 @@ final class DecisionModel {
             declining = false
             declineWordsText = ""
             sending = false
-            contextShown = false
             expandedDetails = []
             shownText = nil
             detailBodies = [:]
+            detailNotes = [:]
             detailReads = [:]
             detailErrors = [:]
             refused = false
@@ -395,14 +399,6 @@ final class DecisionModel {
         declineWordsText = text
     }
 
-    /// The context toggle tapped: the ask's context lines show where
-    /// they were shut and shut where they showed. Nothing else on the
-    /// card folds; the next ask opens shut.
-    func toggleContext() {
-        guard readAsk != nil else { return }
-        contextShown.toggle()
-    }
-
     /// A line of a summary card tapped: the whole text of its file, or of
     /// a source the import adds, opens over the card. It is read from the
     /// ask already read, so nothing is called; the text shown is whatever
@@ -419,11 +415,12 @@ final class DecisionModel {
     }
 
     /// A details row tapped: shut where open, and where shut opened
-    /// with the bead's description, read once with the whole-bead call.
-    /// A description that fails to read shows its error on the row and
-    /// the card stays usable; shutting the row forgets the error, so
-    /// opening it again reads anew. A read description is kept while
-    /// the card is open: opening the row again reads nothing more.
+    /// with the bead's description and notes, read once with the
+    /// whole-bead call. A bead that fails to read shows its error on the
+    /// row and the card stays usable; shutting the row forgets the
+    /// error, so opening it again reads anew. A read description is kept
+    /// with its notes while the card is open: opening the row again
+    /// reads nothing more.
     func toggleDetails(_ id: String) async {
         guard let target = screen(), let ask = readAsk else { return }
         guard ask.about.contains(where: { $0.id == id }) else { return }
@@ -451,6 +448,9 @@ final class DecisionModel {
             let bead = try await followed.bead(id)
             guard active, self.activation == activation, screen() == target else { return }
             detailBodies[id] = bead.body
+            // The notes in the bead card's order, by seq with ties as
+            // served; their stamps are the card's and are not drawn here.
+            detailNotes[id] = cardDetails(bead, error: nil, now: now(), zone: zone()).notes
         } catch let error as ApiError {
             guard active, self.activation == activation, screen() == target else { return }
             detailErrors[id] = refusalWords(error)
@@ -553,6 +553,24 @@ final class DecisionModel {
         await call(target: screen, failed: "Not declined") { followed in
             try await followed.decline(bead: screen.bead, ask: screen.ask, words: why)
         }
+    }
+
+    /// Ask about this: the coordinator's conversation is pushed onto the
+    /// crew stack, its draft starting with the card's bead id, as the
+    /// bead card's Ask does. The decision stays pushed on its own stack
+    /// for the way back; nothing is sent and the ask stays open.
+    func askCoordinator() {
+        guard let yard = openedYard, let bead = openedBead else { return }
+        let coordinator = coordinatorName(for: yard)
+        conversation.askAbout(yard: yard, bead: bead, with: coordinator)
+        nav.place = .crew
+        nav.openConversation(yard: yard, with: coordinator)
+    }
+
+    /// The crew member Ask about this writes to and the button names:
+    /// the yard's coordinator, as the bead card's Ask has it.
+    func coordinatorName(for yard: String) -> String {
+        coordinator(of: mailroom.followed(yard))
     }
 
     private struct ScreenRef: Equatable {

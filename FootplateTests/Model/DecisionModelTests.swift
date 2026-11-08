@@ -11,8 +11,10 @@ import XCTest
 // secret, and a refused answer shows the yard's sentence with the
 // per-type command;
 // Later and Decline move the card to Decided when the yard's `noted`
-// event comes, and not before; the ask's context stands behind a
-// toggle, shut for every ask that opens.
+// event comes, and not before; the ask's context is on the card from
+// the read, a details row opens to the bead's description and notes,
+// and Ask about this opens the coordinator's conversation with the
+// bead's id first in its draft.
 @MainActor
 final class DecisionModelTests: XCTestCase {
     private var fake: FakeYard!
@@ -22,6 +24,7 @@ final class DecisionModelTests: XCTestCase {
     private var records: Records!
     private var nav: Nav!
     private var mailroom: Mailroom!
+    private var conversation: ConversationModel!
     private var unlock: FakeUnlock!
 
     private let fixedNow = parseInstant("2026-10-08T11:30:00Z")!
@@ -43,10 +46,12 @@ final class DecisionModelTests: XCTestCase {
         let now = fixedNow
         mailroom = Mailroom(clock: clock, now: { now })
         mailroom.setFollowers(["laptop": follower])
+        conversation = ConversationModel(mailroom: mailroom, now: { now }, zone: { TimeZone(secondsFromGMT: 0)! })
         _ = try await follower.waitFor("laptop up") { $0.status == .up }
     }
 
     override func tearDown() async throws {
+        conversation?.leave()
         follower?.close()
         yards?.close()
         fake?.closeStreams()
@@ -56,7 +61,7 @@ final class DecisionModelTests: XCTestCase {
     private func decision() -> DecisionModel {
         let now = fixedNow
         return DecisionModel(
-            mailroom: mailroom, records: records, nav: nav, unlock: unlock,
+            mailroom: mailroom, records: records, nav: nav, conversation: conversation, unlock: unlock,
             now: { now }, zone: { TimeZone(secondsFromGMT: 0)! }
         )
     }
@@ -696,61 +701,59 @@ final class DecisionModelTests: XCTestCase {
         XCTAssertEqual(token.state.done, "declined")
     }
 
-    func testTheContextStandsBehindAToggleAndEveryAskOpensItShut() async {
+    func testTheContextIsOnTheCardFromTheReadAndEveryAskHasItsOwn() async {
+        // Nothing is tapped to show it: the first state that reads the
+        // card has the context, as desktop's card draws it always.
         let card = await opened("yd-links", 3)
-        let shut = card.state
-        XCTAssertEqual(shut.context, ["The links file declares the new source; 64 links still point at the old one."])
-        XCTAssertFalse(shut.contextShown)
+        let first = card.state
+        XCTAssertEqual(first.context, ["The links file declares the new source; 64 links still point at the old one."])
 
-        // Tapped, the context shows and nothing else on the card moves;
-        // tapped again, it shuts.
-        card.toggleContext()
-        var shown = card.state
-        XCTAssertTrue(shown.contextShown)
-        shown.contextShown = false
-        XCTAssertEqual(shown, shut)
-        card.toggleContext()
-        XCTAssertEqual(card.state, shut)
-
-        // The next ask opens shut, as the first did, and so does this
+        // The next ask has its own, as the first had, and so has this
         // one when it is opened again after it.
-        card.toggleContext()
         card.open(yard: "laptop", bead: "yd-map", ask: 7)
         let next = await waitFor("the next ask", state: { card.state }) { $0.read && $0.ask == 7 }
         XCTAssertEqual(next.context, ["a delivery arrived from U024BE7LH in C1, who maps to nobody."])
-        XCTAssertFalse(next.contextShown)
         card.open(yard: "laptop", bead: "yd-links", ask: 3)
         let again = await waitFor("the first ask again", state: { card.state }) { $0.read && $0.ask == 3 }
-        XCTAssertFalse(again.contextShown)
+        XCTAssertEqual(again.context, first.context)
     }
 
-    func testADetailsRowExpandsToTheBeadsDescriptionAndPickStillWorks() async throws {
+    func testADetailsRowExpandsToTheBeadsDescriptionAndNotesAndPickStillWorks() async throws {
         let card = await opened("yd-links", 3)
         let shut = card.state.details
         XCTAssertEqual(shut.map(\.id), ["yd-train"])
         XCTAssertEqual(shut.map(\.title), ["Release train"])
         XCTAssertFalse(shut[0].expanded)
+        XCTAssertEqual(shut[0].notes, [], "nothing of the bead is read before the row is tapped")
 
         let body = "The release train leaves nightly. See https://example.com/train for the timetable."
-        fake.nextFor(yard: "laptop", path: "/user/call/Bead", FakeResponse.json(200, #"{"result": {"id": "yd-train", "title": "Release train", "body": "\#(body)", "stage": "new", "labels": [], "notes": [], "asks": []}}"#))
+        // The yard serves the notes out of order: the row stands them
+        // newest last, as the bead card does.
+        let notes = #"[{"seq": 2, "kind": "note", "author": "reviewer", "text": "Checked the timetable at https://example.com/timetable.", "at": "2026-10-08T10:00:00Z"}, {"seq": 1, "kind": "note", "author": "builder", "text": "Started on the train.", "at": "2026-10-08T09:30:00Z"}]"#
+        fake.nextFor(yard: "laptop", path: "/user/call/Bead", FakeResponse.json(200, #"{"result": {"id": "yd-train", "title": "Release train", "body": "\#(body)", "stage": "new", "labels": [], "notes": \#(notes), "asks": []}}"#))
         await card.toggleDetails("yd-train")
         let open = card.state.details
         XCTAssertTrue(open[0].expanded)
         XCTAssertFalse(open[0].loading)
         XCTAssertNil(open[0].error)
         XCTAssertEqual(open[0].body, body)
+        XCTAssertEqual(open[0].notes.map(\.author), ["builder", "reviewer"])
+        XCTAssertEqual(open[0].notes.map(\.text), ["Started on the train.", "Checked the timetable at https://example.com/timetable."])
         XCTAssertEqual(calls("Bead").filter { $0["bead"] as? String == "yd-train" }.count, 1)
         // The web address in the description is a link, as the
-        // context's are.
+        // context's are, and so is the one in a note.
         XCTAssertEqual(linked(body).runs.compactMap { $0.link }, [try XCTUnwrap(URL(string: "https://example.com/train"))])
+        XCTAssertEqual(linked(open[0].notes[1].text).runs.compactMap { $0.link }, [try XCTUnwrap(URL(string: "https://example.com/timetable"))])
 
-        // A second tap shuts it; opening it again reads nothing more.
+        // A second tap shuts it; opening it again reads nothing more,
+        // and the notes come back with the description.
         await card.toggleDetails("yd-train")
         XCTAssertFalse(card.state.details[0].expanded)
         await card.toggleDetails("yd-train")
         XCTAssertTrue(card.state.details[0].expanded)
         XCTAssertEqual(card.state.details[0].body, body)
-        XCTAssertEqual(calls("Bead").filter { $0["bead"] as? String == "yd-train" }.count, 1, "the description is read once")
+        XCTAssertEqual(card.state.details[0].notes.map(\.author), ["builder", "reviewer"])
+        XCTAssertEqual(calls("Bead").filter { $0["bead"] as? String == "yd-train" }.count, 1, "the description and notes are read once")
 
         // Pick still works with the row open: the ask carries no
         // weight, so no unlock stands in the way.
@@ -769,6 +772,7 @@ final class DecisionModelTests: XCTestCase {
         XCTAssertTrue(failed[0].expanded)
         XCTAssertFalse(failed[0].loading)
         XCTAssertNil(failed[0].body)
+        XCTAssertEqual(failed[0].notes, [])
         XCTAssertEqual(failed[0].error, "the yard is tired")
         XCTAssertNil(card.state.error, "the card itself shows no error")
 
@@ -788,12 +792,15 @@ final class DecisionModelTests: XCTestCase {
                 about: [AboutBead(id: "yd-train", title: "Release train", stage: "new")]
             ),
         ])
-        followed.beads["yd-train"] = Bead(id: "yd-train", body: "The train leaves nightly.")
+        followed.beads["yd-train"] = Bead(
+            id: "yd-train", body: "The train leaves nightly.",
+            notes: [BeadNote(seq: 1, kind: "note", author: "builder", text: "Started.", at: "2026-10-08T09:30:00Z")]
+        )
         let heldMailroom = Mailroom()
         heldMailroom.setFollowers(["laptop": followed])
         let now = fixedNow
         let heldModel = DecisionModel(
-            mailroom: heldMailroom, records: records, nav: Nav(place: .decide), unlock: unlock,
+            mailroom: heldMailroom, records: records, nav: Nav(place: .decide), conversation: conversation, unlock: unlock,
             now: { now }, zone: { TimeZone(secondsFromGMT: 0)! }
         )
         heldModel.open(yard: "laptop", bead: "yd-links", ask: 3)
@@ -815,11 +822,89 @@ final class DecisionModelTests: XCTestCase {
         followed.releaseBeadRead("yd-train")
         await oldRead.value
         XCTAssertTrue(heldModel.state.details[0].loading, "the stale read cannot clear the current read")
+        XCTAssertNil(heldModel.state.details[0].body, "the stale read keeps nothing")
+        XCTAssertEqual(heldModel.state.details[0].notes, [])
 
         followed.releaseBeadRead("yd-train")
         await currentRead.value
         XCTAssertFalse(heldModel.state.details[0].loading)
         XCTAssertEqual(heldModel.state.details[0].body, "The train leaves nightly.")
+        XCTAssertEqual(heldModel.state.details[0].notes.map(\.author), ["builder"])
+    }
+
+    func testAskingAboutTheCardOpensTheCoordinatorsConversationWithTheBeadFirst() async {
+        let followed = FakeFollowed()
+        followed.beads["yd-links"] = Bead(id: "yd-links", asks: [
+            BeadAsk(ask: 3, question: "Move the links?", options: [AskOption(label: "Move")]),
+        ])
+        followed.up(loaded())
+        let askMailroom = Mailroom()
+        askMailroom.setFollowers(["laptop": followed])
+        let askNav = Nav(place: .decide)
+        let now = fixedNow
+        let zone: @Sendable () -> TimeZone = { TimeZone(secondsFromGMT: 0)! }
+        let asked = ConversationModel(mailroom: askMailroom, now: { now }, zone: zone)
+        let card = DecisionModel(
+            mailroom: askMailroom, records: records, nav: askNav, conversation: asked, unlock: unlock,
+            now: { now }, zone: zone
+        )
+        defer {
+            card.leave()
+            asked.leave()
+        }
+
+        // No card open: the Ask has nowhere to go.
+        card.askCoordinator()
+        XCTAssertEqual(askNav.crewPath, [])
+        XCTAssertEqual(askNav.place, .decide)
+
+        askNav.openDecision(yard: "laptop", bead: "yd-links", ask: 3)
+        card.open(yard: "laptop", bead: "yd-links", ask: 3)
+        _ = await waitFor("the card", state: { card.state }) { $0.read }
+        // An answer without the field opens the yardmaster, and the
+        // button says that name.
+        XCTAssertEqual(card.coordinatorName(for: "laptop"), "yardmaster")
+        card.askCoordinator()
+        // The crew place shows the yard's conversation with the
+        // yardmaster; the decision stays pushed for the way back, still
+        // open, and nothing was sent.
+        XCTAssertEqual(askNav.place, .crew)
+        XCTAssertEqual(askNav.crewPath, [ConversationRoute(yard: "laptop", with: "yardmaster")])
+        XCTAssertEqual(askNav.decidePath, [DecisionRoute(yard: "laptop", bead: "yd-links", ask: 3)])
+        XCTAssertNil(card.state.done)
+        XCTAssertTrue(followed.answers.isEmpty && followed.defers.isEmpty && followed.declines.isEmpty && followed.sent.isEmpty)
+        // The screen's open starts the draft, the bead's id its first
+        // words.
+        asked.open(yard: "laptop", with: "yardmaster")
+        XCTAssertEqual(asked.state.title, "yardmaster")
+        XCTAssertEqual(asked.state.draft, "yd-links ")
+
+        // A yard whose coordinator has another name: the Ask opens that
+        // crew member's conversation, and the button says that name.
+        asked.leave()
+        followed.up(loaded(coordinator: "mayor"))
+        XCTAssertEqual(card.coordinatorName(for: "laptop"), "mayor")
+        askNav.crewPath = []
+        card.askCoordinator()
+        XCTAssertEqual(askNav.place, .crew)
+        XCTAssertEqual(askNav.crewPath, [ConversationRoute(yard: "laptop", with: "mayor")])
+        asked.open(yard: "laptop", with: "mayor")
+        XCTAssertEqual(asked.state.title, "mayor")
+        XCTAssertEqual(asked.state.draft, "yd-links ")
+    }
+
+    private func loaded(coordinator: String = "yardmaster") -> Loaded {
+        Loaded(
+            me: Me(user: "jo", saidBy: "pixel", yard: "laptop", yardmaster: coordinator),
+            head: 151,
+            settings: Settings(),
+            user: User(name: "jo"),
+            crew: [],
+            users: [],
+            inbox: Inbox(),
+            notifications: Notifications(),
+            asks: Asks()
+        )
     }
 
     private static func asks(open: [String], decided: [String]) -> String {

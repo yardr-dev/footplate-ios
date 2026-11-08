@@ -120,7 +120,7 @@ final class AppServices {
         let conversation = ConversationModel(mailroom: mailroom)
         self.conversationModel = conversation
         self.decisionsModel = DecisionsModel(records: records, mailroom: mailroom, nav: nav)
-        self.decisionModel = DecisionModel(mailroom: mailroom, records: records, nav: nav, unlock: LAUnlockPrompt())
+        self.decisionModel = DecisionModel(mailroom: mailroom, records: records, nav: nav, conversation: conversation, unlock: LAUnlockPrompt())
         self.inboxModel = InboxModel(pairer: pairer, records: records, followers: { [:] }, mailroom: mailroom, nav: nav)
         self.lineModel = LineModel(
             followers: { [:] }, records: records, pairer: pairer, nav: nav, conversation: conversation,

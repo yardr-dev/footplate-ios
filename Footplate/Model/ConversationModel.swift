@@ -102,6 +102,15 @@ let conversationPage: Int64 = 30
 /// none of its own: a yard older than /user/me's `yardmaster` field.
 let yardmaster = "yardmaster"
 
+/// The crew member an Ask about a bead of `followed`'s yard writes to,
+/// and names: what /user/me answered, or the yardmaster where the yard
+/// answers none or is not read yet.
+@MainActor
+func coordinator(of followed: (any Followed)?) -> String {
+    let named = followed?.state.loaded?.me.yardmaster ?? ""
+    return named.isEmpty ? yardmaster : named
+}
+
 /// The draft with `bead` as its first words, keeping what is there.
 func askDraft(_ draft: String, bead: String) -> String {
     if draft.hasPrefix("\(bead) ") { return draft }

@@ -517,8 +517,7 @@ final class LineModel {
     /// and names: what /user/me answered, or the yardmaster where the
     /// yard answers none or is not read yet.
     func coordinatorName(for yard: String) -> String {
-        let named = followers()[yard]?.state.loaded?.me.yardmaster ?? ""
-        return named.isEmpty ? yardmaster : named
+        coordinator(of: followers()[yard])
     }
 
     private func lineDepot(_ depot: FlowDepot, me: String, filter: LineFilter) -> LineDepot {

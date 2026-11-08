@@ -69,7 +69,7 @@ final class Demo {
         let conversation = ConversationModel(mailroom: mailroom, pictures: Pictures(directory: folder))
         self.conversation = conversation
         decisions = DecisionsModel(records: records, mailroom: mailroom, nav: nav)
-        decision = DecisionModel(mailroom: mailroom, records: records, nav: nav, unlock: LAUnlockPrompt())
+        decision = DecisionModel(mailroom: mailroom, records: records, nav: nav, conversation: conversation, unlock: LAUnlockPrompt())
         inbox = InboxModel(pairer: pairer, records: records, followers: { [:] }, mailroom: mailroom, nav: nav, leave: leave)
         // No web view: a demo bead has no page to open.
         line = LineModel(

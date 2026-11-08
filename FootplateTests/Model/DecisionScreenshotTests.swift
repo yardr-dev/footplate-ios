@@ -5,8 +5,9 @@ import XCTest
 
 // The decision screens rendered in the simulator against
 // fake-followed state (design 3.5, the bead's screenshots): the
-// decisions list, a routine card with its context shut and open, a
-// routine card with a bead's details expanded, a weighty card, a
+// decisions list, a routine card with its context and its Ask about
+// this, a routine card with a bead's details expanded to its description
+// and notes, the conversation Ask about this opens, a weighty card, a
 // harness login's code card with its sign-in link, an API key's
 // card, and starter's summary card with the text of one of its files.
 // Hand-run for the bead note; the gate runs it too, and it only
@@ -43,7 +44,12 @@ final class DecisionScreenshotTests: XCTestCase {
         home.beads = beads().merging(["yd-pack": try packBead(), "yd-bars": barsChange()]) { $1 }
         home.up(loaded())
         let decisions = DecisionsModel(records: records, mailroom: mailroom, nav: nav, now: { now }, zone: { TimeZone(secondsFromGMT: 0)! })
-        let decision = DecisionModel(mailroom: mailroom, records: records, nav: nav, unlock: FakeUnlock(), now: { now }, zone: { TimeZone(secondsFromGMT: 0)! })
+        let conversation = ConversationModel(mailroom: mailroom, now: { now }, zone: { TimeZone(secondsFromGMT: 0)! })
+        let decision = DecisionModel(mailroom: mailroom, records: records, nav: nav, conversation: conversation, unlock: FakeUnlock(), now: { now }, zone: { TimeZone(secondsFromGMT: 0)! })
+        let line = LineModel(
+            followers: { ["": home, "laptop": laptop] }, records: records, pairer: pairer, nav: nav,
+            conversation: conversation, origins: { _ in fake.origin }, now: { now }
+        )
 
         let dir = ProcessInfo.processInfo.environment["DECISION_SHOTS_DIR"]
             .map { URL(fileURLWithPath: $0) }
@@ -58,24 +64,31 @@ final class DecisionScreenshotTests: XCTestCase {
         XCTAssertEqual(decisions.state.decided.map(\.what), ["declined"])
 
         try await render(DecisionsScreen(inbox: inbox, model: decisions, decision: decision, nav: nav), scene: scene, to: dir.appendingPathComponent("decisions.png"))
+        // The context is on the card with nothing tapped, and Ask about
+        // this stands under Later and Decline.
         try await render(
             DecisionScreen(model: decision, yard: "", bead: "yd-links", ask: 3),
             scene: scene, to: dir.appendingPathComponent("routine.png")
         )
-        XCTAssertFalse(decision.state.contextShown)
-        decision.toggleContext()
-        XCTAssertTrue(decision.state.contextShown)
-        try await render(
-            DecisionScreen(model: decision, yard: "", bead: "yd-links", ask: 3),
-            scene: scene, to: dir.appendingPathComponent("context.png")
-        )
-        decision.toggleContext()
+        XCTAssertEqual(decision.state.context, ["The links file declares the new source; 64 links still point at the old one."])
         await decision.toggleDetails("yd-train")
         XCTAssertTrue(decision.state.details.first?.expanded == true)
+        XCTAssertEqual(decision.state.details.first?.notes.map(\.author), ["builder", "reviewer"])
         try await render(
             DecisionScreen(model: decision, yard: "", bead: "yd-links", ask: 3),
             scene: scene, to: dir.appendingPathComponent("details.png")
         )
+        // Ask about this: the yardmaster's conversation on the crew
+        // place, its draft started with the bead's id.
+        decision.askCoordinator()
+        XCTAssertEqual(nav.place, .crew)
+        XCTAssertEqual(nav.crewPath, [ConversationRoute(yard: "", with: "yardmaster")])
+        try await render(
+            ConversationScreen(model: conversation, line: line, yard: "", with: "yardmaster"),
+            scene: scene, to: dir.appendingPathComponent("ask.png")
+        )
+        XCTAssertEqual(conversation.state.draft, "yd-links ")
+        conversation.leave()
         decision.leave()
         try await render(
             DecisionScreen(model: decision, yard: "", bead: "yd-map", ask: 7),
@@ -289,7 +302,12 @@ final class DecisionScreenshotTests: XCTestCase {
             "yd-train": Bead(
                 id: "yd-train", title: "Release train",
                 body: "The release train leaves nightly with what is green. See https://example.com/train for the timetable.",
-                stage: "new", asks: []
+                stage: "new",
+                notes: [
+                    BeadNote(seq: 1, kind: "note", author: "builder", text: "Started. The timetable is kept at https://example.com/timetable.", at: "2026-10-08T09:30:00Z"),
+                    BeadNote(seq: 2, kind: "note", author: "reviewer", text: "The nightly run is green.", at: "2026-10-08T10:15:00Z"),
+                ],
+                asks: []
             ),
             "yd-login": Bead(id: "yd-login", asks: [
                 BeadAsk(

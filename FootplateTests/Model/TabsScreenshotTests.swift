@@ -47,7 +47,7 @@ final class TabsScreenshotTests: XCTestCase {
         )
         let conversation = ConversationModel(mailroom: mailroom, now: { now }, zone: { zone })
         let decisions = DecisionsModel(records: records, mailroom: mailroom, nav: nav, now: { now }, zone: { zone })
-        let decision = DecisionModel(mailroom: mailroom, records: records, nav: nav, unlock: FakeUnlock(), now: { now }, zone: { zone })
+        let decision = DecisionModel(mailroom: mailroom, records: records, nav: nav, conversation: conversation, unlock: FakeUnlock(), now: { now }, zone: { zone })
         let line = LineModel(
             followers: { ["": home, "laptop": laptop] }, records: records, pairer: pairer, nav: nav,
             conversation: conversation, origins: { _ in fake.origin }, now: { now }
