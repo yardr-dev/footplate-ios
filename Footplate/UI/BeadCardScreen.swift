@@ -3,8 +3,9 @@ import SwiftUI
 // One bead opened (design 3.5, after Android's BeadCardView): its title
 // and head, the strip of its line with the bead's stage marked, what is
 // happening now, Ask the coordinator, the bead's details as the
-// yard gave them (its labels, description and notes, newest last),
-// and the bead's page in the web view for the rest. Pushed onto the
+// yard gave them (its labels, then Media where any note carries a
+// picture, its description and notes, newest last), and the bead's page
+// in the web view for the rest. Pushed onto the
 // lines stack from a card's bead id, a row or a station, with the
 // system's back. A place to check and nudge, not to edit. Pull to
 // refresh reads the board and the bead again.
@@ -12,6 +13,8 @@ struct BeadCardScreen: View {
     @Bindable var model: LineModel
     var route: BeadRoute
     @Environment(\.openURL) private var openURL
+    /// The Media grid is pushed over the card.
+    @State private var showMedia = false
 
     var body: some View {
         let card = model.card(for: route)
@@ -32,6 +35,9 @@ struct BeadCardScreen: View {
         .navigationTitle(route.bead)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
+        .navigationDestination(isPresented: $showMedia) {
+            MediaGridScreen(model: model, route: route)
+        }
     }
 
     @ViewBuilder
@@ -134,6 +140,10 @@ struct BeadCardScreen: View {
                 .padding(.top, 16)
                 .accessibilityIdentifier("bead-labels")
         }
+        let media = details.media
+        if !media.isEmpty {
+            mediaRow(count: media.count)
+        }
         if details.read {
             Text("Description")
                 .themeType(.section)
@@ -171,6 +181,32 @@ struct BeadCardScreen: View {
                 .padding(.top, 16)
                 .accessibilityIdentifier("bead-details-error")
         }
+    }
+
+    /// Every picture of the notes in one grid: a row with their count,
+    /// where any note carries one, and the chevron every row that opens
+    /// something has.
+    private func mediaRow(count: Int) -> some View {
+        Button {
+            showMedia = true
+        } label: {
+            HStack(spacing: 8) {
+                Text("Media · \(count)")
+                    .themeType(.label)
+                    .foregroundStyle(ThemeColor.textPrimary.color)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(ThemeColor.textSecondary.color)
+                    .accessibilityHidden(true)
+            }
+            .frame(minHeight: 48)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Opens every picture of the notes")
+        .accessibilityIdentifier("bead-media")
+        .padding(.top, 8)
     }
 
     /// One note: who wrote it and when, over its words, which are

@@ -190,6 +190,25 @@ struct CardNote: Equatable, Sendable {
     var files: [String] = []
 }
 
+/// One picture of a bead's notes as the Media grid has it: the picture
+/// and the note it came with, whose author and time are who attached it
+/// and when.
+struct CardMedia: Equatable, Sendable, Identifiable {
+    /// Its place among the pictures of the notes, the oldest note's
+    /// first. It stands as newer notes come, so a view open on one picture
+    /// keeps it.
+    var id: Int
+    var image: ShownImage
+    var author: String
+    /// When the note was written, as the note says it.
+    var at: String
+
+    /// Who attached it and when, in one line.
+    var caption: String {
+        [author, at].filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+}
+
 /// What the `Bead` call adds to a card: the bead's labels, its body
 /// and its notes, the newest last, as footplate's bead view has them.
 struct CardDetails: Equatable, Sendable {
@@ -204,6 +223,24 @@ struct CardDetails: Equatable, Sendable {
 
     /// Nothing read and nothing said yet: the card shows a loading line.
     var loading: Bool { !read && error == nil }
+
+    /// Every picture the notes carry, for the Media grid: the newest
+    /// note's first (the notes stand oldest first), and a note's own in
+    /// the order it carries them. A page or a file is none of them, and
+    /// a picture a note carries twice is two, as its card draws it.
+    var media: [CardMedia] {
+        var place = 0
+        var byNote: [[CardMedia]] = []
+        for note in notes {
+            var pictures: [CardMedia] = []
+            for image in note.images {
+                pictures.append(CardMedia(id: place, image: image, author: note.author, at: note.at))
+                place += 1
+            }
+            byNote.append(pictures)
+        }
+        return byNote.reversed().flatMap { $0 }
+    }
 }
 
 /// One bead opened from the line: its card, from the board's row and,

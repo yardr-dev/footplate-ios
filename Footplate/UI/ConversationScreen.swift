@@ -393,9 +393,12 @@ struct ConversationScreen: View {
 }
 
 /// One picture full screen, over the conversation or, as a note's
-/// opens it, over the screen: pinch to zoom, a tap shuts it.
+/// opens it, over the screen: pinch to zoom, a tap shuts it. A pager
+/// around it, a bead's Media, has the swipe while the picture is at its
+/// own size and `zoomed` says when it is not.
 struct FullPicture: View {
     var image: ShownImage
+    var zoomed: Binding<Bool> = .constant(false)
     var onClose: () -> Void
     @State private var scale: CGFloat = 1
     @State private var offset: CGSize = .zero
@@ -414,10 +417,14 @@ struct FullPicture: View {
                         MagnifyGesture()
                             .onChanged { value in scale = min(6, max(1, value.magnification)) }
                             .onEnded { _ in if scale == 1 { offset = .zero } }
-                            .simultaneously(with: DragGesture().onChanged { value in
-                                if scale > 1 { offset = value.translation }
-                            })
                     )
+                    // The drag pans a picture zoomed in; at its own size
+                    // it is left out, so it cannot take a pager's swipe.
+                    .simultaneousGesture(
+                        DragGesture().onChanged { value in offset = value.translation },
+                        including: scale > 1 ? .all : .subviews
+                    )
+                    .onChange(of: scale) { _, scale in zoomed.wrappedValue = scale > 1 }
                     .accessibilityLabel(image.name.isEmpty ? "Picture" : image.name)
             } else {
                 Text(image.name.isEmpty ? "Picture" : image.name)

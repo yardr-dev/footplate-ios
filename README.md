@@ -44,7 +44,10 @@ A bead opened from the lines place shows what the yard holds of it, its
 labels, description and notes, with its page in the web view one tap away
 for the rest. A note that carries pictures draws them under its words, on the
 bead's card and in a decision's details alike, and a tap opens one full
-screen; its pages and other files are told by name. A decision's card shows
+screen; its pages and other files are told by name. A bead's card whose notes
+carry any picture has a Media row under its labels, Media · 3 for three, which
+opens all of them in one grid, the newest note's first; a tap opens one full
+size, to swipe to the next and the previous, with who attached it and when. A decision's card shows
 the ask's context, with its own bead one row away (its description and notes)
 and one more row for each bead the ask is about, and Ask about this under
 Later and Decline, which opens the coordinator's conversation with the bead's
@@ -118,7 +121,9 @@ xcodebuild test -project Footplate.xcodeproj -scheme Footplate \
 ```
 
 `LineScreenTests` checks that the app reads the canned line board from
-the stand-in edge.
+the stand-in edge. `MediaScreenTests` opens `yd-gate`, whose notes carry
+three pictures that the stand-in makes and serves by their hash, to its
+Media grid, and swipes through them full size.
 
 The shell trap stops the edge by its pid and removes its files when the
 shell exits, including after an interrupted test run.

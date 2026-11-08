@@ -644,6 +644,54 @@ final class LineModelTests: XCTestCase {
                 ),
             ]
         )
+        // The Media grid's pictures are the card's, with the bytes the
+        // fetch brought: the picture the yard holds and the one it holds
+        // no more, in the note's order, and not the page and the file.
+        XCTAssertEqual(
+            card.details.media,
+            [
+                CardMedia(id: 0, image: ShownImage(hash: shotHash, name: "shot.png", bytes: shotBytes), author: "train-new", at: "09:46"),
+                CardMedia(id: 1, image: ShownImage(hash: goneHash, name: "gone.jpg", missed: true), author: "train-new", at: "09:46"),
+            ]
+        )
+        // In the same card path, exercise all the notes together: the
+        // newest note first, each note's files in their own order, and
+        // notes sorted by seq even when the yard served them otherwise.
+        func media(_ notes: [BeadNote]) -> [CardMedia] {
+            cardDetails(
+                Bead(id: "yd-train", notes: notes), error: nil,
+                now: parseInstant("2026-10-08T10:11:00Z")!, zone: TimeZone(secondsFromGMT: 0)!
+            ).media
+        }
+        let page = BlobRef(hash: String(repeating: "dd", count: 32), kind: "text/html; charset=utf-8", bytes: 900, name: "report.html")
+        let older = BeadNote(seq: 2, author: "mckean", text: "A shot.", at: "2026-10-07T16:20:00Z", files: [
+            BlobRef(hash: shotHash, kind: "image/png", bytes: Int64(shotBytes.count), name: "shot.png"),
+        ])
+        let newer = BeadNote(seq: 6, author: "builder", text: "Two shots and a page.", at: "2026-10-08T09:46:00Z", files: [
+            BlobRef(hash: shotHash, kind: "image/png", bytes: Int64(shotBytes.count), name: "shot.png"),
+            page,
+            BlobRef(hash: goneHash, kind: "image/jpeg", bytes: 70, name: "gone.jpg"),
+        ])
+        let ordered = media([newer, older])
+        XCTAssertEqual(ordered.map(\.id), [1, 2, 0])
+        XCTAssertEqual(ordered.map(\.image.name), ["shot.png", "gone.jpg", "shot.png"])
+        XCTAssertEqual(ordered.map(\.caption), ["builder · 09:46", "builder · 09:46", "mckean · 7 Oct"])
+        XCTAssertEqual(ordered.map(\.image.hash), [shotHash, goneHash, shotHash])
+        let newest = BeadNote(seq: 7, author: "yardmaster", text: "One more.", at: "2026-10-08T10:02:00Z", files: [page])
+        let withNewest = media([newest, newer, older])
+        XCTAssertEqual(withNewest.map(\.id), [1, 2, 0], "a newer note without a picture leaves the existing places alone")
+        let newestWithPicture = BeadNote(seq: 8, author: "yardmaster", text: "One more picture.", at: "2026-10-08T10:05:00Z", files: [
+            BlobRef(hash: goneHash, kind: "image/jpeg", bytes: 70, name: "gone.jpg"),
+        ])
+        XCTAssertEqual(media([newestWithPicture, newest, newer, older]).map(\.id), [3, 1, 2, 0])
+        XCTAssertEqual(media([BeadNote(seq: 1, author: "mckean", text: "Words.")]), [])
+        XCTAssertEqual(media([BeadNote(seq: 1, author: "mckean", text: "A page.", files: [page])]), [])
+        XCTAssertEqual(
+            cardDetails(nil, error: "Details not read", now: parseInstant("2026-10-08T10:11:00Z")!, zone: TimeZone(secondsFromGMT: 0)!).media,
+            []
+        )
+        XCTAssertEqual(CardMedia(id: 0, image: ShownImage(hash: "a", name: "a"), author: "", at: "").caption, "")
+        XCTAssertEqual(CardMedia(id: 0, image: ShownImage(hash: "a", name: "a"), author: "mckean", at: "").caption, "mckean")
         // A picture is asked for once, though the bead was read twice;
         // only an image is asked for at all.
         XCTAssertEqual(home.blobAsked.filter { $0 == shotHash }.count, 1)

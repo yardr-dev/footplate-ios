@@ -8,8 +8,10 @@ import XCTest
 // and with one stat filtering it, a bead's card with its details,
 // the card while the details are read and when the read is refused,
 // a route map with its landings under the landed station, the
-// Ask naming a renamed coordinator, and the card of a bead whose note
-// carries a picture and a page. Hand-run for the
+// Ask naming a renamed coordinator, the card of a bead whose note
+// carries a picture and a page, and that of a bead with three pictures
+// over two notes: its Media row, the Media grid and a picture opened full
+// size. Hand-run for the
 // bead note; the gate runs it too, and it only asserts that the screens
 // render non-empty at phone size. The PNGs land in `LINE_SHOTS_DIR`, or
 // the temporary directory's `line-shots` where that names none.
@@ -153,7 +155,56 @@ final class LineScreenshotTests: XCTestCase {
         XCTAssertEqual(pictured.images, [ShownImage(hash: sha256Hex(png), name: "timetable.png", bytes: png)])
         XCTAssertEqual(pictured.files, ["report.html"])
         try await render(NavigationStack { BeadCardScreen(model: line, route: route) }, scene: scene, to: dir.appendingPathComponent("bead-card-note-picture.png"))
+        // Three pictures over two notes: the card says Media · 3 under its
+        // labels, the grid has the newest note's two first and then the
+        // older note's one, and a picture opens full size with who attached
+        // it and when. A card whose notes carry none, as the shots above,
+        // has no such row.
+        let shots = [
+            labelledPNG("first pass"),
+            labelledPNG("platform 2", size: CGSize(width: 450, height: 720)),
+            labelledPNG("ballast", size: CGSize(width: 600, height: 600)),
+        ]
+        for shot in shots { home.blobs[sha256Hex(shot)] = shot }
+        home.beads["yd-train"] = mediaBead(shots)
+        await line.refresh()
+        func pictures() -> [CardMedia] { line.card(for: route)?.details.media ?? [] }
+        let mediaDeadline = ContinuousClock.now + .seconds(10)
+        while !(pictures().count == 3 && pictures().allSatisfy { $0.image.bytes != nil }), ContinuousClock.now <= mediaDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(pictures().map(\.image.name), ["platform.png", "ballast.png", "first-pass.png"])
+        XCTAssertEqual(pictures().map(\.caption), ["yardmaster · 11:05", "yardmaster · 11:05", "train-new · 10:20"])
+        XCTAssertTrue(pictures().allSatisfy { $0.image.bytes != nil })
+        try await render(NavigationStack { BeadCardScreen(model: line, route: route) }, scene: scene, to: dir.appendingPathComponent("bead-card-media.png"))
+        try await render(NavigationStack { MediaGridScreen(model: line, route: route) }, scene: scene, to: dir.appendingPathComponent("media-grid.png"))
+        try await render(MediaViewer(media: pictures(), start: pictures()[1].id) {}, scene: scene, to: dir.appendingPathComponent("media-viewer.png"))
         line.leave()
+    }
+
+    /// The train once more, its last two notes carrying `pictures`: the
+    /// first pass in one note, the platform and the ballast in the next.
+    private func mediaBead(_ pictures: [Data]) -> Bead {
+        func file(_ bytes: Data, _ name: String) -> BlobRef {
+            BlobRef(hash: sha256Hex(bytes), kind: "image/png", bytes: Int64(bytes.count), name: name)
+        }
+        return Bead(
+            id: "yd-train", title: "Release train",
+            body: "The release train leaves nightly with what is green.",
+            stage: "new",
+            labels: ["topic:trains", "kind:feat"],
+            notes: [
+                BeadNote(seq: 5, kind: "note", author: "yardmaster", text: "Plan: move the departure to 02:00.", at: "2026-10-08T09:45:00Z"),
+                BeadNote(
+                    seq: 6, kind: "note", author: "train-new", text: "Moved. The first pass:", at: "2026-10-08T10:20:00Z",
+                    files: [file(pictures[0], "first-pass.png")]
+                ),
+                BeadNote(
+                    seq: 7, kind: "note", author: "yardmaster", text: "And the platform and the ballast.", at: "2026-10-08T11:05:00Z",
+                    files: [file(pictures[1], "platform.png"), file(pictures[2], "ballast.png")]
+                ),
+            ]
+        )
     }
 
     /// What the fake yard answers for the train: labels, a body with a

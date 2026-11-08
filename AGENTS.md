@@ -43,14 +43,15 @@ Under `Footplate/`:
   `DecisionModel`, `LineModel`), the inbox board (`Board`) and the
   boards' keeping (`Mailroom`). `LineModel` holds the Lines place: the
   overview, a line's route map and a bead's card with the bead's
-  details and its web view link. The conversation's pictures (`Images` shrinks one for a letter,
+  details (the pictures of its notes among them, for the Media grid) and its web view link. The conversation's pictures (`Images` shrinks one for a letter,
   `Pictures` keeps the ones shown, by hash; `NotePictures` asks for the ones a
   bead's notes carry, for the bead card and a decision's details) and `Links` (the web
   addresses in a card's words) stand beside them, and so does `Markdown`,
   which reads a letter's words into the blocks they are drawn as, as the
   desktop's `markdown.rs` does and over Unicode scalars as it does.
 - `UI/`: SwiftUI screens (Pair, Sign in, Crew, Decide, Decision,
-  Conversation, and the Lines place's Lines, Route map and Bead card),
+  Conversation, and the Lines place's Lines, Route map, Bead card and
+  Media, the grid of a bead's note pictures with its full-size pager),
   the tabs (`YardTabs`, and `DemoTabs` with the demo's banner) and the
   chrome the places share (`YardPlace`, `YardSwitchView`), the shared
   controls (`NoteFiles` among them: a note's pictures and files under its
