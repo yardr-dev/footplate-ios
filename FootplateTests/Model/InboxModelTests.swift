@@ -425,6 +425,27 @@ final class InboxModelTests: XCTestCase {
     }
 
     func testSwitchSaysWhatWaitsAndForgettingClearsOnlyThatYardsRoutes() async {
+        // The row offers QR re-pairing only for a pinned in-place
+        // migration; a newly paired device remains not yet sealed too,
+        // but has no migration to replace.
+        let channelRecords = Records(secret: MemoryShelf(), plain: MemoryShelf(), origin: fake.origin)
+        channelRecords.keepSession(account: fake.email, session: fake.session())
+        channelRecords.keepYard(PairedYard(
+            name: "migrated", yard: "migrated", user: "jo", device: "phone", token: "migration-token",
+            channelPrivate: Data(repeating: 0x11, count: 32),
+            yardChannelPublic: Data(repeating: 0x22, count: 32), sealedHow: "in place"
+        ))
+        channelRecords.keepYard(PairedYard(
+            name: "new-pair", yard: "new-pair", user: "jo", device: "phone", token: "paired-token",
+            channelPrivate: Data(repeating: 0x33, count: 32),
+            yardChannelPublic: Data(repeating: 0x44, count: 32), sealedHow: "paired"
+        ))
+        let channelRows = Dictionary(uniqueKeysWithValues: inbox(records: channelRecords).state.yards.map { ($0.name, $0) })
+        XCTAssertEqual(channelRows["migrated"]?.channelNote, "not yet sealed")
+        XCTAssertTrue(channelRows["migrated"]?.canPairAgainByQR == true)
+        XCTAssertEqual(channelRows["new-pair"]?.channelNote, "not yet sealed")
+        XCTAssertFalse(channelRows["new-pair"]?.canPairAgainByQR ?? true)
+
         home.up(loaded())
         laptop.state.status = .down(words: "The yard is away: the edge cannot reach it.", short: "yard away")
         let model = inbox()

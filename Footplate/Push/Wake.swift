@@ -17,8 +17,8 @@ final class WakeCompletionGate: @unchecked Sendable {
     }
 }
 
-// Filling a wake in (design 8787 section 4): every paired yard's
-// board is fetched over its relay-paired credentials, `arrived` and
+// Filling a wake in (design 8787 section 4): every channelled edge
+// yard's board is fetched over its relay-paired credentials, `arrived` and
 // `wanted` run against the saved checkpoints and the screen shown,
 // and a `Burst` of each kind across the yards becomes the one
 // telling the running app would show. The engine is the whole of
@@ -382,8 +382,9 @@ struct WakeEngine: Sendable {
 /// The wake engine over the records' paired edge yards: each read
 /// whole as a `Board` through its relay-paired credentials, as the
 /// extension's fill and a tap's refetch both read them. A yard of
-/// its own is no wake's yard; a yard with no client answers the door
-/// closed — the session gone, or the device gone with it kept.
+/// its own, or an edge yard without a pinned channel, is no wake's
+/// yard. A channelled yard with no client answers the door closed —
+/// the session gone, or the device gone with it kept.
 @MainActor
 func wakeEngine(
     edge: Edge,
@@ -396,10 +397,14 @@ func wakeEngine(
     let session = kept.account?.session
     var yards: [WakeYard] = []
     var building: [String: YardClient] = [:]
-    for yard in kept.yards where yard.origin.isEmpty {
+    // A wake can arrive while an upgraded app is registering an old
+    // device's key. Never let the extension use that old token for an
+    // ordinary call; the app will register the relay row again once the
+    // migration pins the channel.
+    for yard in kept.yards where yard.origin.isEmpty && yard.channel != nil {
         yards.append(WakeYard(name: yard.name, title: yard.title))
         if let session,
-           let client = try? edge.yard(device: yard.token, session: session, name: yard.name) {
+           let client = try? edge.yard(device: yard.token, session: session, name: yard.name, channel: yard.channel) {
             building[yard.name] = client
         }
     }

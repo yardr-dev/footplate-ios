@@ -78,7 +78,13 @@ final class Pairer {
         guard let account = records.kept.account else { throw ApiError.notSignedIn }
         // A yard of another account pairs as an own named yard does: the
         // member's own session beside the code, and its `owner/yard` in
-        // `X-Edge-Yard`, which is how the edge names it.
+        // `X-Edge-Yard`, which is how the edge names it. Where the QR
+        // the code came from held the yard's channel key, the code is
+        // redeemed sealed to it, with a key of this phone's made for
+        // the yard and kept beside the token.
+        if !code.channel.isEmpty {
+            return try await pairSealed(code: code, name: name, session: account.session)
+        }
         let paired = try await edge.pair(code: code.code, session: account.session, yard: name)
         let kept = PairedYard(name: name, yard: paired.yard, user: paired.user, device: paired.device, token: paired.token)
         records.keepYard(kept)
@@ -96,6 +102,43 @@ final class Pairer {
             user: me.user,
             device: me.saidBy.isEmpty ? paired.device : me.saidBy,
             token: paired.token
+        )
+        records.keepYard(yard)
+        return yard
+    }
+
+    /// Pairs sealed, where the QR held the yard's channel key: a
+    /// key pair of this phone's for the yard, the code redeemed
+    /// inside the handshake to the pinned key, and the yard kept
+    /// with the private half beside the token and the yard's key
+    /// pinned, recorded paired. Every later call is sealed inside
+    /// the channel the two keys found, and no plain call is sent
+    /// for this yard from here on.
+    private func pairSealed(code: PairingCode, name: String, session: String) async throws -> PairedYard {
+        let yardPublic = try parseChannelPublic(code.channel)
+        let device = try makeDeviceKey()
+        let paired = try await edge.pairSealed(
+            code: code.code, session: session, yard: name,
+            devicePrivate: device.devicePrivate, yardPublic: yardPublic
+        )
+        let kept = PairedYard(
+            name: name, yard: paired.yard, user: paired.user, device: paired.device, token: paired.token,
+            channelPrivate: device.devicePrivate, yardChannelPublic: yardPublic, sealedHow: "paired"
+        )
+        records.keepYard(kept)
+        let me: Me
+        do {
+            me = try await edge.yard(device: paired.token, session: session, name: name, channel: kept.channel).me()
+        } catch is ApiError {
+            return kept
+        }
+        let yard = PairedYard(
+            name: name,
+            yard: me.yard.isEmpty ? paired.yard : me.yard,
+            user: me.user,
+            device: me.saidBy.isEmpty ? paired.device : me.saidBy,
+            token: paired.token,
+            channelPrivate: device.devicePrivate, yardChannelPublic: yardPublic, sealedHow: "paired"
         )
         records.keepYard(yard)
         return yard
@@ -122,6 +165,10 @@ final class Pairer {
         } catch {
             throw ApiError.protocol(what: "the pairing: the yard's address cannot be read")
         }
+        // A yard of its own is reached with its token alone, as it
+        // always was: its channel stands on its link from the edge,
+        // which no direct yard has, so a channel key its QR held is
+        // not redeemed against — the pairing is the plain one.
         let paired = try await direct.pairDirect(code: code.code)
         let kept = PairedYard(name: name, yard: paired.yard, user: paired.user, device: paired.device, token: paired.token, origin: code.address)
         records.keepYard(kept)

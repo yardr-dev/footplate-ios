@@ -1,15 +1,18 @@
 import Foundation
 
 // Registering the phone for wakes (design 8787 section 3.2): once
-// footplate holds a yard device token, its edge session and a push
-// token from the system, it sends `POST /user/push/register` through
-// the edge for that yard, as it sends every device call — and again
-// on every launch and whenever the system rotates the token, with
-// no new pairing. The router answers it itself; a yard of its own
-// is never registered, since no router stands in front of it. The
-// push token is kept on the secret shelf alone, beside the device
-// tokens, and is named in no log, error or note: it is a delivery
-// address, and the one value that tells a rotation from a launch.
+// footplate holds a yard device token, its edge session, a pinned
+// channel and a push token from the system, it asks the yard inside
+// the channel for a fresh voucher, then presents that at
+// `POST /user/push/register` through the edge. It registers again on
+// every launch and whenever the system rotates the token, with no new
+// pairing. A pre-release yard without a pinned channel is left alone
+// until migration seals it; its device token is never sent to the push
+// endpoint. A yard of its own is never registered, since no router
+// stands in front of it. The push token is kept on the secret shelf
+// alone, beside the device tokens, and is named in no log, error or
+// note: it is a delivery address, and the one value that tells a
+// rotation from a launch.
 
 /// A push token as the system gives it, in the hex the register
 /// call carries.
@@ -118,7 +121,8 @@ final class PushRegistrar {
     /// and a session stands: a yard of its own has no register call
     /// to make (design section 7).
     private func client(_ yard: PairedYard) -> YardClient? {
-        guard yard.origin.isEmpty, let session = records.kept.account?.session else { return nil }
-        return try? edge.yard(device: yard.token, session: session, name: yard.name)
+        guard yard.origin.isEmpty, yard.channel != nil,
+              let session = records.kept.account?.session else { return nil }
+        return try? edge.yard(device: yard.token, session: session, name: yard.name, channel: yard.channel)
     }
 }

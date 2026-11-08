@@ -104,11 +104,17 @@ struct Me: Equatable, Sendable {
 
 /// What a yard answers a pairing code with: the device token, the one
 /// time it is anywhere, and what `/user/me` says of it from then on.
+/// A pairing redeemed sealed holds a push registration voucher
+/// beside the token (docs/api.md, "A registration voucher"), a
+/// statement signed and not concealed; a plain answer holds none.
+/// The phone asks afresh inside the channel when it registers, so
+/// this one is named and not kept.
 struct Paired: Equatable, Sendable {
     var token: String
     var user: String = ""
     var device: String = ""
     var yard: String = ""
+    var voucher: String = ""
 }
 
 extension Paired: CustomStringConvertible {
@@ -608,13 +614,14 @@ extension Me: Codable {
 }
 
 extension Paired: Codable {
-    enum CodingKeys: String, CodingKey { case token, user, device, yard }
+    enum CodingKeys: String, CodingKey { case token, user, device, yard, voucher }
     init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         token = box.string(.token)
         user = box.string(.user)
         device = box.string(.device)
         yard = box.string(.yard)
+        voucher = box.string(.voucher)
     }
 }
 

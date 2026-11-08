@@ -2,10 +2,12 @@
 import XCTest
 
 // Registering for wakes (design 8787 section 3.2) against the fake
-// edge: the token through the edge for each edge yard, on rotation
-// and on launch, never for a yard of its own, and undone as a yard
-// is forgotten — with no pairing anywhere in it. A row once made
-// stands: a publish of the records that pairs no yard sends nothing.
+// edge: each edge yard by a fresh voucher asked inside its channel
+// (design 2026-11-05 3.3), on rotation and on launch, never for a
+// yard of its own, and undone as a yard is forgotten. A yard paired
+// plainly has no voucher to give, and the router refuses its token:
+// no row stands for it. A row once made stands: a publish of the
+// records that pairs no yard sends nothing.
 @MainActor
 final class PushRegisterTests: XCTestCase {
     private let fake = FakeYard()
@@ -25,17 +27,31 @@ final class PushRegisterTests: XCTestCase {
         registrar = PushRegistrar(edge: try fake.edge(), records: records, secret: secret)
     }
 
+    /// A yard kept sealed, as the pairer keeps one from a QR with
+    /// a channel key: its device key made here and pinned at the
+    /// fake yard, its yard key the fake's.
+    private func sealed(_ name: String, _ yard: String, _ user: String, _ device: String) -> PairedYard {
+        let key = try! makeDeviceKey()
+        fake.pin(yardName: name, devicePublic: channelPublicString(key.devicePublic))
+        return PairedYard(
+            name: name, yard: yard, user: user, device: device, token: fake.token(yardName: name),
+            channelPrivate: key.devicePrivate,
+            yardChannelPublic: try! parseChannelPublic(fake.channelPublic(yardName: name)),
+            sealedHow: "paired"
+        )
+    }
+
     private func pairLaptop() {
-        records.keepYard(PairedYard(name: "laptop", yard: "laptop", user: "jo", device: "pixel", token: fake.token(yardName: "laptop")))
+        records.keepYard(sealed("laptop", "laptop", "jo", "pixel"))
     }
 
     private func pairHome() {
-        records.keepYard(PairedYard(name: "", yard: "south", user: "jo", device: "phone", token: fake.token(yardName: "")))
+        records.keepYard(sealed("", "south", "jo", "phone"))
     }
 
     /// A pairing of alice's yard, with a device token of its own.
     private func lab() -> PairedYard {
-        PairedYard(name: "alice/lab", yard: "lab", user: "joe", device: "phone", token: fake.token(yardName: "alice/lab"))
+        sealed("alice/lab", "lab", "joe", "phone")
     }
 
     private func registerRequests() -> [RecordedRequest] {
@@ -75,7 +91,7 @@ final class PushRegisterTests: XCTestCase {
             XCTAssertEqual("POST", request.method)
             XCTAssertEqual(fake.allRequests.first { $0.path == "/user/push/register" }?.header("X-Edge-Token"), request.header("X-Edge-Token"))
             assertBody(request, #"{"platform":"apns","token":"apns-token-1"}"#)
-            XCTAssertNotNil(request.header("Authorization"))
+            XCTAssertTrue(request.header("Authorization")?.hasPrefix("Bearer yardr-voucher-") == true)
         }
         // The token is kept on the secret shelf, beside no other.
         XCTAssertEqual("apns-token-1", secret.map["push-token"])
@@ -144,7 +160,7 @@ final class PushRegisterTests: XCTestCase {
 
     func testAYardForgottenAndPairedAgainIsRegisteredAnew() async throws {
         wireTheObserver()
-        let laptop = PairedYard(name: "laptop", yard: "laptop", user: "jo", device: "pixel", token: fake.token(yardName: "laptop"))
+        let laptop = sealed("laptop", "laptop", "jo", "pixel")
         records.keepYard(laptop)
         await settle()
         await registrar.tokenReceived("apns-token-1")
@@ -169,7 +185,10 @@ final class PushRegisterTests: XCTestCase {
         pairLaptop()
         await settle()
         XCTAssertEqual(["laptop", "laptop", "laptop"], registeredYards())
-        XCTAssertEqual("Bearer \(records.kept.yards[0].token)", registerRequests().last?.header("Authorization"))
+        // The device token itself never stands in the call: the
+        // yard's voucher does, asked inside the channel each time.
+        XCTAssertTrue(registerRequests().last?.header("Authorization")?.hasPrefix("Bearer yardr-voucher-") == true)
+        XCTAssertTrue(fake.allRequests.filter { $0.path == "/user/push/register" }.allSatisfy { !($0.header("Authorization") ?? "").contains(records.kept.yards[0].token) })
     }
 
     func testARefusedRegistrationIsTriedAgainAtTheNextChange() async throws {
@@ -212,6 +231,15 @@ final class PushRegisterTests: XCTestCase {
         let last = fake.allRequests.last
         XCTAssertEqual("/user/push/unregister", last?.path)
         XCTAssertEqual("POST", last?.method)
+    }
+
+    func testAYardPairedPlainlyIsNotRegisteredBeforeMigration() async throws {
+        records.keepYard(PairedYard(name: "laptop", yard: "laptop", user: "jo", device: "pixel", token: fake.token(yardName: "laptop")))
+        await registrar.tokenReceived("apns-token-1")
+        // A plain yard cannot issue a voucher, so no registration is
+        // attempted and its device token never reaches the router.
+        XCTAssertNil(fake.pushToken(yardName: "laptop"))
+        XCTAssertTrue(registerRequests().isEmpty)
     }
 
     func testTheTokenIsHexAsTheSystemGivesIt() {

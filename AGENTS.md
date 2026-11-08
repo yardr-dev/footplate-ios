@@ -29,7 +29,11 @@ Under `Footplate/`:
   pairing), one paired yard's client and events stream, the wire types and
   the refusal reading, over a transport seam that `URLSession` implements;
   `FootplateTests/FakeYard/` implements the same seam in the tests, and
-  `Demo/` serves a made-up yard on it.
+  `Demo/` serves a made-up yard on it. `Channel.swift` and the bound
+  `NoiseChannel.xcframework` beside it are the device's channel to a
+  yard that pinned its key: `ChannelBinding/` at the root holds the
+  Go binding over `flynn/noise` v1.1.0 (see its README; neither is
+  independently reviewed yet).
 - `Session/`: one follower per paired yard, with `load`, the stream after
   the head, the retries, the clock and the network watch, and the
   `Followed` seam the screen models read a followed yard through;
@@ -77,6 +81,11 @@ Under `Footplate/`:
 `NotifyService/` holds the extension itself: a thin
 `UNNotificationServiceExtension` over the shared core, with its own
 `Info.plist` and entitlements beside it.
+
+`ChannelBinding/` holds the Go module the channel is bound from
+(`flynn/noise` v1.1.0 under the design's framing), its tests held
+against the yard's half, and the README that says how the
+committed `Footplate/API/NoiseChannel.xcframework` is rebuilt.
 
 `.yardr/` holds the
 flow, roles and simulator gate; `docs/design/` holds design decisions.

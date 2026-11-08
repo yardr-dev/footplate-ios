@@ -184,6 +184,17 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
         var code: String?
         var tokens: Set<String> = []
         var blobs: [String: Data] = [:]
+        /// The yard's channel key pair, as `yardr user device pair
+        /// --qr` would carry its public half: the fake opens sealed
+        /// pairings and channel handshakes with the private half.
+        let channelPrivate: Data
+        let channelPublic: String
+        /// The device channel keys this yard has pinned, by the
+        /// token each pairing minted: a channel handshake is let
+        /// in for a pinned key alone.
+        var pinned: [String: String] = [:]
+        /// Live channel sessions by their tag, as base64url.
+        var channelSessions: [String: SealedSession] = [:]
 
         init(name: String, user: String, device: String, yard: String, code: String?) {
             self.name = name
@@ -191,6 +202,9 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
             self.device = device
             self.yard = yard
             self.code = code
+            let key = try! makeDeviceKey()
+            channelPrivate = key.devicePrivate
+            channelPublic = channelPublicString(key.devicePublic)
         }
     }
 
@@ -239,6 +253,31 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return mintSessionLocked()
+    }
+
+    /// The yard named `yardName`'s channel public key, as its
+    /// pairing QR's fourth field carries it.
+    func channelPublic(yardName: String) -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        return yards.first { $0.name == yardName }!.channelPublic
+    }
+
+    /// Pins a device channel key at the yard named `yardName`, as
+    /// a sealed pairing there would have: the tests keep yards
+    /// with their channel beside them, as the pairer does.
+    func pin(yardName: String, devicePublic: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        yards.first { $0.name == yardName }!.pinned["pinned"] = devicePublic
+    }
+
+    /// Drops the fake yard's live channel sessions, as a yard restart or
+    /// its one-day idle expiry does; the device still has its session.
+    func expireChannelSessions(yardName: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        yards.first { $0.name == yardName }?.channelSessions.removeAll()
     }
 
     /// A device token the yard named `yardName` lets in, as a pairing
@@ -422,6 +461,9 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
         let path = recordedURL(request).path
         if let response = popOverride(path: path) {
             return (finiteStream(response.body), response.head)
+        }
+        if path == "/user/e2e" {
+            return sealedStream(recorded: recorded)
         }
         guard path == "/user/events" else {
             let response = answerLocked(recorded: recorded, popOverrides: false)
@@ -686,7 +728,7 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
         return serveLocked(yard: home, named: "", path: path, recorded: recorded)
     }
 
-    private func serveLocked(yard: YardState, named: String, path: String, recorded: RecordedRequest) -> FakeResponse {
+    private func serveLocked(yard: YardState, named: String, path: String, recorded: RecordedRequest, viaChannel: Bool = false) -> FakeResponse {
         if var queue = yardOverrides[named + "\u{1}" + path], !queue.isEmpty {
             let response = queue.removeFirst()
             yardOverrides[named + "\u{1}" + path] = queue
@@ -695,11 +737,21 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
         if let handler = alwaysHandlers[named + "\u{1}" + path] {
             return handler()
         }
-        if path == "/user/pair" {
+        if !viaChannel, path == "/user/pair" {
             return pairLocked(yard: yard, recorded: recorded)
         }
-        // Then the yard's: the device token.
-        if let gated = tokenGateLocked(yard: yard, recorded: recorded) {
+        if !viaChannel, path == "/user/e2e" {
+            return e2eLocked(yard: yard, named: named, recorded: recorded)
+        }
+        // The router's push doors stand before the yard's gate: a
+        // voucher is checked there, and no probe is made of a
+        // token, as the router now answers them (bead 6).
+        if path == "/user/push/register" || path == "/user/push/unregister" {
+            return pushLocked(path: path, named: named, recorded: recorded)
+        }
+        // Then the yard's: the device token, or the channel the
+        // call came sealed inside, which is its credential.
+        if !viaChannel, let gated = tokenGateLocked(yard: yard, recorded: recorded) {
             return gated
         }
         if path.hasPrefix("/user/blobs/") {
@@ -709,25 +761,12 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
             }
             return FakeResponse(status: 200, headers: ["Content-Type": "application/octet-stream"], body: bytes)
         }
-        if path == "/user/push/register" {
-            // The router's own door, as the relay answers it: a
-            // platform and a token, or the edge's refusal of both.
-            let body = recorded.bodyObject()
-            guard recorded.method == "POST",
-                  (body["platform"] as? String) == "apns",
-                  let token = body["token"] as? String, !token.isEmpty
-            else {
-                return FakeResponse.json(400, #"{"error": "edge: a registration names its platform (apns or fcm) and its push token"}"#)
+        if path == "/user/push/voucher" {
+            // The yard issues a voucher to a sealed call alone.
+            guard viaChannel else {
+                return FakeResponse(status: 403, text: "a push registration voucher is issued only to a call sealed to this yard's channel key, never to a plain one\n")
             }
-            pushRows[named] = token
-            return FakeResponse.json(200, #"{"status": "registered"}"#)
-        }
-        if path == "/user/push/unregister" {
-            guard recorded.method == "POST" else {
-                return FakeResponse(status: 405, text: "method not allowed\n")
-            }
-            pushRows.removeValue(forKey: named)
-            return FakeResponse.json(200, #"{"status": "unregistered"}"#)
+            return FakeResponse.json(200, "{\"voucher\": \"yardr-voucher-fake.\(named)\"}")
         }
         if path == "/user/me" {
             let coordinator = yard.coordinator.map { ", \"yardmaster\": \"\($0)\"" } ?? ""
@@ -735,6 +774,29 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
         }
         if path == "/user/events" {
             return FakeResponse(status: 200, headers: ["Content-Type": "application/x-ndjson"], body: Data())
+        }
+        if path == "/user/call/RegisterChannelKey" {
+            // A pre-release device registers its channel key in
+            // place (yardr-n9d2): under its token, plainly, once.
+            // A sealed call is refused before its body is read.
+            if viaChannel {
+                return FakeResponse.json(200, #"{"error": {"code": "conflict", "message": "the device pins a channel key already"}}"#)
+            }
+            guard let text = recorded.bodyObject()["channel_key"] as? String,
+                  (try? parseChannelPublic(text)) != nil
+            else {
+                return FakeResponse.json(200, #"{"error": {"code": "error", "message": "a channel key is the base64url of a 32-byte X25519 public key"}}"#)
+            }
+            // The device whose token this is, by the gate it passed.
+            let token = recorded.header("Authorization").map { String($0.dropFirst("Bearer ".count)) } ?? ""
+            if yard.pinned[token] != nil {
+                return FakeResponse.json(200, #"{"error": {"code": "conflict", "message": "the device pins a channel key already"}}"#)
+            }
+            if yard.pinned.values.contains(text) {
+                return FakeResponse.json(200, #"{"error": {"code": "conflict", "message": "another device pins that channel key"}}"#)
+            }
+            yard.pinned[token] = text
+            return FakeResponse.json(200, "{\"result\": {\"user\": \"\(yard.user)\", \"device\": \"\(yard.device)\", \"channel_key\": \"\(yard.channelPublic)\", \"channel_signature\": \"fake-signature\", \"yard_key\": \"fake-yard-key\"}}")
         }
         if path.hasPrefix("/user/call/") {
             let method = String(path.dropFirst("/user/call/".count))
@@ -758,9 +820,253 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
         return FakeResponse(status: 401, text: "Unauthorized\n")
     }
 
+    /// The router's push doors, as the relay answers them now: a
+    /// yard-signed voucher in place of the device token, checked
+    /// here, and no probe made of one. A platform and a token at
+    /// registration, as they always were.
+    private func pushLocked(path: String, named: String, recorded: RecordedRequest) -> FakeResponse {
+        guard let authorization = recorded.header("Authorization"),
+              authorization.hasPrefix("Bearer yardr-voucher-")
+        else {
+            return FakeResponse.json(401, #"{\"error\": \"edge: a yard-signed registration voucher is required\"}"#)
+        }
+        if path == "/user/push/unregister" {
+            guard recorded.method == "POST" else {
+                return FakeResponse(status: 405, text: "method not allowed\n")
+            }
+            pushRows.removeValue(forKey: named)
+            return FakeResponse.json(200, #"{\"status\": \"unregistered\"}"#)
+        }
+        let body = recorded.bodyObject()
+        guard recorded.method == "POST",
+              (body["platform"] as? String) == "apns",
+              let token = body["token"] as? String, !token.isEmpty
+        else {
+            return FakeResponse.json(400, #"{\"error\": \"edge: a registration names its platform (apns or fcm) and its push token\"}"#)
+        }
+        pushRows[named] = token
+        return FakeResponse.json(200, #"{\"status\": \"registered\"}"#)
+    }
+
+    /// One outer call of a channel, as the yard answers it down
+    /// the link: a handshake where it names no call, and an
+    /// enveloped call opened and served as its inner call, with
+    /// the answer sealed the same way. The channel key, not the
+    /// token, authenticates it.
+    private func e2eLocked(yard: YardState, named: String, recorded: RecordedRequest) -> FakeResponse {
+        guard let callHeader = recorded.header("X-Edge-E2E-Call") else {
+            // A handshake: the device it proves must be one this
+            // yard has pinned, or no session is made.
+            let handshake: YardChannelHandshake
+            do {
+                handshake = try YardChannelHandshake(yardPrivate: yard.channelPrivate, first: recorded.body)
+            } catch {
+                return FakeResponse(status: 400, text: "Bad Request\n")
+            }
+            guard yard.pinned.values.contains(handshake.deviceKey) else {
+                return FakeResponse(status: 401, text: "Unauthorized\n")
+            }
+            do {
+                let tag = try newCallID()
+                let reply = try handshake.sealAnswer(tag: tag)
+                guard let session = handshake.session else {
+                    return FakeResponse(status: 500, text: "Internal Server Error\n")
+                }
+                yard.channelSessions[base64URL(tag)] = session
+                return FakeResponse(status: 200, headers: ["X-Edge-E2E": "handshake"], body: reply)
+            } catch {
+                return FakeResponse(status: 500, text: "Internal Server Error\n")
+            }
+        }
+        guard let call = dataFromBase64URL(callHeader),
+              let tag = firstRecordTag(recorded.body),
+              let session = yard.channelSessions[base64URL(tag)]
+        else {
+            return FakeResponse(status: 401, text: "Unauthorized\n")
+        }
+        let marker = recorded.header("X-Edge-E2E-Stream") ?? ""
+        let present = recorded.headers.keys.contains("x-edge-e2e-stream")
+        let plain: Data
+        do {
+            plain = try session.openWhole(run: recorded.body, call: call, marker: marker, present: present)
+        } catch {
+            return FakeResponse(status: 400, text: "Bad Request\n")
+        }
+        guard let head = sealedHeadObject(plain) else {
+            return FakeResponse(status: 400, text: "Bad Request\n")
+        }
+        let innerBody = Data(plain.dropFirst(4 + Int(bigEndian32(plain))))
+        let innerPath = (head["path"] as? String) ?? ""
+        let innerPathOnly = innerPath.split(separator: "?", maxSplits: 1).first.map(String.init) ?? innerPath
+        var innerHeaders: [String: String] = [:]
+        if let header = head["header"] as? [String: [String]] {
+            for (name, values) in header {
+                innerHeaders[name.lowercased()] = values.joined(separator: ",")
+            }
+        }
+        let inner = RecordedRequest(
+            method: (head["method"] as? String) ?? "GET",
+            path: innerPath,
+            headers: innerHeaders,
+            body: innerBody
+        )
+        let response = serveLocked(yard: yard, named: named, path: innerPathOnly, recorded: inner, viaChannel: true)
+        do {
+            let headData = try sealedHeadData(status: response.status, headers: response.headers)
+            let run = try session.sealWhole(
+                call: call, marker: marker, present: present,
+                plaintext: joinSealed(head: headData, body: response.body)
+            )
+            return FakeResponse(status: 200, headers: ["X-Edge-E2E": "sealed"], body: run)
+        } catch {
+            return FakeResponse(status: 500, text: "Internal Server Error\n")
+        }
+    }
+
+    /// A sealed stream's outer call, answered as a byte stream:
+    /// its request opened whole, then the next script's lines
+    /// sealed record by record under its call, closed by the
+    /// final record unless the script hangs.
+    private func sealedStream(recorded: RecordedRequest) -> (AsyncThrowingStream<UInt8, Error>, HTTPHead) {
+        let refused = { (response: FakeResponse) in
+            (self.finiteStream(response.body), response.head)
+        }
+        guard let sessionHeader = recorded.header("X-Edge-Token"), sessions.contains(sessionHeader) else {
+            return refused(FakeResponse.signedOut())
+        }
+        let named = recorded.header("X-Edge-Yard") ?? ""
+        guard let yard = yards.first(where: { $0.name == named }) else {
+            return refused(FakeResponse.notReady("the account holds no yard of that name"))
+        }
+        guard let callHeader = recorded.header("X-Edge-E2E-Call"),
+              let call = dataFromBase64URL(callHeader),
+              let tag = firstRecordTag(recorded.body),
+              let session = yard.channelSessions[base64URL(tag)]
+        else {
+            return refused(FakeResponse(status: 401, text: "Unauthorized\n"))
+        }
+        let marker = recorded.header("X-Edge-E2E-Stream") ?? ""
+        let present = recorded.headers.keys.contains("x-edge-e2e-stream")
+        guard let plain = try? session.openWhole(run: recorded.body, call: call, marker: marker, present: present),
+              let head = sealedHeadObject(plain),
+              (head["path"] as? String)?.hasPrefix("/user/events") == true
+        else {
+            return refused(FakeResponse(status: 400, text: "Bad Request\n"))
+        }
+        let script: StreamScript
+        lock.lock()
+        if streamScripts.isEmpty {
+            script = StreamScript(lines: [])
+        } else {
+            script = streamScripts.removeFirst()
+        }
+        lock.unlock()
+        let sealer = session.sealer(call: call, marker: marker, present: present)
+        return (sealedScriptStream(sealer: sealer, script: script), HTTPHead(status: 200, headers: [:]))
+    }
+
+    private func sealedScriptStream(sealer: SealedSealer, script: StreamScript) -> AsyncThrowingStream<UInt8, Error> {
+        AsyncThrowingStream { continuation in
+            do {
+                let head = try sealedHeadData(status: 200, headers: ["Content-Type": "application/x-ndjson"])
+                for byte in try sealer.seal(joinSealed(head: head, body: Data())) {
+                    continuation.yield(byte)
+                }
+                for line in script.lines {
+                    for byte in try sealer.seal(Data((line + "\n").utf8)) {
+                        continuation.yield(byte)
+                    }
+                }
+                if script.hang {
+                    let id = UUID()
+                    let sleeper = Task {
+                        try? await Task.sleep(for: .seconds(3600))
+                        continuation.finish()
+                    }
+                    lock.lock()
+                    openStreams[id] = OpenStream(continuation: continuation, sleeper: sleeper)
+                    lock.unlock()
+                    continuation.onTermination = { [weak self] _ in
+                        sleeper.cancel()
+                        self?.removeOpenStream(id)
+                    }
+                } else {
+                    for byte in try sealer.sealFinal() {
+                        continuation.yield(byte)
+                    }
+                    continuation.finish()
+                }
+            } catch {
+                continuation.finish(throwing: error)
+            }
+        }
+    }
+
+    /// The tag a record run's first message carries, or nil where
+    /// the run holds none.
+    private func firstRecordTag(_ run: Data) -> Data? {
+        guard run.count >= 4 + 16 else { return nil }
+        let length = Int(bigEndian32(run))
+        guard length >= 16, run.count >= 4 + length else { return nil }
+        return run.subdata(in: 4..<(4 + 16))
+    }
+
+    /// An inner head as `sealedHead` wrote it, read back.
+    private func sealedHeadObject(_ plain: Data) -> [String: Any]? {
+        guard plain.count >= 4 else { return nil }
+        let length = Int(bigEndian32(plain))
+        guard plain.count >= 4 + length else { return nil }
+        return (try? JSONSerialization.jsonObject(with: plain.subdata(in: 4..<(4 + length)))) as? [String: Any]
+    }
+
+    /// An inner answer's head, as the yard seals it: its status
+    /// and its headers, told to the device alone.
+    private func sealedHeadData(status: Int, headers: [String: String]) throws -> Data {
+        var header: [String: [String]] = [:]
+        for (name, value) in headers {
+            header[name] = [value]
+        }
+        return try JSONSerialization.data(withJSONObject: ["status": status, "header": header], options: [.sortedKeys])
+    }
+
+    /// A pairing redeemed sealed: the code inside a Noise
+    /// handshake to this yard's channel key, the device recorded
+    /// with the key the handshake proved, and the answer sealed
+    /// in reply with a voucher beside the token.
+    private func pairSealedLocked(yard: YardState, open: String, sealed: String) -> FakeResponse {
+        guard let first = dataFromBase64URL(sealed) else {
+            return FakeResponse(status: 400, text: "Bad Request\n")
+        }
+        let handshake: YardPairingHandshake
+        do {
+            handshake = try YardPairingHandshake(yardPrivate: yard.channelPrivate, first: first)
+        } catch {
+            return FakeResponse(status: 400, text: "Bad Request\n")
+        }
+        let normalized = handshake.code.replacingOccurrences(of: "-", with: "").uppercased()
+        let expected = open.replacingOccurrences(of: "-", with: "").uppercased()
+        guard normalized == expected else {
+            return FakeResponse.wrongCode()
+        }
+        yard.code = nil
+        let token = mintTokenLocked(yard)
+        yard.pinned[token] = handshake.deviceKey
+        let answer = "{\"token\": \"\(token)\", \"user\": \"\(yard.user)\", \"device\": \"\(yard.device)\", \"yard\": \"\(yard.yard)\", \"voucher\": \"yardr-voucher-fake\"}"
+        do {
+            let reply = try handshake.sealAnswer(Data(answer.utf8))
+            return FakeResponse.json(200, "{\"sealed\": \"\(base64URL(reply))\"}")
+                .withHeader("Cache-Control", "no-store")
+        } catch {
+            return FakeResponse(status: 500, text: "Internal Server Error\n")
+        }
+    }
+
     private func pairLocked(yard: YardState, recorded: RecordedRequest) -> FakeResponse {
         guard let open = yard.code else {
             return FakeResponse(status: 401, text: "Unauthorized\n")
+        }
+        if let sealed = recorded.bodyObject()["sealed"] as? String {
+            return pairSealedLocked(yard: yard, open: open, sealed: sealed)
         }
         guard let code = recorded.bodyObject()["code"] as? String else {
             return FakeResponse(status: 400, text: "no code\n")

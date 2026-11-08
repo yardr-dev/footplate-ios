@@ -95,7 +95,10 @@ final class CodeTests: XCTestCase {
     func testWhatIsNotThisEdgesCodeIsRefusedWithItsReason() {
         let rows: [(String, String)] = [
             // Four parts, and one part alone.
-            ("https://my.yardr.dev#K7QM-2XPD#laptop#more", "That is not a pairing's code: yardr user device pair --qr draws one."),
+            // A fourth field that is no channel key: the shape is
+            // a pairing's now, and the key is what is wrong.
+            ("https://my.yardr.dev#K7QM-2XPD#laptop#more", "That is not a pairing's code: its channel key cannot be read."),
+            ("https://my.yardr.dev#K7QM-2XPD#laptop#more#even-more", "That is not a pairing's code: yardr user device pair --qr draws one."),
             // Another account's yard has its owner's handle and its name,
             // no part missing and no third.
             ("https://my.yardr.dev#R2VH-6NQD#alice/", noMemberYard),
@@ -137,6 +140,47 @@ final class CodeTests: XCTestCase {
         XCTAssertEqual(
             typedCode(yard: "lap top", code: "K7QM-2XPD"),
             .refused(why: "That is no yard's name: the name is one word, as the yard printed it.")
+        )
+    }
+}
+
+extension CodeTests {
+    /// A channel public key as a QR's fourth field carries it:
+    /// 32 bytes, base64url, no padding.
+    private var channelKey: String {
+        channelPublicString(Data(repeating: 0x2A, count: 32))
+    }
+
+    func testAQRWithAChannelKeyReadsItAndOneWithoutReadsNone() {
+        XCTAssertEqual(
+            readQr("https://my.yardr.dev#K7QM-2XPD#laptop#\(channelKey)", edge: edge),
+            .code(PairingCode(code: "K7QM-2XPD", yard: "laptop", channel: channelKey))
+        )
+        // The account's own yard: the name's place stands empty.
+        XCTAssertEqual(
+            readQr("https://my.yardr.dev#K7QM-2XPD##\(channelKey)", edge: edge),
+            .code(PairingCode(code: "K7QM-2XPD", yard: "", channel: channelKey))
+        )
+        // A yard of its own: the key follows the code the same way.
+        XCTAssertEqual(
+            readQr("https://yard.example.net#K7QM-2XPD##\(channelKey)", edge: edge),
+            .code(PairingCode(code: "K7QM-2XPD", yard: "", address: "https://yard.example.net", channel: channelKey))
+        )
+        // No fourth field: no channel, exactly as before.
+        XCTAssertEqual(
+            readQr("https://my.yardr.dev#K7QM-2XPD#laptop", edge: edge),
+            .code(PairingCode(code: "K7QM-2XPD", yard: "laptop"))
+        )
+    }
+
+    func testAQRWithAChannelKeyThatIsNoneIsRefused() {
+        XCTAssertEqual(
+            readQr("https://my.yardr.dev#K7QM-2XPD#laptop#not-a-key", edge: edge),
+            .refused(why: "That is not a pairing's code: its channel key cannot be read.")
+        )
+        XCTAssertEqual(
+            readQr("https://my.yardr.dev#K7QM-2XPD#laptop#\(channelKey)#extra", edge: edge),
+            .refused(why: "That is not a pairing's code: yardr user device pair --qr draws one.")
         )
     }
 }

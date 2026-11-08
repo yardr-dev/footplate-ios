@@ -42,6 +42,26 @@ func jsonBody(_ object: [String: Any]) throws -> Data {
     }
 }
 
+/// A value in base64url without padding, as the channel's
+/// writings travel (a handshake message in a pair call's body, a
+/// call id in its header).
+func base64URL(_ data: Data) -> String {
+    data.base64EncodedString()
+        .replacingOccurrences(of: "+", with: "-")
+        .replacingOccurrences(of: "/", with: "_")
+        .replacingOccurrences(of: "=", with: "")
+}
+
+/// What `base64URL` wrote, read back; nil for words it did not.
+func dataFromBase64URL(_ text: String) -> Data? {
+    var base64 = text.replacingOccurrences(of: "-", with: "+")
+        .replacingOccurrences(of: "_", with: "/")
+    while base64.count % 4 != 0 { base64 += "=" }
+    guard let data = Data(base64Encoded: base64),
+          base64URL(data) == text else { return nil }
+    return data
+}
+
 func jsonObject(_ body: String) -> [String: Any]? {
     guard let data = body.data(using: .utf8),
           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -208,12 +228,118 @@ final class Edge: Sendable {
         }
     }
 
+    /// Redeems a pairing code sealed, where the QR the code came
+    /// from held the yard's channel public key: the code as the
+    /// payload of a Noise handshake's first message to that key
+    /// (the bound library's, Channel.swift), its device static
+    /// sealed inside it, and the answer opened with the device
+    /// private key alone. Neither the code nor the token crosses
+    /// readable. A refusal of the code is answered as a plain
+    /// redemption's is, in the clear of its status and reason.
+    func pairSealed(code: String, session: String, yard: String = "", devicePrivate: Data, yardPublic: Data) async throws -> Paired {
+        try requireToken(session)
+        try requireName(yard)
+        let opening = try sealedOpening(code: code, devicePrivate: devicePrivate, yardPublic: yardPublic)
+        var request = makeRequest(path: "/user/pair")
+        request.httpMethod = "POST"
+        request.setValue(session, forHTTPHeaderField: edgeTokenHeader)
+        if !yard.isEmpty {
+            request.setValue(yard, forHTTPHeaderField: edgeYardHeader)
+        }
+        request.setValue(jsonContentType, forHTTPHeaderField: "Content-Type")
+        request.httpBody = try jsonBody(["sealed": base64URL(opening.first)])
+        let answer = try await exchange(request)
+        if answer.edgeRefusal != nil || isEdgeShape(answer.body) {
+            if let gifted = giftedPairing(answer) {
+                throw gifted
+            }
+            throw refusal(status: answer.status, edgeRefusal: answer.edgeRefusal, retryAfterHeader: answer.retryAfter, body: answer.body)
+                ?? ApiError.protocol(what: "the pairing: status \(answer.status)")
+        }
+        return try sealedPaired(answer, opening: opening)
+    }
+
+    /// Redeems a pairing code sealed at a yard of its own, with no
+    /// edge: as `pairSealed`, with neither a session nor a yard's
+    /// name beside it.
+    func pairSealedDirect(code: String, devicePrivate: Data, yardPublic: Data) async throws -> Paired {
+        let opening = try sealedOpening(code: code, devicePrivate: devicePrivate, yardPublic: yardPublic)
+        var request = makeRequest(path: "/user/pair")
+        request.httpMethod = "POST"
+        request.setValue(jsonContentType, forHTTPHeaderField: "Content-Type")
+        request.httpBody = try jsonBody(["sealed": base64URL(opening.first)])
+        let answer = try await exchange(request)
+        if let refused = pairRefused(answer.body) {
+            throw pairingRefused(refused)
+        }
+        switch answer.status {
+        case 200:
+            return try sealedPaired(answer, opening: opening)
+        case 400:
+            throw pairingRefused("no_code")
+        case 409:
+            throw pairingRefused("not_added")
+        case 401, 404:
+            throw pairingRefused("no_pairing")
+        default:
+            if case .yard(let yardCode, let message) = bodyShape(answer.body) {
+                throw ApiError.refused(code: yardCode, message: message)
+            }
+            throw ApiError.down(why: "status \(answer.status)")
+        }
+    }
+
+    /// A sealed redemption's first message, by the bound library:
+    /// its failure is the pairing's, said as the client words it.
+    private func sealedOpening(code: String, devicePrivate: Data, yardPublic: Data) throws -> PairingOpening {
+        do {
+            return try PairingOpening(devicePrivate: devicePrivate, yardPublic: yardPublic, code: code)
+        } catch let failure as ChannelFailure {
+            throw ApiError.protocol(what: "the sealed pairing: \(failure.description)")
+        }
+    }
+
+    /// A sealed pairing's answer read: the second handshake
+    /// message opened, then as a plain answer's is, with its
+    /// voucher beside the token where the yard signed one.
+    private func sealedPaired(_ answer: Answer, opening: PairingOpening) throws -> Paired {
+        if let refused = pairRefused(answer.body) {
+            throw pairingRefused(refused)
+        }
+        switch answer.status {
+        case 200:
+            guard let sealed = jsonObject(answer.body)?["sealed"] as? String,
+                  let reply = dataFromBase64URL(sealed)
+            else {
+                throw ApiError.protocol(what: "the sealed pairing: no sealed answer")
+            }
+            let payload: Data
+            do {
+                payload = try opening.openAnswer(reply)
+            } catch let failure as ChannelFailure {
+                throw ApiError.protocol(what: "the sealed pairing: \(failure.description)")
+            }
+            let paired = try decodePaired(payload)
+            return paired
+        case 400:
+            throw pairingRefused("no_code")
+        case 409:
+            throw pairingRefused("not_added")
+        case 401, 404:
+            throw pairingRefused("no_pairing")
+        default:
+            throw refusal(status: answer.status, edgeRefusal: nil, retryAfterHeader: answer.retryAfter, body: answer.body)
+                ?? ApiError.protocol(what: "the pairing: status \(answer.status)")
+        }
+    }
+
     /// The calls of one paired yard, as its device: `device` is the
     /// token the pairing answered, `session` the edge's, `name` the
     /// yard's name at the edge (empty: the account's own yard, and no
-    /// `X-Edge-Yard` is sent).
-    func yard(device: String, session: String, name: String = "") throws -> YardClient {
-        try YardClient(edge: self, device: device, session: session, name: name)
+    /// `X-Edge-Yard` is sent). With `channel`, every call is sealed
+    /// inside it and no device token crosses on one.
+    func yard(device: String, session: String, name: String = "", channel: ChannelKeys? = nil) throws -> YardClient {
+        try YardClient(edge: self, device: device, session: session, name: name, channel: channel)
     }
 
     /// The calls of one paired yard of its own, as its device:

@@ -16,6 +16,12 @@ struct PairingCode: Equatable, Sendable {
     var code: String
     var yard: String
     var address: String = ""
+    /// The yard's channel public key, as the QR's fourth field
+    /// carries it (base64url, no padding): the pairing is redeemed
+    /// sealed to it, and the key is pinned beside the token.
+    /// Empty where the QR held none, and the pairing is the plain
+    /// one, exactly as before.
+    var channel: String = ""
 }
 
 /// What a scan or the typed fields read as.
@@ -25,36 +31,51 @@ enum CodeRead: Equatable, Sendable {
     case refused(why: String)
 }
 
-/// What a pairing's QR holds, read: split at `#` into at most three
-/// parts, the address, the code and the yard's name at the edge. The
-/// edge's address reads as a code with a yard's name; any other
-/// address reads as a yard's own, `<address>#<code>` with no yard's
-/// name, and pairs with no edge. More parts, an address that is
-/// neither, or a code that is not eight letters and digits, are
-/// refused with the reason.
+/// What a pairing's QR holds, read: split at `#` into at most
+/// four parts, the address, the code, the yard's name at the edge
+/// and the yard's channel public key. The edge's address reads as
+/// a code with a yard's name; any other address reads as a yard's
+/// own, `<address>#<code>` with no yard's name (the name's place
+/// stands empty where a channel key follows it), and pairs with
+/// no edge. More parts, an address that is neither, a channel key
+/// that is none, or a code that is not eight letters and digits,
+/// are refused with the reason.
 func readQr(_ text: String, edge: String) -> CodeRead {
     let parts = text.trimmingCharacters(in: .whitespacesAndNewlines)
         .split(separator: "#", omittingEmptySubsequences: false)
         .map(String.init)
-    guard parts.count >= 2, parts.count <= 3 else {
+    guard parts.count >= 2, parts.count <= 4 else {
         return .refused(why: "That is not a pairing's code: yardr user device pair --qr draws one.")
     }
     let address = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
+    let channel = parts.count == 4 ? parts[3].trimmingCharacters(in: .whitespacesAndNewlines) : ""
+    if !channel.isEmpty {
+        do {
+            _ = try parseChannelPublic(channel)
+        } catch {
+            return .refused(why: "That is not a pairing's code: its channel key cannot be read.")
+        }
+    }
     if sameEdge(address, edge: edge) {
-        let yard = parts.count == 3 ? parts[2] : ""
-        return typedCode(yard: yard, code: parts[1])
+        let yard = parts.count >= 3 ? parts[2] : ""
+        switch typedCode(yard: yard, code: parts[1]) {
+        case .code(let code):
+            return .code(PairingCode(code: code.code, yard: code.yard, channel: channel))
+        case .refused(let why):
+            return .refused(why: why)
+        }
     }
     switch readOwnAddress(address) {
     case .refused(let why):
         return .refused(why: why)
     case .address(let origin):
-        guard parts.count == 2 else {
+        guard parts.count == 2 || (parts.count == 4 && parts[2].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) else {
             return .refused(why: "This code is for \(origin) and names a yard: a yard's own address pairs with no yard's name.")
         }
         let read = typedCode(yard: "", code: parts[1])
         switch read {
         case .code(let code):
-            return .code(PairingCode(code: code.code, yard: "", address: origin))
+            return .code(PairingCode(code: code.code, yard: "", address: origin, channel: channel))
         case .refused:
             return read
         }

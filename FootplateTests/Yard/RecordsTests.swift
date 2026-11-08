@@ -340,7 +340,16 @@ final class RecordsTests: XCTestCase {
             fake.allRequests.filter { $0.path == "/user/push/register" }
         }
         records.keepSession(account: fake.email, session: fake.session())
-        let laptop = PairedYard(name: "laptop", yard: "laptop", user: "jo", device: "pixel", token: fake.token(yardName: "laptop"))
+        // Kept sealed, as a pairing from a channel QR keeps it: the
+        // registrar asks the yard for a voucher inside the channel.
+        let key = try! makeDeviceKey()
+        fake.pin(yardName: "laptop", devicePublic: channelPublicString(key.devicePublic))
+        let laptop = PairedYard(
+            name: "laptop", yard: "laptop", user: "jo", device: "pixel", token: fake.token(yardName: "laptop"),
+            channelPrivate: key.devicePrivate,
+            yardChannelPublic: try! parseChannelPublic(fake.channelPublic(yardName: "laptop")),
+            sealedHow: "paired"
+        )
         records.keepYard(laptop)
         await registrar.tokenReceived("apns-token-1")
         XCTAssertEqual(registers().count, 1)
@@ -361,14 +370,75 @@ final class RecordsTests: XCTestCase {
         // stood, by one call as its new device.
         let session = fake.session()
         records.keepSession(account: fake.email, session: session)
-        let again = PairedYard(name: "laptop", yard: "laptop", user: "jo", device: "pixel", token: fake.token(yardName: "laptop"))
+        let againKey = try! makeDeviceKey()
+        fake.pin(yardName: "laptop", devicePublic: channelPublicString(againKey.devicePublic))
+        let again = PairedYard(
+            name: "laptop", yard: "laptop", user: "jo", device: "pixel", token: fake.token(yardName: "laptop"),
+            channelPrivate: againKey.devicePrivate,
+            yardChannelPublic: try! parseChannelPublic(fake.channelPublic(yardName: "laptop")),
+            sealedHow: "paired"
+        )
         records.keepYard(again)
         await registrar.yardsChanged()
         XCTAssertEqual(registers().count, 2, "one call since the first, for the yard paired again")
         let sent = try XCTUnwrap(registers().last)
         XCTAssertEqual(sent.method, "POST")
-        assertHeaders(sent, token: again.token, yard: "laptop", session: session)
+        XCTAssertEqual(sent.header("X-Edge-Token"), session)
+        XCTAssertEqual(sent.header("X-Edge-Yard"), "laptop")
+        XCTAssertTrue(sent.header("Authorization")?.hasPrefix("Bearer yardr-voucher-") == true)
         assertBody(sent, #"{"platform":"apns","token":"apns-token-1"}"#)
         XCTAssertEqual(fake.pushToken(yardName: "laptop"), "apns-token-1")
+    }
+}
+
+extension RecordsTests {
+    func testMigrationMakesAKeyForAYardPairedBeforeTheChannelAndKeepsIt() {
+        let secret = MemoryShelf()
+        let plain = MemoryShelf()
+        let records = makeRecords(secret: secret, plain: plain)
+        records.keepYard(PairedYard(name: "", yard: "south", user: "jo", device: "phone", token: "yardr-dev-south-1"))
+        records.keepYard(PairedYard(name: "yard.example.net", yard: "south", user: "jo", device: "phone", token: "yardr-dev-south-9", origin: "https://yard.example.net"))
+        records.makeMigrationKeys()
+        let yards = records.kept.yards
+        let home = yards.first { $0.name == "" }!
+        // The edge yard holds a key of this phone's, recorded in
+        // place, with no yard key pinned yet: it cannot call
+        // sealed until the yard takes its registration, and it
+        // stands not yet sealed. A yard of its own gets none.
+        XCTAssertNotNil(home.channelPrivate)
+        XCTAssertNil(home.yardChannelPublic)
+        XCTAssertNil(home.channel)
+        XCTAssertEqual(home.sealedHow, "in place")
+        XCTAssertEqual(home.channelNote, "not yet sealed")
+        let own = yards.first { $0.name == "yard.example.net" }!
+        XCTAssertNil(own.channelPrivate)
+        // The private half lies on the secret shelf alone.
+        XCTAssertFalse(plain.map.values.joined().contains("channelPrivate"))
+        XCTAssertTrue((secret.map["yard:"] ?? "").contains("channelPrivate"), secret.map["yard:"] ?? "")
+        // A second launch makes no new key, and the key stands
+        // across a reopening.
+        records.makeMigrationKeys()
+        XCTAssertEqual(records.kept.yards.first { $0.name == "" }?.channelPrivate, home.channelPrivate)
+        let again = makeRecords(secret: secret, plain: plain).kept
+        XCTAssertEqual(again.yards.first { $0.name == "" }?.channelPrivate, home.channelPrivate)
+        XCTAssertEqual(again.yards.first { $0.name == "" }?.sealedHow, "in place")
+    }
+
+    func testASealedPairingsKeepingStandsAcrossAReopening() {
+        let secret = MemoryShelf()
+        let plain = MemoryShelf()
+        let records = makeRecords(secret: secret, plain: plain)
+        let key = try! makeDeviceKey()
+        let yardPublic = Data(repeating: 0x2A, count: 32)
+        records.keepYard(PairedYard(
+            name: "", yard: "south", user: "jo", device: "phone", token: "yardr-dev-south-1",
+            channelPrivate: key.devicePrivate, yardChannelPublic: yardPublic, sealedHow: "paired"
+        ))
+        let again = makeRecords(secret: secret, plain: plain).kept
+        XCTAssertEqual(again.yards.first?.channel, ChannelKeys(devicePrivate: key.devicePrivate, yardPublic: yardPublic))
+        XCTAssertEqual(again.yards.first?.channelNote, "not yet sealed")
+        // Migration never stands a second key beside a paired one.
+        records.makeMigrationKeys()
+        XCTAssertEqual(makeRecords(secret: secret, plain: plain).kept.yards.first?.channelPrivate, key.devicePrivate)
     }
 }

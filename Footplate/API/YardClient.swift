@@ -3,10 +3,9 @@ import Synchronization
 
 // One paired yard's calls, as its device: design 3.1's table, each
 // with its arguments by name and its answer read as docs/api.md has
-// it. Through the edge every request carries the device token, the
-// session and, for a yard with a name at the edge, X-Edge-Yard; a yard
-// of its own carries the device token alone. Made by `Edge.yard` and
-// `Edge.yardDirect`. The phone sends no `run.ask`
+// it. Plain calls carry the device token; channel calls carry only the
+// edge session and yard name outside the envelope, with the token sealed
+// inside no call. Made by `Edge.yard` and `Edge.yardDirect`. The phone sends no `run.ask`
 // values and no setup account: `approveAsk` and `approveSetup` carry
 // only the pick and `weighed`, so a yard refusal is what a later bead
 // shows the yard command for; ordinary picks go through `answerAsk`.
@@ -27,8 +26,22 @@ final class YardClient: Sendable {
     /// Learned from its first refusal and kept for as long as this client
     /// is: a new one, after a restart or a new sign-in, asks again.
     private let takesNoWeighed = Mutex(false)
+    /// The yard's channel, where the device pinned one at its
+    /// pairing: every call is sealed inside it, on the one outer
+    /// path, and no device token crosses on one. Nil, and the
+    /// calls are the plain ones of today.
+    private let channel: ChannelKeys?
+    /// The channel's session, founded by one handshake and dropped
+    /// where the yard says it stands no longer.
+    private let channelPhase = Mutex(ChannelPhase.closed)
 
-    init(edge: Edge, device: String, session: String, name: String) throws {
+    private enum ChannelPhase {
+        case closed
+        case opening(UUID, Task<SealedSession, Error>)
+        case open(SealedSession)
+    }
+
+    init(edge: Edge, device: String, session: String, name: String, channel: ChannelKeys? = nil) throws {
         try requireToken(device)
         guard session.isEmpty || isToken(session) else {
             throw InvalidValueError("a session is one line of visible characters")
@@ -37,18 +50,22 @@ final class YardClient: Sendable {
         guard !session.isEmpty || name.isEmpty else {
             throw InvalidValueError("a yard of its own has no name at the edge")
         }
+        if let channel {
+            guard channel.devicePrivate.count == 32, channel.yardPublic.count == 32 else {
+                throw InvalidValueError("a channel key is 32 bytes")
+            }
+        }
         self.edge = edge
         self.device = device
         self.session = session
         self.name = name
+        self.channel = channel
     }
 
     /// Who the token is: the user every call is made as, the device and
     /// the yard. Asked at every start.
     func me() async throws -> Me {
-        var request = request(path: "/user/me")
-        request.httpMethod = "GET"
-        let answer = try await edge.exchange(request)
+        let answer = try await perform(method: "GET", path: "/user/me", headers: [:], body: Data())
         if let error = refusal(status: answer.status, edgeRefusal: answer.edgeRefusal, retryAfterHeader: answer.retryAfter, body: answer.body) {
             throw error
         }
@@ -56,15 +73,24 @@ final class YardClient: Sendable {
     }
 
     /// Registers this device for wakes with the relay, through the
-    /// edge (design 8787 3.2): the router answers it itself, binds
-    /// it to the session beside the device token, and forwards no
-    /// part of it to the yard. `token` is the system's push token
-    /// for this installation; it rides in this call's body alone.
+    /// edge (design 8787 3.2): a fresh voucher from the yard's channel
+    /// names the device in place of the token probe, and the router
+    /// answers without forwarding the push token to the yard. `token`
+    /// is the system's push token for this installation; it rides in
+    /// this call's body alone.
     /// A yard of its own is never registered — no router stands in
     /// front of it — and this client is never made for one here.
     func registerPush(token: String) async throws {
-        var request = request(path: "/user/push/register")
+        // A registration only has the voucher path. Sending the device
+        // token when migration has not pinned a channel would expose it
+        // to the edge and repeat the probe this path replaces.
+        guard channel != nil else {
+            throw ApiError.refused(code: "not_sealed", message: Self.notSealedWords)
+        }
+        let authorization = "Bearer \(try await pushVoucher())"
+        var request = routedRequest(path: "/user/push/register")
         request.httpMethod = "POST"
+        request.setValue(authorization, forHTTPHeaderField: "Authorization")
         request.setValue(jsonContentType, forHTTPHeaderField: "Content-Type")
         request.httpBody = try jsonBody(["platform": "apns", "token": token])
         let answer = try await edge.exchange(request)
@@ -78,9 +104,16 @@ final class YardClient: Sendable {
 
     /// Undoes the registration, as the phone unpairs itself (3.3):
     /// the same door, with no body, deleting this device's row.
+    /// With a channel its voucher stands in the token's place, as
+    /// at registration.
     func unregisterPush() async throws {
-        var request = request(path: "/user/push/unregister")
+        guard channel != nil else {
+            throw ApiError.refused(code: "not_sealed", message: Self.notSealedWords)
+        }
+        let authorization = "Bearer \(try await pushVoucher())"
+        var request = routedRequest(path: "/user/push/unregister")
         request.httpMethod = "POST"
+        request.setValue(authorization, forHTTPHeaderField: "Authorization")
         let answer = try await edge.exchange(request)
         if let error = refusal(status: answer.status, edgeRefusal: answer.edgeRefusal, retryAfterHeader: answer.retryAfter, body: answer.body) {
             throw error
@@ -88,6 +121,48 @@ final class YardClient: Sendable {
         guard answer.status == 200 else {
             throw ApiError.protocol(what: "the push unregistration: status \(answer.status)")
         }
+    }
+
+    /// Registers this device's channel public key in place, under
+    /// its token (yardr-n9d2): the one plain call a pre-release
+    /// device still makes, answered by the yard's channel public,
+    /// pinned without any check of its signature — a phone paired
+    /// before the channel holds no yard identity to check it with
+    /// (its QR carried address, code and yard name only), so the
+    /// pin stands under the design's disclosed, accepted risk
+    /// (3.4, 1D), and the yard's list says sealed (in place). A
+    /// refusal (a key pinned already, a key another device pins,
+    /// a key that is none) answers as a call's refusal does, and
+    /// nothing is pinned by it.
+    func registerChannelKey(devicePublic: Data) async throws -> Data {
+        let reply = try await call(
+            method: "RegisterChannelKey",
+            args: ["channel_key": channelPublicString(devicePublic)]
+        )
+        guard let result = reply.whole["result"] as? [String: Any],
+              let text = result["channel_key"] as? String,
+              let yardPublic = try? parseChannelPublic(text)
+        else {
+            throw ApiError.protocol(what: "the channel registration: no yard channel key in the answer")
+        }
+        return yardPublic
+    }
+
+    /// A fresh registration voucher, asked of the yard inside the
+    /// channel for the user and device the channel proved: the
+    /// yard signs one for ten minutes, and the phone asks on each
+    /// registration, so none is kept.
+    private func pushVoucher() async throws -> String {
+        let answer = try await sealedAnswer(method: "POST", path: "/user/push/voucher", headers: [:], body: Data(), marked: false)
+        if let error = refusal(status: answer.status, edgeRefusal: answer.edgeRefusal, retryAfterHeader: answer.retryAfter, body: answer.body) {
+            throw error
+        }
+        guard answer.status == 200,
+              let voucher = jsonObject(answer.body)?["voucher"] as? String, !voucher.isEmpty
+        else {
+            throw ApiError.protocol(what: "the push voucher: status \(answer.status)")
+        }
+        return voucher
     }
 
     /// The seq of the newest event: where the stream starts.
@@ -138,9 +213,7 @@ final class YardClient: Sendable {
     /// request's first line, so it is checked before anything is sent.
     func blob(hash: String) async throws -> Data? {
         guard isSHA256Hash(hash) else { return nil }
-        var request = request(path: "/user/blobs/\(hash)")
-        request.httpMethod = "GET"
-        let answer = try await edge.exchange(request)
+        let answer = try await perform(method: "GET", path: "/user/blobs/\(hash)", headers: [:], body: Data())
         // A hash the yard no longer holds: none, not an error, and not
         // a device's 404, which the table below would read it as. The
         // bytes themselves are never read for a refusal's shape.
@@ -302,6 +375,10 @@ final class YardClient: Sendable {
         onOpen: @Sendable () -> Void,
         emit: (Event) -> Void
     ) async throws {
+        if channel != nil {
+            try await streamEventsSealed(after: after, quiet: quiet, onOpen: onOpen, emit: emit)
+            return
+        }
         var request = request(path: "/user/events")
         var components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!
         components.queryItems = [URLQueryItem(name: "after", value: String(after))]
@@ -354,6 +431,384 @@ final class YardClient: Sendable {
             request.setValue(name, forHTTPHeaderField: edgeYardHeader)
         }
         return request
+    }
+
+    /// A routed edge call with no device credential: the outer
+    /// `/user/e2e` calls and voucher-authenticated push calls use this.
+    private func routedRequest(path: String) -> URLRequest {
+        var request = edge.makeRequest(path: path)
+        if !session.isEmpty {
+            request.setValue(session, forHTTPHeaderField: edgeTokenHeader)
+        }
+        if !name.isEmpty {
+            request.setValue(name, forHTTPHeaderField: edgeYardHeader)
+        }
+        return request
+    }
+
+    // MARK: - The channel
+
+    /// The words of a yard that cannot be reached sealed, as the
+    /// design has them (3.3): a pinned device fails sealed, and
+    /// never sends a plain call under its old token instead.
+    private static let notSealedWords = "The yard could not be reached sealed; update or pair again."
+
+    /// One call, plain or sealed as this yard stands: the plain
+    /// call carries the device token, as it always did; the sealed
+    /// one rides the channel, and the token crosses on none.
+    private func perform(method: String, path: String, headers: [String: String], body: Data) async throws -> Answer {
+        if channel != nil {
+            return try await sealedAnswer(method: method, path: path, headers: headers, body: body, marked: false)
+        }
+        var request = request(path: path)
+        request.httpMethod = method
+        for (name, value) in headers {
+            request.setValue(value, forHTTPHeaderField: name)
+        }
+        if !body.isEmpty {
+            request.httpBody = body
+        }
+        return try await edge.exchange(request)
+    }
+
+    /// A request on the outer path alone: the edge's session and
+    /// the yard's name as every device call carries them, and no
+    /// device token — the channel is the call's credential.
+    private func outerRequest() -> URLRequest {
+        routedRequest(path: "/user/e2e")
+    }
+
+    /// The channel's session, founded by one handshake where none
+    /// stands: the handshake's first message names no call, which
+    /// is how the yard tells it from an enveloped call. A yard
+    /// that knows no device of this key refuses it, and the device
+    /// is let in no more.
+    private func sealedSession() async throws -> SealedSession {
+        guard let channel else { throw ApiError.protocol(what: "a sealed call of a yard with no channel") }
+        // One handshake at a time: every caller in the same want
+        // awaits the one opening, and its answer stands for all.
+        let task: Task<SealedSession, Error> = channelPhase.withLock { phase in
+            switch phase {
+            case .open(let session):
+                return Task { session }
+            case .opening(_, let opening):
+                return opening
+            case .closed:
+                let id = UUID()
+                let opening = Task<SealedSession, Error> { [self] in
+                    do {
+                        let session = try await handshake(channel: channel)
+                        channelPhase.withLock { phase in
+                            if case .opening(let current, _) = phase, current == id {
+                                phase = .open(session)
+                            }
+                        }
+                        return session
+                    } catch {
+                        channelPhase.withLock { phase in
+                            if case .opening(let current, _) = phase, current == id {
+                                phase = .closed
+                            }
+                        }
+                        throw error
+                    }
+                }
+                phase = .opening(id, opening)
+                return opening
+            }
+        }
+        return try await task.value
+    }
+
+    private func dropSealedSession(_ stale: SealedSession) {
+        channelPhase.withLock { phase in
+            if case .open(let current) = phase, current === stale {
+                phase = .closed
+            }
+        }
+    }
+
+    /// Opens the channel to the yard: one outer call with the
+    /// handshake's first message and no call named. Its refusal
+    /// is read as a device call's is, the yard's 401 as the
+    /// device let in no more, and any other failure as a yard
+    /// that could not be reached sealed.
+    private func handshake(channel: ChannelKeys) async throws -> SealedSession {
+        let opening: ChannelOpening
+        do {
+            opening = try ChannelOpening(devicePrivate: channel.devicePrivate, yardPublic: channel.yardPublic)
+        } catch let failure as ChannelFailure {
+            throw ApiError.protocol(what: "the channel handshake: \(failure.description)")
+        }
+        var request = outerRequest()
+        request.httpMethod = "POST"
+        request.httpBody = opening.first
+        let answer = try await edge.exchange(request)
+        if let error = refusal(status: answer.status, edgeRefusal: answer.edgeRefusal, retryAfterHeader: answer.retryAfter, body: answer.body) {
+            throw error
+        }
+        if answer.status == 401 {
+            throw ApiError.notLetIn
+        }
+        guard answer.status == 200 else {
+            throw ApiError.refused(code: "not_sealed", message: Self.notSealedWords)
+        }
+        do {
+            return try opening.openAnswer(answer.data)
+        } catch {
+            throw ApiError.refused(code: "not_sealed", message: Self.notSealedWords)
+        }
+    }
+
+    /// One sealed call whole: the inner call — method, path,
+    /// headers and body — sealed in records inside one outer call,
+    /// and its answer opened against the call that asked for it.
+    /// A session the yard stands no longer (its 401, before any
+    /// record is opened) is founded again once and the call made
+    /// again, since the yard never served it; any other outer
+    /// refusal is the caller's, as a plain one's is.
+    private func sealedAnswer(method: String, path: String, headers: [String: String], body: Data, marked: Bool) async throws -> Answer {
+        var foundedAgain = false
+        while true {
+            let session = try await sealedSession()
+            let call: Data
+            let run: Data
+            do {
+                call = try newCallID()
+                let head = try sealedHead(method: method, path: path, headers: headers)
+                run = try session.sealWhole(
+                    call: call, marker: marked ? streamLongLived : "", present: marked,
+                    plaintext: joinSealed(head: head, body: body)
+                )
+            } catch let failure as ChannelFailure {
+                throw ApiError.protocol(what: "a call that could not be sealed: \(failure.description)")
+            }
+            var request = outerRequest()
+            request.httpMethod = "POST"
+            request.setValue(base64URL(call), forHTTPHeaderField: "X-Edge-E2E-Call")
+            if marked {
+                request.setValue(streamLongLived, forHTTPHeaderField: "X-Edge-E2E-Stream")
+            }
+            request.httpBody = run
+            let answer = try await edge.exchange(request)
+            if answer.status == 401, answer.edgeRefusal == nil, !foundedAgain {
+                dropSealedSession(session)
+                foundedAgain = true
+                continue
+            }
+            if let error = refusal(status: answer.status, edgeRefusal: answer.edgeRefusal, retryAfterHeader: answer.retryAfter, body: answer.body) {
+                throw error
+            }
+            guard answer.status == 200 else {
+                throw ApiError.protocol(what: "the sealed call: status \(answer.status)")
+            }
+            let plain: Data
+            do {
+                plain = try session.openWhole(run: answer.data, call: call, marker: marked ? streamLongLived : "", present: marked)
+            } catch {
+                throw ApiError.protocol(what: "a sealed answer that does not open")
+            }
+            let (status, head, innerBody) = try splitSealed(plain)
+            return Answer(status: status, head: head, data: innerBody)
+        }
+    }
+
+    /// The events stream sealed: the inner call marked long-lived
+    /// on its outer call, its answer records opened one by one as
+    /// they cross, the router's empty records read past, and its
+    /// lines read as a plain stream's are once its sealed head has
+    /// opened. An outer ending with no final record is a cut
+    /// stream, said as one that went silent is.
+    private func streamEventsSealed(
+        after: Int64,
+        quiet: Duration,
+        onOpen: @Sendable () -> Void,
+        emit: (Event) -> Void
+    ) async throws {
+        var foundedAgain = false
+        while true {
+            let session = try await sealedSession()
+            let call: Data
+            let run: Data
+            do {
+                call = try newCallID()
+                let head = try sealedHead(
+                    method: "GET", path: "/user/events?after=\(after)",
+                    headers: ["Accept": "application/x-ndjson"]
+                )
+                run = try session.sealWhole(
+                    call: call, marker: streamLongLived, present: true,
+                    plaintext: joinSealed(head: head, body: Data())
+                )
+            } catch let failure as ChannelFailure {
+                throw ApiError.protocol(what: "a call that could not be sealed: \(failure.description)")
+            }
+            var request = outerRequest()
+            request.httpMethod = "POST"
+            request.setValue(base64URL(call), forHTTPHeaderField: "X-Edge-E2E-Call")
+            request.setValue(streamLongLived, forHTTPHeaderField: "X-Edge-E2E-Stream")
+            request.httpBody = run
+            request.timeoutInterval = 60 * 60
+            let (bytes, head) = try await edge.transport.bytes(for: request)
+            if head.status == 401, head.header(edgeRefusalHeader) == nil, !foundedAgain {
+                dropSealedSession(session)
+                foundedAgain = true
+                continue
+            }
+            if !(200...299).contains(head.status) {
+                var data = Data()
+                for try await byte in bytes {
+                    data.append(byte)
+                }
+                let body = String(data: data, encoding: .utf8) ?? ""
+                let refused = refusal(
+                    status: head.status,
+                    edgeRefusal: head.header(edgeRefusalHeader),
+                    retryAfterHeader: head.header("Retry-After"),
+                    body: body,
+                    stream: true
+                )
+                if let refused {
+                    if case .refused(let code, _) = refused, code == replacingCode {
+                        throw ApiError.down(why: "the yard is replacing itself")
+                    }
+                    throw refused
+                }
+                throw ApiError.protocol(what: "the stream answered status \(head.status)")
+            }
+            let inner = sealedBytes(bytes: bytes, session: session, call: call)
+            let source = ByteSource(inner)
+            // The sealed head first: a length-prefixed block, as a
+            // whole call's, before any line of the body.
+            var headBytes = Data()
+            while headBytes.count < 4 {
+                guard let byte = try await source.next() else {
+                    throw ApiError.down(why: "the sealed stream ended before its head")
+                }
+                headBytes.append(byte)
+            }
+            let headLength = Int(bigEndian32(headBytes))
+            while headBytes.count < 4 + headLength {
+                guard let byte = try await source.next() else {
+                    throw ApiError.down(why: "the sealed stream ended before its head")
+                }
+                headBytes.append(byte)
+            }
+            let (status, innerHead, _) = try splitSealed(headBytes)
+            let leftover = Data(headBytes.dropFirst(4 + headLength))
+            let rest = AsyncThrowingStream<UInt8, Error> { continuation in
+                let task = Task {
+                    do {
+                        for byte in leftover {
+                            continuation.yield(byte)
+                        }
+                        while let byte = try await source.next() {
+                            continuation.yield(byte)
+                        }
+                        continuation.finish()
+                    } catch {
+                        continuation.finish(throwing: error)
+                    }
+                }
+                continuation.onTermination = { _ in task.cancel() }
+            }
+            if !(200...299).contains(status) {
+                var data = Data()
+                for try await byte in rest {
+                    data.append(byte)
+                }
+                let body = String(data: data, encoding: .utf8) ?? ""
+                let refused = refusal(
+                    status: status,
+                    edgeRefusal: innerHead.header(edgeRefusalHeader),
+                    retryAfterHeader: innerHead.header("Retry-After"),
+                    body: body,
+                    stream: true
+                )
+                if let refused {
+                    if case .refused(let code, _) = refused, code == replacingCode {
+                        throw ApiError.down(why: "the yard is replacing itself")
+                    }
+                    throw refused
+                }
+                throw ApiError.protocol(what: "the stream answered status \(status)")
+            }
+            onOpen()
+            let reader = LineReader(bytes: rest)
+            while let line = try await reader.nextLine(quiet: quiet) {
+                if line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    continue
+                }
+                emit(try decode("an event", Event.self, from: Data(line.utf8)))
+            }
+            return
+        }
+    }
+
+    /// The inner bytes of a sealed stream: its records opened as
+    /// they cross, the empty ones (the router's beat) read past
+    /// before any opening. The outer ending answers only where
+    /// the final record opened; without it the stream is cut.
+    private func sealedBytes(bytes: AsyncThrowingStream<UInt8, Error>, session: SealedSession, call: Data) -> AsyncThrowingStream<UInt8, Error> {
+        let opener = session.opener(call: call, marker: streamLongLived, present: true)
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                var pending: [UInt8] = []
+                do {
+                    for try await byte in bytes {
+                        pending.append(byte)
+                        while pending.count >= 4 {
+                            let length = Int(pending[0]) << 24 | Int(pending[1]) << 16 | Int(pending[2]) << 8 | Int(pending[3])
+                            if length == 0 {
+                                pending.removeFirst(4)
+                                continue
+                            }
+                            guard length <= 65_535 else {
+                                throw ChannelFailure(description: "a sealed stream record exceeds the Noise message limit")
+                            }
+                            guard pending.count >= 4 + length else { break }
+                            let message = Data(pending[4..<(4 + length)])
+                            pending.removeFirst(4 + length)
+                            let opened = try opener.open(message)
+                            for inner in opened.plain {
+                                continuation.yield(inner)
+                            }
+                        }
+                    }
+                    if !pending.isEmpty {
+                        throw ChannelFailure(description: "a sealed stream ended inside a record")
+                    }
+                    try opener.close()
+                    continuation.finish()
+                } catch is CancellationError {
+                    continuation.finish(throwing: CancellationError())
+                } catch let failure as ChannelFailure {
+                    continuation.finish(throwing: ApiError.down(why: "the sealed stream ended early: \(failure.description)"))
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    /// The outer stream marker's one value, as the router reads
+    /// it and the first record binds it.
+    private var streamLongLived: String { "long-lived" }
+
+    /// An inner call's head as it travels sealed: its method, its
+    /// path with its query, and its headers, as JSON. The device
+    /// token is not among them — the channel is the credential.
+    private func sealedHead(method: String, path: String, headers: [String: String]) throws -> Data {
+        var header: [String: [String]] = [:]
+        for (name, value) in headers {
+            header[name] = [value]
+        }
+        do {
+            return try JSONSerialization.data(withJSONObject: ["method": method, "path": path, "header": header], options: [.sortedKeys])
+        } catch {
+            throw ApiError.protocol(what: "a sealed call that cannot be written")
+        }
     }
 
     struct Reply {
@@ -442,11 +897,10 @@ final class YardClient: Sendable {
     }
 
     private func callOnce(method: String, args: [String: Any]) async throws -> Reply {
-        var request = request(path: "/user/call/\(method)")
-        request.httpMethod = "POST"
-        request.setValue(jsonContentType, forHTTPHeaderField: "Content-Type")
-        request.httpBody = try jsonBody(args)
-        let answer = try await edge.exchange(request)
+        let answer = try await perform(
+            method: "POST", path: "/user/call/\(method)",
+            headers: ["Content-Type": jsonContentType], body: try jsonBody(args)
+        )
         if let error = refusal(status: answer.status, edgeRefusal: answer.edgeRefusal, retryAfterHeader: answer.retryAfter, body: answer.body) {
             throw error
         }
@@ -539,5 +993,60 @@ final class LineReader: @unchecked Sendable {
 func isSHA256Hash(_ hash: String) -> Bool {
     hash.count == 64 && hash.allSatisfy {
         ($0 >= "0" && $0 <= "9") || ($0 >= "a" && $0 <= "f") || ($0 >= "A" && $0 <= "F")
+    }
+}
+
+/// A sealed plaintext whole: the head as a length-prefixed block,
+/// then the body as it stands.
+func joinSealed(head: Data, body: Data) -> Data {
+    var out = Data()
+    var length = UInt32(head.count).bigEndian
+    withUnsafeBytes(of: &length) { out.append(contentsOf: $0) }
+    out.append(head)
+    out.append(body)
+    return out
+}
+
+/// `joinSealed` read back: the inner answer's status and headers,
+/// and its body. The outer head of a sealed answer names the
+/// envelope alone, so these are the caller's alone to read.
+func splitSealed(_ plain: Data) throws -> (status: Int, head: HTTPHead, body: Data) {
+    guard plain.count >= 4 else {
+        throw ApiError.protocol(what: "a sealed answer with no head")
+    }
+    let length = Int(bigEndian32(plain))
+    guard plain.count >= 4 + length,
+          let object = try? JSONSerialization.jsonObject(with: plain.subdata(in: 4..<(4 + length))) as? [String: Any],
+          let status = object["status"] as? Int
+    else {
+        throw ApiError.protocol(what: "a sealed answer with no head")
+    }
+    var headers: [String: String] = [:]
+    if let header = object["header"] as? [String: [String]] {
+        for (name, values) in header {
+            headers[name] = values.joined(separator: ",")
+        }
+    }
+    return (status, HTTPHead(status: status, headers: headers), Data(plain.dropFirst(4 + length)))
+}
+
+/// The first four bytes of `data`, big-endian, as a record's or a
+/// head's length stands.
+func bigEndian32(_ data: Data) -> UInt32 {
+    data.prefix(4).reduce(0) { ($0 << 8) | UInt32($1) }
+}
+
+/// One byte stream read from two places in turn: its sealed head
+/// first, then its lines. The iterator is the stream's alone, and
+/// its two readers never stand in it at once.
+final class ByteSource: @unchecked Sendable {
+    private var iterator: AsyncThrowingStream<UInt8, Error>.AsyncIterator
+
+    init(_ stream: AsyncThrowingStream<UInt8, Error>) {
+        iterator = stream.makeAsyncIterator()
+    }
+
+    func next() async throws -> UInt8? {
+        try await iterator.next()
     }
 }

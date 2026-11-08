@@ -1,0 +1,8 @@
+framework module "NoiseChannel" {
+	header "ref.h"
+    header "Channel.objc.h"
+    header "Universe.objc.h"
+    header "NoiseChannel.h"
+
+    export *
+}

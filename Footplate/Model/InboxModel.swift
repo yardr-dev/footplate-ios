@@ -23,6 +23,13 @@ struct YardRow: Equatable, Sendable {
     var word: String?
     /// `2 waiting` where the yard has open asks and its follow is up.
     var waiting: String? = nil
+    /// `not yet sealed` where the yard holds this device's channel
+    /// key: no sealed claim stands until the bound library's
+    /// review passes (Channel.swift), and this says no more.
+    var channelNote: String? = nil
+    /// An in-place migration has completed, so the person can choose
+    /// to pair again by QR and replace the migration's trust-on-first-use.
+    var canPairAgainByQR: Bool = false
 }
 
 struct InboxState: Equatable, Sendable {
@@ -221,7 +228,9 @@ final class InboxModel {
                     name: yard.name, title: yard.title, user: yard.user, device: yard.device,
                     selected: yard.name == kept.selected,
                     word: said,
-                    waiting: said == nil && open > 0 ? "\(open) waiting" : nil
+                    waiting: said == nil && open > 0 ? "\(open) waiting" : nil,
+                    channelNote: yard.channelNote,
+                    canPairAgainByQR: yard.sealedHow == "in place" && yard.yardChannelPublic != nil
                 )
             },
             rows: board?.rows { at in stamp(at, now: now, zone: zone) } ?? [],

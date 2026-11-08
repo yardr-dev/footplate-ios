@@ -10,6 +10,7 @@ struct YardSwitchView: View {
     var state: InboxState
     var onSelect: (String) -> Void = { _ in }
     var onPairAnother: () -> Void = {}
+    var onPairAgainByQR: () -> Void = {}
     var onRename: () -> Void = {}
     var onForget: () -> Void = {}
 
@@ -29,49 +30,60 @@ struct YardSwitchView: View {
     private var content: some View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(state.yards, id: \.name) { yard in
-                Button {
-                    onSelect(yard.name)
-                } label: {
-                    HStack(spacing: 0) {
-                        Rectangle()
-                            .fill(yard.selected ? ThemeColor.accent.color : ThemeColor.surfaceApp.color)
-                            .frame(width: 3)
-                        VStack(alignment: .leading, spacing: 2) {
-                            // A yard of its own is called by its address,
-                            // and a long host loses its middle, not the
-                            // port that tells two on one host apart.
-                            Text(yard.title)
-                                .themeType(.label)
-                                .foregroundStyle(ThemeColor.textPrimary.color)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                            Text(yard.user)
-                                .themeType(.meta)
-                                .foregroundStyle(ThemeColor.textSecondary.color)
+                VStack(alignment: .leading, spacing: 0) {
+                    Button {
+                        onSelect(yard.name)
+                    } label: {
+                        HStack(spacing: 0) {
+                            Rectangle()
+                                .fill(yard.selected ? ThemeColor.accent.color : ThemeColor.surfaceApp.color)
+                                .frame(width: 3)
+                            VStack(alignment: .leading, spacing: 2) {
+                                // A yard of its own is called by its address,
+                                // and a long host loses its middle, not the
+                                // port that tells two on one host apart.
+                                Text(yard.title)
+                                    .themeType(.label)
+                                    .foregroundStyle(ThemeColor.textPrimary.color)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                Text(yard.channelNote.map { "\(yard.user) · \($0)" } ?? yard.user)
+                                    .themeType(.meta)
+                                    .foregroundStyle(ThemeColor.textSecondary.color)
+                            }
+                            .padding(.horizontal, 17)
+                            Spacer()
+                            if let waiting = yard.waiting {
+                                Text(waiting)
+                                    .themeType(.meta)
+                                    .foregroundStyle(ThemeColor.textAccent.color)
+                                    .padding(.trailing, 20)
+                            } else if let word = yard.word {
+                                Text(word)
+                                    .themeType(.meta)
+                                    .foregroundStyle(ThemeColor.textSecondary.color)
+                                    .padding(.trailing, 20)
+                            }
                         }
-                        .padding(.horizontal, 17)
-                        Spacer()
-                        if let waiting = yard.waiting {
-                            Text(waiting)
-                                .themeType(.meta)
-                                .foregroundStyle(ThemeColor.textAccent.color)
-                                .padding(.trailing, 20)
-                        } else if let word = yard.word {
-                            Text(word)
-                                .themeType(.meta)
-                                .foregroundStyle(ThemeColor.textSecondary.color)
-                                .padding(.trailing, 20)
-                        }
+                        // At least 64, and as tall as its two lines need. The
+                        // yard line takes any height it is offered, so the
+                        // row is fixed to its own height, not left a share
+                        // of the screen.
+                        .frame(minHeight: 64)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .contentShape(Rectangle())
                     }
-                    // At least 64, and as tall as its two lines need. The
-                    // yard line takes any height it is offered, so the
-                    // row is fixed to its own height, not left a share
-                    // of the screen.
-                    .frame(minHeight: 64)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+                    if yard.canPairAgainByQR {
+                        Button("Pair again by QR", action: onPairAgainByQR)
+                            .themeType(.meta)
+                            .foregroundStyle(ThemeColor.textAccent.color)
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            .contentShape(Rectangle())
+                            .padding(.leading, 20)
+                            .buttonStyle(.plain)
+                    }
                 }
-                .buttonStyle(.plain)
             }
             VStack(alignment: .leading, spacing: 12) {
                 // The demo yard is nothing to rename or forget, and

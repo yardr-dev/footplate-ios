@@ -260,6 +260,37 @@ struct PairedYard: Equatable, Sendable {
     var token: String
     var origin: String = ""
     var localName: String? = nil
+    /// The device's channel private key for this yard (32 bytes),
+    /// beside the token in the Keychain alone, and the yard channel
+    /// public key pinned with it: both nil where the yard holds no
+    /// channel for this device — a pairing made plainly, or a yard
+    /// of its own, whose calls carry the token alone.
+    var channelPrivate: Data? = nil
+    var yardChannelPublic: Data? = nil
+    /// How the device's key came to stand: `paired`, where a sealed
+    /// pairing pinned it, or `in place`, where the key was made on
+    /// this phone for a yard paired before the channel and waits
+    /// for the yard to take its registration (yardr-n9d2). Nil
+    /// where no key stands. The words are the record's, as the
+    /// yard will keep them; the phone shows neither until the
+    /// bound library's review passes (Channel.swift).
+    var sealedHow: String? = nil
+
+    /// The yard's channel, where both halves stand: the calls of
+    /// an edge yard with one go sealed, and no device token
+    /// crosses on them.
+    var channel: ChannelKeys? {
+        guard let channelPrivate, let yardChannelPublic else { return nil }
+        return ChannelKeys(devicePrivate: channelPrivate, yardPublic: yardChannelPublic)
+    }
+
+    /// What the yard switch says of the channel, in place of any
+    /// sealed claim: a yard with a key of this device stands not
+    /// yet sealed until the review of the bound library passes,
+    /// and a yard with none says nothing.
+    var channelNote: String? {
+        channelPrivate == nil ? nil : "not yet sealed"
+    }
 
     /// The handle of the account the yard belongs to, where it is
     /// another's; empty for the account's own yard and a yard of its
@@ -408,7 +439,7 @@ final class Records {
         if yard.localName == nil {
             yard.localName = kept.yards.first { $0.name == yard.name }?.localName
         }
-        secret.write(put: [Self.yardPrefix + yard.name: yardSecret(token: yard.token, origin: yard.origin)])
+        secret.write(put: [Self.yardPrefix + yard.name: yardSecret(of: yard)])
         plain.write(put: [Self.yardMetaPrefix + yard.name: meta(of: yard), Self.selectedKey: yard.name])
         kept.yards = kept.yards.filter { $0.name != yard.name } + [yard]
         kept.selected = yard.name
@@ -468,6 +499,43 @@ final class Records {
         publish()
     }
 
+    /// Makes a channel key on this phone for every edge yard
+    /// paired before the channel (design 3.4's migration in
+    /// place): the private half kept beside the token, and the
+    /// yard marked `in place`. The yard's own key is learned only
+    /// when its one registration call takes the key: until then the
+    /// yard keeps its plain calls, since it pinned nothing, and
+    /// stands not yet sealed.
+    /// A yard that holds a key already is left as it stands, so a
+    /// second launch makes none.
+    func makeMigrationKeys() {
+        var changed = false
+        for index in kept.yards.indices where kept.yards[index].origin.isEmpty && kept.yards[index].channelPrivate == nil {
+            guard let key = try? makeDeviceKey() else { continue }
+            kept.yards[index].channelPrivate = key.devicePrivate
+            kept.yards[index].sealedHow = "in place"
+            secret.write(put: [Self.yardPrefix + kept.yards[index].name: yardSecret(of: kept.yards[index])])
+            changed = true
+        }
+        if changed { publish() }
+    }
+
+    /// Pins the yard channel public key a registration in place
+    /// answered, for the yard named: the device's key, made by
+    /// `makeMigrationKeys`, stands registered at the yard, and
+    /// every later call of the yard is sealed. Only a yard still
+    /// waiting for its registration takes one; a second answer
+    /// pins nothing.
+    func pinMigrated(name: String, yardPublic: Data) {
+        guard let index = kept.yards.firstIndex(where: { $0.name == name }),
+              kept.yards[index].sealedHow == "in place",
+              kept.yards[index].yardChannelPublic == nil
+        else { return }
+        kept.yards[index].yardChannelPublic = yardPublic
+        secret.write(put: [Self.yardPrefix + name: yardSecret(of: kept.yards[index])])
+        publish()
+    }
+
     /// Whether the notifications permission was asked already: it is
     /// asked once, after the first pairing (3.2).
     var notificationsAsked: Bool { plain.get(Self.askedKey) != nil }
@@ -524,10 +592,12 @@ final class Records {
                 if secret.get(secretKey) != nil { asideSecret.append(secretKey) }
                 continue
             }
-            let (token, origin) = readYardSecret(stored)
+            let secret = readYardSecret(stored)
             yards.append(PairedYard(
                 name: meta.name, yard: meta.yard, user: meta.user, device: meta.device,
-                token: token, origin: origin, localName: Self.given(meta.localName)
+                token: secret.token, origin: secret.origin, localName: Self.given(meta.localName),
+                channelPrivate: secret.channelPrivateData, yardChannelPublic: secret.yardPublicData,
+                sealedHow: secret.sealedHow
             ))
         }
         if !asideSecret.isEmpty { secret.write(remove: asideSecret) }
@@ -609,37 +679,50 @@ final class Records {
 /// keeps the two forms apart whatever a yard answers as its token.
 private let directSecretMark = "direct "
 
-/// The value a yard's Keychain record holds for `token` with `origin`
-/// beside it: the token alone where the yard is the edge's, so
-/// records written before a yard of its own could be paired read as
-/// they always did.
-private func yardSecret(token: String, origin: String) -> String {
-    guard !origin.isEmpty else { return token }
-    struct Secret: Codable {
-        var token: String
-        var origin: String
-    }
-    guard let json = (try? JSONEncoder().encode(Secret(token: token, origin: origin)))
+/// A yard's secret whole, as its Keychain record holds it: the
+/// token, its origin where it is a yard of its own, and its
+/// channel halves where they stand (the private key in base64,
+/// as the plainest writing of bytes the Keychain holds).
+private struct YardSecret: Codable {
+    var token: String
+    var origin: String = ""
+    var channelPrivate: String? = nil
+    var yardPublic: String? = nil
+    var sealedHow: String? = nil
+
+    var channelPrivateData: Data? { channelPrivate.flatMap { Data(base64Encoded: $0) } }
+    var yardPublicData: Data? { yardPublic.flatMap { Data(base64Encoded: $0) } }
+}
+
+/// The value a yard's Keychain record holds: the token alone
+/// where the yard is the edge's and holds no channel, so records
+/// written before either read as they always did; the marked
+/// JSON beside it where an origin or a channel stands.
+private func yardSecret(of yard: PairedYard) -> String {
+    guard !yard.origin.isEmpty || yard.channelPrivate != nil else { return yard.token }
+    let secret = YardSecret(
+        token: yard.token, origin: yard.origin,
+        channelPrivate: yard.channelPrivate?.base64EncodedString(),
+        yardPublic: yard.yardChannelPublic?.base64EncodedString(),
+        sealedHow: yard.sealedHow
+    )
+    guard let json = (try? JSONEncoder().encode(secret))
         .flatMap({ String(data: $0, encoding: .utf8) })
-    else { return token }
+    else { return yard.token }
     return directSecretMark + json
 }
 
-/// A yard's Keychain record read: the token with its origin where the
-/// mark is, or the bare token of a record written before, whose yard
-/// is the edge's. A marked record that cannot be read is the bare
-/// token whole, whose space keeps it out of any request.
-private func readYardSecret(_ stored: String) -> (token: String, origin: String) {
-    struct Secret: Codable {
-        var token: String
-        var origin: String
-    }
+/// A yard's Keychain record read: its secret whole where the
+/// mark is, or the bare token of a record written before, whose
+/// yard is the edge's and holds no channel. A marked record that
+/// cannot be read is the bare token whole, whose space keeps it
+/// out of any request.
+private func readYardSecret(_ stored: String) -> YardSecret {
     if stored.hasPrefix(directSecretMark),
        let data = String(stored.dropFirst(directSecretMark.count)).data(using: .utf8),
-       let secret = try? JSONDecoder().decode(Secret.self, from: data),
-       !secret.origin.isEmpty
+       let secret = try? JSONDecoder().decode(YardSecret.self, from: data)
     {
-        return (secret.token, secret.origin)
+        return secret
     }
-    return (stored, "")
+    return YardSecret(token: stored)
 }

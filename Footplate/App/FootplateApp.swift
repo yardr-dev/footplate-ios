@@ -76,6 +76,8 @@ final class AppServices {
     private var networkWatch: NetworkWatch?
     private var followSignature: String = ""
     private var recordsObserver: UUID?
+    private var migrationPendingNames: Set<String> = []
+    private var migrationAttemptedSession: String?
 
     /// The app is made with nothing: the built edge on `URLSession`, the
     /// Keychain and the app group's defaults. The tests give their own
@@ -91,6 +93,11 @@ final class AppServices {
             // silently ignored, so they go now, once.
             clearStaleMigratedNotifications()
         }
+        // A phone paired before the channel makes its key for
+        // each such yard on this launch, kept beside its token and
+        // waiting for the yard to take its registration
+        // (Records.makeMigrationKeys).
+        records.makeMigrationKeys()
         let pairer = Pairer(edge: edge, records: records)
         self.pairer = pairer
         let checkpoints: any CheckpointStore = FileCheckpointStore.shared() ?? MemoryCheckpointStore()
@@ -145,11 +152,38 @@ final class AppServices {
         UNUserNotificationCenter.current().delegate = delegate
         self.inboxModel.followers = { [weak self] in (self?.followers ?? [:]).mapValues { $0 as any Followed } }
         self.lineModel.followers = { [weak self] in (self?.followers ?? [:]).mapValues { $0 as any Followed } }
-        recordsObserver = records.observe { [weak self] _ in
-            self?.refollow()
-            Task { @MainActor in await self?.registrar.yardsChanged() }
+        recordsObserver = records.observe { [weak self] kept in
+            guard let self else { return }
+            self.beginMigrationIfNeeded(session: kept.account?.session)
+            self.refollow()
+            Task { @MainActor in await self.registrar.yardsChanged() }
         }
+        beginMigrationIfNeeded(session: records.kept.account?.session)
         refollow()
+    }
+
+    /// Registers old pairings before following them. A pending yard is
+    /// left out of the followers until its one plain registration call
+    /// has answered, so no ordinary device call races the pinning step.
+    private func beginMigrationIfNeeded(session: String?) {
+        guard let session, migrationAttemptedSession != session else { return }
+        migrationAttemptedSession = session
+        let candidates = records.kept.yards.filter {
+            $0.origin.isEmpty && $0.sealedHow == "in place" && $0.yardChannelPublic == nil
+        }
+        guard !candidates.isEmpty else { return }
+        migrationPendingNames.formUnion(candidates.map(\.name))
+        let records = self.records
+        let edge = self.edge
+        Task { @MainActor [weak self] in
+            let refused = await migrateInPlace(records: records, edge: edge, session: session)
+            guard let self else { return }
+            self.migrationPendingNames.subtract(candidates.map(\.name))
+            self.refollow()
+            if let yard = refused.first {
+                self.nav.notice = "\(yard.title) could not be sealed: the yard refused its channel key. Pair again by QR to seal it."
+            }
+        }
     }
 
     private static func liveEdge() -> Edge {
@@ -228,24 +262,23 @@ final class AppServices {
         return followers[selected]
     }
 
-    private func signature() -> String {
-        let kept = records.kept
-        let session = kept.account?.session ?? ""
-        let yardsPart = kept.yards.map { "\($0.name)=\($0.token)@\($0.origin)" }.joined(separator: ",")
+    private func signature(session: String, yards: [PairedYard]) -> String {
+        let yardsPart = yards.map { "\($0.name)=\($0.token)@\($0.origin)#\($0.channel != nil)" }.joined(separator: ",")
         return session + "|" + yardsPart
     }
 
     private func refollow() {
-        let next = signature()
+        let kept = records.kept
+        let followedYards = kept.yards.filter { !migrationPendingNames.contains($0.name) }
+        let session = kept.account?.session
+        let next = signature(session: session ?? "", yards: followedYards)
         guard next != followSignature else { return }
         followSignature = next
         yards?.close()
         yards = nil
         followers = [:]
         mailroom.setFollowers([:])
-        let kept = records.kept
-        let session = kept.account?.session
-        guard !kept.yards.isEmpty, session != nil || kept.yards.contains(where: { !$0.origin.isEmpty }) else { return }
+        guard !followedYards.isEmpty, session != nil || followedYards.contains(where: { !$0.origin.isEmpty }) else { return }
         let following = Yards(foreground: foreground)
         // A yard whose owner removed the account is forgotten, in a task
         // of its own: forgetting it follows the yards again.
@@ -254,7 +287,7 @@ final class AppServices {
         }
         yards = following
         var made: [String: Follower] = [:]
-        for yard in kept.yards {
+        for yard in followedYards {
             // An edge yard without a session is followed nowhere: the
             // inbox asks for the sign-in, and the yards are followed
             // again with new clients once it is kept. A yard of its
@@ -266,7 +299,7 @@ final class AppServices {
                 // client's.
                 client = try? Edge(origin: yard.origin, transport: edge.transport).yardDirect(device: yard.token)
             } else if let session {
-                client = try? edge.yard(device: yard.token, session: session, name: yard.name)
+                client = try? edge.yard(device: yard.token, session: session, name: yard.name, channel: yard.channel)
             } else {
                 client = nil
             }
@@ -338,4 +371,38 @@ private struct FootplateScene: View {
             set: { if !$0 { services.nav.signIn = nil } }
         )
     }
+}
+
+/// Registers in place every yard paired before the channel
+/// (design 3.4 (b), yardr-n9d2): its key, made on this phone and
+/// kept beside its token, is registered under its token by the
+/// one plain call that still crosses, the yard's channel key is
+/// pinned from the answer, and the yard is sealed from then on —
+/// the publish rebuilds its client inside the channel. A yard
+/// the answer refuses pins nothing, keeps its plain calls as
+/// before, and is answered in the result for the app to say so;
+/// a yard that merely cannot be reached is not refused, and the
+/// next launch asks again. No second registration is made for a
+/// yard that stands pinned.
+@MainActor
+func migrateInPlace(records: Records, edge: Edge, session: String) async -> [PairedYard] {
+    var refused: [PairedYard] = []
+    for yard in records.kept.yards
+    where yard.origin.isEmpty && yard.sealedHow == "in place" && yard.yardChannelPublic == nil {
+        guard let channelPrivate = yard.channelPrivate,
+              let devicePublic = try? channelPublicOf(channelPrivate),
+              let client = try? edge.yard(device: yard.token, session: session, name: yard.name)
+        else { continue }
+        do {
+            let yardPublic = try await client.registerChannelKey(devicePublic: devicePublic)
+            records.pinMigrated(name: yard.name, yardPublic: yardPublic)
+        } catch let error as ApiError {
+            if case .refused = error {
+                refused.append(yard)
+            }
+        } catch {
+            continue
+        }
+    }
+    return refused
 }

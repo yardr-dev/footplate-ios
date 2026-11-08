@@ -65,6 +65,10 @@ struct TabsView: View {
                     nav.yardListShown = false
                     inbox.pairAnother()
                 },
+                onPairAgainByQR: {
+                    nav.yardListShown = false
+                    inbox.pairAnother()
+                },
                 onRename: {
                     nav.yardListShown = false
                     newName = inbox.renaming()?.given ?? ""

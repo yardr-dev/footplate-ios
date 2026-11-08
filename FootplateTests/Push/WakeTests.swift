@@ -372,11 +372,17 @@ final class WakeTests: XCTestCase {
         let fake = FakeYard()
         let edge = try fake.edge()
         let laptop = fake.token(yardName: "laptop")
+        let laptopKey = try makeDeviceKey()
+        let laptopPublic = try parseChannelPublic(fake.channelPublic(yardName: "laptop"))
+        fake.pin(yardName: "laptop", devicePublic: channelPublicString(laptopKey.devicePublic))
         let session = fake.session()
         let engine = await MainActor.run {
             let records = Records(secret: MemoryShelf(), plain: MemoryShelf(), origin: edge.origin)
             records.keepSession(account: "jo@example.com", session: session)
-            records.keepYard(PairedYard(name: "laptop", yard: "laptop", user: "jo", device: "pixel", token: laptop))
+            records.keepYard(PairedYard(
+                name: "laptop", yard: "laptop", user: "jo", device: "pixel", token: laptop,
+                channelPrivate: laptopKey.devicePrivate, yardChannelPublic: laptopPublic, sealedHow: "paired"
+            ))
             records.keepYard(PairedYard(name: "south", yard: "south", user: "jo", device: "phone", token: "direct-token", origin: "https://yard.example.net"))
             return wakeEngine(
                 edge: edge, records: records,
@@ -392,10 +398,15 @@ final class WakeTests: XCTestCase {
 
         // The name the person gave the yard is what a wake calls it, and
         // no request carries it: the yard is read by its name at the edge.
+        let namedKey = try makeDeviceKey()
+        fake.pin(yardName: "laptop", devicePublic: channelPublicString(namedKey.devicePublic))
         let named = await MainActor.run {
             let records = Records(secret: MemoryShelf(), plain: MemoryShelf(), origin: edge.origin)
             records.keepSession(account: "jo@example.com", session: session)
-            records.keepYard(PairedYard(name: "laptop", yard: "laptop", user: "jo", device: "pixel", token: laptop))
+            records.keepYard(PairedYard(
+                name: "laptop", yard: "laptop", user: "jo", device: "pixel", token: laptop,
+                channelPrivate: namedKey.devicePrivate, yardChannelPublic: laptopPublic, sealedHow: "paired"
+            ))
             records.renameYard("laptop", to: "Backshed7")
             return wakeEngine(
                 edge: edge, records: records,
@@ -412,7 +423,10 @@ final class WakeTests: XCTestCase {
         // Without a session the yard answers the door closed.
         let nosession = await MainActor.run {
             let records = Records(secret: MemoryShelf(), plain: MemoryShelf(), origin: edge.origin)
-            records.keepYard(PairedYard(name: "laptop", yard: "laptop", user: "jo", device: "pixel", token: laptop))
+            records.keepYard(PairedYard(
+                name: "laptop", yard: "laptop", user: "jo", device: "pixel", token: laptop,
+                channelPrivate: laptopKey.devicePrivate, yardChannelPublic: laptopPublic, sealedHow: "paired"
+            ))
             return wakeEngine(
                 edge: edge, records: records,
                 checkpoints: MemoryCheckpointStore(), targets: MemoryWakeTargetStore(), canSuppress: false
@@ -424,5 +438,27 @@ final class WakeTests: XCTestCase {
         } catch {
             XCTAssertEqual(ApiError.notSignedIn, error as? ApiError)
         }
+
+        // A relay row from the prior app can still wake the extension
+        // before migration finishes. With no pinned channel, it must skip
+        // the yard rather than send its old device token in a plain call.
+        let legacy = await MainActor.run {
+            let records = Records(secret: MemoryShelf(), plain: MemoryShelf(), origin: edge.origin)
+            records.keepSession(account: "jo@example.com", session: session)
+            records.keepYard(PairedYard(name: "laptop", yard: "laptop", user: "jo", device: "pixel", token: laptop))
+            return wakeEngine(
+                edge: edge, records: records,
+                checkpoints: MemoryCheckpointStore(), targets: MemoryWakeTargetStore(), canSuppress: false
+            )
+        }
+        let beforeLegacyFetch = fake.requestCount
+        XCTAssertTrue(legacy.yards.isEmpty)
+        do {
+            _ = try await legacy.fetch("laptop")
+            XCTFail("expected the unchannelled yard to be skipped")
+        } catch {
+            XCTAssertEqual(ApiError.noDevice, error as? ApiError)
+        }
+        XCTAssertEqual(fake.requestCount, beforeLegacyFetch)
     }
 }
