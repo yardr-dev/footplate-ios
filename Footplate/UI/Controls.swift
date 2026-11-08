@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // The controls the screens share, in yardr's tokens on SwiftUI's
 // shapes: 48-point targets (yardr-design's Phone section), radius 6.
@@ -111,4 +112,77 @@ struct FieldRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 6)
     }
+}
+
+/// What a note carries, under its words on the bead card and in a
+/// decision's details: each picture a thumbnail no higher than 240
+/// points, as the desktop's, a tap opening it full screen; each page or
+/// file one line by its name, nothing fetched for it. A box stands where
+/// a picture is asked for, and the picture's name where the yard held
+/// none.
+struct NoteFiles: View {
+    var note: CardNote
+    @State private var full: ShownImage?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // By place, not by hash: a note may carry one file twice.
+            ForEach(Array(note.images.enumerated()), id: \.offset) { _, image in
+                thumbnail(image)
+            }
+            ForEach(Array(note.files.enumerated()), id: \.offset) { _, name in
+                Text(name)
+                    .themeType(.meta)
+                    .foregroundStyle(ThemeColor.textSecondary.color)
+            }
+        }
+        .fullScreenCover(item: $full) { image in
+            FullPicture(image: image) { full = nil }
+        }
+    }
+
+    private func thumbnail(_ image: ShownImage) -> some View {
+        let name = image.name.isEmpty ? "Picture" : image.name
+        return Group {
+            if let decoded = image.bytes.flatMap({ UIImage(data: $0) }) {
+                Image(uiImage: decoded)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(maxHeight: 240)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .onTapGesture { full = image }
+                    .accessibilityLabel(name)
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityHint("Opens the picture full size")
+            } else {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(ThemeColor.surfaceSunken.color)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 160)
+                    .overlay {
+                        // Asked and answered with nothing (or with bytes
+                        // no picture): the file's name. While asked for,
+                        // the box alone.
+                        if image.missed || image.bytes != nil {
+                            Text(name)
+                                .themeType(.meta)
+                                .foregroundStyle(ThemeColor.textSecondary.color)
+                                .padding(.horizontal, 12)
+                        }
+                    }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityIdentifier("note-picture")
+    }
+}
+
+extension ShownImage: Identifiable {
+    var id: String { hash }
+}
+
+extension CardNote {
+    /// It carries a picture, a page or a file: `NoteFiles` has something
+    /// to draw under its words.
+    var carriesFiles: Bool { !images.isEmpty || !files.isEmpty }
 }

@@ -145,6 +145,20 @@ final class YardClientTests: XCTestCase {
                 XCTAssertEqual(ask.about.map(\.title), ["Release train"])
                 XCTAssertEqual(ask.about.map(\.stage), ["new"])
             }),
+            // A note's files are read as a letter's are: a note without any
+            // reads as ever, another keeps each file's hash, kind, size and
+            // name, and the name a file has none of reads empty.
+            ("Bead", #"{"bead":"yd-shots"}"#, {
+                let notes = try await laptop.bead("yd-shots").notes
+                XCTAssertEqual(notes.map(\.author), ["builder", "builder"])
+                XCTAssertEqual(notes[0].files, [])
+                XCTAssertEqual(notes[1].text, "The shot.")
+                XCTAssertEqual(notes[1].files, [
+                    BlobRef(hash: Canned.shotHash, kind: "image/png", bytes: 4160, name: "shot.png"),
+                    BlobRef(hash: Canned.pageHash, kind: "text/html; charset=utf-8", bytes: 900, name: "page.html"),
+                    BlobRef(hash: Canned.bareHash, kind: "application/octet-stream", bytes: 12, name: ""),
+                ])
+            }),
             // A depot pack's card: starter's summary, whose files are tied
             // to the sentences that name them and whose texts stand behind
             // them; a summary that folds a file into the closing count and

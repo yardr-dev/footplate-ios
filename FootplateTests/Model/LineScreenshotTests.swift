@@ -7,8 +7,9 @@ import XCTest
 // board (design 3.5, the bead's screenshot): the overview unfiltered
 // and with one stat filtering it, a bead's card with its details,
 // the card while the details are read and when the read is refused,
-// a route map with its landings under the landed station, and the
-// Ask naming a renamed coordinator. Hand-run for the
+// a route map with its landings under the landed station, the
+// Ask naming a renamed coordinator, and the card of a bead whose note
+// carries a picture and a page. Hand-run for the
 // bead note; the gate runs it too, and it only asserts that the screens
 // render non-empty at phone size. The PNGs land in `LINE_SHOTS_DIR`, or
 // the temporary directory's `line-shots` where that names none.
@@ -46,9 +47,14 @@ final class LineScreenshotTests: XCTestCase {
         home.board = try cannedBoard()
 
         let conversation = ConversationModel(mailroom: mailroom, now: { now }, zone: { TimeZone(secondsFromGMT: 0)! })
+        // The pictures of the notes lie in a folder of their own, taken
+        // away with the test.
+        let picturesDir = FileManager.default.temporaryDirectory.appendingPathComponent("note-pictures-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: picturesDir) }
         let line = LineModel(
             followers: { ["": home, "laptop": laptop] }, records: records, pairer: pairer, nav: nav,
-            conversation: conversation, origins: { _ in fake.origin }, now: { now },
+            conversation: conversation, notePictures: NotePictures(pictures: Pictures(directory: picturesDir)),
+            origins: { _ in fake.origin }, now: { now },
             zone: { TimeZone(secondsFromGMT: 0)! }
         )
         home.beads["yd-train"] = trainBead()
@@ -131,6 +137,22 @@ final class LineScreenshotTests: XCTestCase {
         home.up(renamed)
         XCTAssertEqual(line.coordinatorName(for: ""), "mayor")
         try await render(NavigationStack { BeadCardScreen(model: line, route: route) }, scene: scene, to: dir.appendingPathComponent("bead-card-ask-mayor.png"))
+        // A note that carries a picture the yard holds and a page: the
+        // card draws the picture under the note's words, a thumbnail, and
+        // the page as a line with its name. Read again with the board, as
+        // a note written meanwhile is.
+        let png = timetablePNG()
+        home.blobs[sha256Hex(png)] = png
+        home.beads["yd-train"] = pictureBead(png)
+        await line.refresh()
+        let picturesDeadline = ContinuousClock.now + .seconds(10)
+        while line.card(for: route)?.details.notes.last?.images.first?.bytes == nil, ContinuousClock.now <= picturesDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let pictured = try XCTUnwrap(line.card(for: route)?.details.notes.last)
+        XCTAssertEqual(pictured.images, [ShownImage(hash: sha256Hex(png), name: "timetable.png", bytes: png)])
+        XCTAssertEqual(pictured.files, ["report.html"])
+        try await render(NavigationStack { BeadCardScreen(model: line, route: route) }, scene: scene, to: dir.appendingPathComponent("bead-card-note-picture.png"))
         line.leave()
     }
 
@@ -146,6 +168,26 @@ final class LineScreenshotTests: XCTestCase {
                 BeadNote(seq: 2, kind: "note", author: "mckean", text: "Keep the night run; the day run can wait.", at: "2026-10-07T16:20:00Z"),
                 BeadNote(seq: 5, kind: "note", author: "yardmaster", text: "Plan: read the timetable, then move the departure to 02:00.", at: "2026-10-08T09:45:00Z"),
                 BeadNote(seq: 6, kind: "note", author: "train-new", text: "Moved. test: sh .yardr/test @ a1b2c3d: pass, 226 ok, 0 failed", at: "2026-10-08T11:20:00Z"),
+            ]
+        )
+    }
+
+    /// The train again, shorter, its last note carrying `png` and a page.
+    private func pictureBead(_ png: Data) -> Bead {
+        Bead(
+            id: "yd-train", title: "Release train",
+            body: "The release train leaves nightly with what is green.",
+            stage: "new",
+            labels: ["topic:trains", "kind:feat"],
+            notes: [
+                BeadNote(seq: 5, kind: "note", author: "yardmaster", text: "Plan: move the departure to 02:00.", at: "2026-10-08T09:45:00Z"),
+                BeadNote(
+                    seq: 6, kind: "note", author: "train-new", text: "Moved. The timetable now reads:", at: "2026-10-08T11:20:00Z",
+                    files: [
+                        BlobRef(hash: sha256Hex(png), kind: "image/png", bytes: Int64(png.count), name: "timetable.png"),
+                        BlobRef(hash: String(repeating: "dd", count: 32), kind: "text/html; charset=utf-8", bytes: 900, name: "report.html"),
+                    ]
+                ),
             ]
         )
     }

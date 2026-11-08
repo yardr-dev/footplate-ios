@@ -182,6 +182,12 @@ struct CardNote: Equatable, Sendable {
     /// (`14:02` on the day it is, else `27 Oct`).
     var at: String
     var text: String
+    /// The note's pictures (a PNG or a JPEG), drawn under its words. The
+    /// bytes come after the note does: `NotePictures` fills them in.
+    var images: [ShownImage] = []
+    /// What it carries that is no picture, a page or a file, one line
+    /// each by its name; the phone never asks the yard for them.
+    var files: [String] = []
 }
 
 /// What the `Bead` call adds to a card: the bead's labels, its body
@@ -287,6 +293,9 @@ final class LineModel {
     private let pairer: Pairer
     private let nav: Nav
     private let conversation: ConversationModel
+    /// The pictures the cards' notes carry, asked for as each card's
+    /// bead is read.
+    private let notePictures: NotePictures
     /// Each yard's origin, the edge's or the yard's own, whose web
     /// view serves a bead's page.
     private let origins: @MainActor (String) -> String
@@ -303,6 +312,7 @@ final class LineModel {
         pairer: Pairer,
         nav: Nav,
         conversation: ConversationModel,
+        notePictures: NotePictures? = nil,
         origins: @escaping @MainActor (String) -> String,
         now: @escaping @Sendable () -> Date = { Date() },
         zone: @escaping @Sendable () -> TimeZone = { .current }
@@ -312,6 +322,7 @@ final class LineModel {
         self.pairer = pairer
         self.nav = nav
         self.conversation = conversation
+        self.notePictures = notePictures ?? NotePictures()
         self.origins = origins
         self.now = now
         self.zone = zone
@@ -458,7 +469,9 @@ final class LineModel {
             )
         }
         let read = cardReads[route.bead]
-        card?.details = cardDetails(read?.bead, error: read?.error, now: now(), zone: zone())
+        var details = cardDetails(read?.bead, error: read?.error, now: now(), zone: zone())
+        details.notes = details.notes.map(notePictures.shown)
+        card?.details = details
         return card
     }
 
@@ -667,6 +680,7 @@ final class LineModel {
             let bead = try await followed.bead(id)
             guard landed() else { return }
             cardReads[id] = CardRead(bead: bead)
+            notePictures.fetch(bead.notes, from: followed)
         } catch is CancellationError {
             return
         } catch let error as ApiError {
@@ -698,13 +712,21 @@ private struct CardRead {
 /// A card's details from the bead as the yard last answered it: its
 /// labels, its body and its notes, the newest last. The yard serves the
 /// notes oldest first; the order by seq stands where it serves them
-/// otherwise, and notes of one seq keep the order served. With no bead
-/// read yet there is nothing to show but why.
+/// otherwise, and notes of one seq keep the order served. A note's files
+/// are told apart as a letter's are: the images to draw, the rest by name.
+/// With no bead read yet there is nothing to show but why.
 func cardDetails(_ bead: Bead?, error: String?, now: Date, zone: TimeZone) -> CardDetails {
     guard let bead else { return CardDetails(error: error) }
     let notes = bead.notes.enumerated()
         .sorted { ($0.element.seq, $0.offset) < ($1.element.seq, $1.offset) }
-        .map { CardNote(author: $0.element.author, at: stamp($0.element.at, now: now, zone: zone), text: $0.element.text) }
+        .map { entry in
+            let note = entry.element
+            return CardNote(
+                author: note.author, at: stamp(note.at, now: now, zone: zone), text: note.text,
+                images: note.files.filter(isImage).map { ShownImage(hash: $0.hash, name: $0.name) },
+                files: note.files.filter { !isImage($0) }.map(fileLine)
+            )
+        }
     return CardDetails(read: true, labels: bead.labels, body: bead.body, notes: notes, error: error)
 }
 

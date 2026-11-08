@@ -22,6 +22,9 @@ final class LineModelTests: XCTestCase {
     private var pairer: Pairer!
     private var conversation: ConversationModel!
     private var model: LineModel!
+    /// Where the pictures of the cards' notes are kept, apart from the
+    /// phone's own.
+    private var picturesDir: URL!
 
     override func setUp() {
         super.setUp()
@@ -42,15 +45,19 @@ final class LineModelTests: XCTestCase {
             pictures: Pictures(directory: FileManager.default.temporaryDirectory.appendingPathComponent("pictures-\(UUID().uuidString)")),
             now: { now }, zone: { TimeZone(secondsFromGMT: 0)! }
         )
+        picturesDir = FileManager.default.temporaryDirectory.appendingPathComponent("note-pictures-\(UUID().uuidString)")
         model = LineModel(followers: { [home, laptop] in
             ["": home!, "laptop": laptop!]
-        }, records: records, pairer: pairer, nav: nav, conversation: conversation, origins: { _ in "https://edge.example" },
+        }, records: records, pairer: pairer, nav: nav, conversation: conversation,
+        notePictures: NotePictures(pictures: Pictures(directory: picturesDir)),
+        origins: { _ in "https://edge.example" },
         now: { now }, zone: { TimeZone(secondsFromGMT: 0)! })
     }
 
     override func tearDown() {
         model.leave()
         conversation.leave()
+        try? FileManager.default.removeItem(at: picturesDir)
         model = nil
         conversation = nil
         pairer = nil
@@ -580,8 +587,19 @@ final class LineModelTests: XCTestCase {
         try await waitRead()
 
         // The card stands on the board's facts while the bead is read
-        // for its details.
-        home.beads["yd-train"] = trainBead()
+        // for its details. The last note carries files: a picture the
+        // yard holds, one it holds no more, a page, a page and a file
+        // with no name.
+        var train = trainBead()
+        train.notes[2].files = [
+            BlobRef(hash: shotHash, kind: "image/png", bytes: Int64(shotBytes.count), name: "shot.png"),
+            BlobRef(hash: goneHash, kind: "image/jpeg", bytes: 70, name: "gone.jpg"),
+            BlobRef(hash: String(repeating: "dd", count: 32), kind: "text/html; charset=utf-8", bytes: 900, name: "report.html"),
+            BlobRef(hash: String(repeating: "ee", count: 32), kind: "text/html; charset=utf-8", bytes: 900),
+            BlobRef(hash: String(repeating: "ff", count: 32), kind: "application/octet-stream", bytes: 12),
+        ]
+        home.beads["yd-train"] = train
+        home.blobs[shotHash] = shotBytes
         home.holdBeadReads("yd-train", count: 1)
         model.openBead("yd-train")
         let route = BeadRoute(yard: "", bead: "yd-train")
@@ -595,6 +613,12 @@ final class LineModelTests: XCTestCase {
         try await waitFor("the card's details") { [model] in model?.card(for: route)?.details.read == true }
         model.openBead("yd-train")
         XCTAssertEqual(nav.linesPath, [.bead(route)], "opening what is pushed pushes nothing more")
+        // The pictures come after the details do, each asked for: the
+        // card shows the note's pictures as boxes until they have.
+        try await waitFor("the note's pictures") { [model] in
+            model?.card(for: route)?.details.notes.last?.images.allSatisfy { $0.bytes != nil || $0.missed } == true
+        }
+        try await waitFor("the bead read again") { [home] in (home?.beadCompleted.count ?? 0) >= 2 }
 
         let card = try XCTUnwrap(model.card(for: route))
         // The bead's details as the yard answered: its labels and body,
@@ -610,9 +634,20 @@ final class LineModelTests: XCTestCase {
             [
                 CardNote(author: "mckean", at: "7 Oct", text: "first, written yesterday"),
                 CardNote(author: "yardmaster", at: "09:45", text: "second, written today"),
-                CardNote(author: "train-new", at: "09:46", text: "second again, of one seq"),
+                CardNote(
+                    author: "train-new", at: "09:46", text: "second again, of one seq",
+                    images: [
+                        ShownImage(hash: shotHash, name: "shot.png", bytes: shotBytes),
+                        ShownImage(hash: goneHash, name: "gone.jpg", missed: true),
+                    ],
+                    files: ["report.html", "Page", "File"]
+                ),
             ]
         )
+        // A picture is asked for once, though the bead was read twice;
+        // only an image is asked for at all.
+        XCTAssertEqual(home.blobAsked.filter { $0 == shotHash }.count, 1)
+        XCTAssertTrue(home.blobAsked.allSatisfy { [shotHash, goneHash].contains($0) })
         XCTAssertEqual(card.bead.id, "yd-train")
         XCTAssertEqual(card.bead.title, "Release train")
         XCTAssertEqual(card.line, "yard · default")
@@ -1301,6 +1336,12 @@ final class LineModelTests: XCTestCase {
             unassigned: [FlowBead(bead: "yd-crm", title: "Read the CRM")]
         )
     }
+
+    /// A picture a note carries and the yard holds, and the hash of one it
+    /// holds no more.
+    private let shotBytes = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3])
+    private var shotHash: String { sha256Hex(shotBytes) }
+    private let goneHash = String(repeating: "cc", count: 32)
 
     /// What the fake yard answers for yd-train: its notes served out of
     /// seq order, two of them of one seq.

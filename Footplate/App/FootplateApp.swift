@@ -119,11 +119,18 @@ final class AppServices {
         self.mailroom = mailroom
         let conversation = ConversationModel(mailroom: mailroom)
         self.conversationModel = conversation
+        // The bead card and a decision's details share the pictures
+        // their notes carry.
+        let notePictures = NotePictures()
         self.decisionsModel = DecisionsModel(records: records, mailroom: mailroom, nav: nav)
-        self.decisionModel = DecisionModel(mailroom: mailroom, records: records, nav: nav, conversation: conversation, unlock: LAUnlockPrompt())
+        self.decisionModel = DecisionModel(
+            mailroom: mailroom, records: records, nav: nav, conversation: conversation,
+            unlock: LAUnlockPrompt(), notePictures: notePictures
+        )
         self.inboxModel = InboxModel(pairer: pairer, records: records, followers: { [:] }, mailroom: mailroom, nav: nav)
         self.lineModel = LineModel(
             followers: { [:] }, records: records, pairer: pairer, nav: nav, conversation: conversation,
+            notePictures: notePictures,
             origins: { [records, edge] name in
                 let own = records.kept.yards.first { $0.name == name }?.origin ?? ""
                 return own.isEmpty ? edge.origin : own

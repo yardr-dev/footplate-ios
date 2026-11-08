@@ -30,11 +30,20 @@ enum Canned {
         "Flows": flowsJSON,
     ]
 
+    /// The hashes of the files `yd-shots`' note carries.
+    static let shotHash = String(repeating: "5a", count: 32)
+    static let pageHash = String(repeating: "7b", count: 32)
+    static let bareHash = String(repeating: "9c", count: 32)
+
     /// `Bead` by the bead it names; any other bead is answered with
     /// the one of `replies`.
     static let beads: [String: String] = [
         "yd-map": #"{"result": {"id": "yd-map", "title": "Who wrote in", "body": "", "stage": "new", "labels": [], "notes": [], "asks": [{"ask": 7, "to": "jo", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "question": "Who is U024BE7LH on slack?", "context": ["a delivery arrived from U024BE7LH in C1, who maps to nobody."], "options": [{"label": "jo", "consequence": "messages from U024BE7LH count as jo's"}, {"label": "Someone new", "consequence": "pick this and write the new user's name with your answer"}, {"label": "Nobody — ignore this sender", "consequence": "ignores U024BE7LH in slack: their messages are dropped, and no further card is offered"}, {"label": "You decide", "consequence": "leave it to yardmaster"}], "recommend": 1, "why": "jo wrote from this workspace before", "about": [], "state": "open", "identity": {"source": "slack", "sender": "U024BE7LH", "channel": "C1"}, "weight": [{"class": "as-user", "line": "writes who a sender is: U024BE7LH on slack becomes a user of the yard"}]}]}}"#,
         "yd-tidy": #"{"result": {"id": "yd-tidy", "title": "Tidy the sidings", "body": "", "stage": "new", "labels": [], "notes": [], "asks": [{"ask": 9, "to": "jo", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "question": "Remove the merged worktrees now?", "context": ["12 worktrees belong to landed beads."], "options": [], "state": "open", "run": {"argv": ["yardr", "depot", "tidy", "--merged"], "command": "yardr depot tidy --merged", "description": "removes the worktrees of landed beads", "does": ["deletes 12 directories under ~/.yardr/worktrees"]}}]}}"#,
+        // A bead whose notes carry files, as the yard serves a note's: a
+        // note with none has no `files`; another carries a picture, a page
+        // and a file with no name.
+        "yd-shots": shots,
         // A depot pack's card, as a summary and as a whole, and a summary
         // that holds what starter's does not (PackCards).
         "yd-pack": PackCards.starter,
@@ -51,6 +60,12 @@ enum Canned {
         "yd-key": #"{"result": {"id": "yd-key", "title": "Claude Code API key", "body": "", "stage": "new", "labels": [], "notes": [], "asks": [{"ask": 22, "to": "jo", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "question": "What is the API key Claude Code runs with?", "context": ["yardmaster is at Claude Code's login screen."], "options": [], "state": "open", "secret": {"source": "", "env": ["ANTHROPIC_API_KEY"], "crew": "yardmaster", "harness": "claude", "line": "a secret: ANTHROPIC_API_KEY, the API key Claude Code runs with, asked for crew member yardmaster; it is read by every Claude Code session that burns the operator's login, from its next start"}, "weight": [{"class": "credential", "line": "ANTHROPIC_API_KEY, the API key Claude Code runs with, asked for crew member yardmaster"}]}]}}"#,
         "yd-own": #"{"result": {"id": "yd-own", "title": "hal's Claude Code sign-in", "body": "", "stage": "new", "labels": [], "notes": [], "asks": [{"ask": 36, "to": "hal", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "question": "Paste what Claude Code's sign-in page gave you", "context": ["Sign in on this page: https://claude.ai/oauth/authorize?code=true&state=Qw9z"], "options": [], "state": "open", "secret": {"source": "", "env": ["INPUT"], "login": "claude-ab13", "as": "hal", "line": "a secret: INPUT, for hal's waiting login claude-ab13"}, "weight": [{"class": "credential", "line": "INPUT, for hal's waiting login claude-ab13"}]}]}}"#,
     ]
+
+    /// `yd-shots`: written here and not as a literal of the table, which
+    /// `scripts/fake-edge` serves as it stands, with the hashes unresolved.
+    private static var shots: String {
+        #"{"result": {"id": "yd-shots", "title": "Shots on the card", "body": "", "stage": "new", "labels": [], "notes": [{"seq": 1, "kind": "note", "author": "builder", "text": "Nothing attached.", "at": "2026-10-08T09:30:00Z"}, {"seq": 2, "kind": "note", "author": "builder", "text": "The shot.", "at": "2026-10-08T09:40:00Z", "files": [{"hash": "\#(shotHash)", "type": "image/png", "bytes": 4160, "name": "shot.png"}, {"hash": "\#(pageHash)", "type": "text/html; charset=utf-8", "bytes": 900, "name": "page.html"}, {"hash": "\#(bareHash)", "type": "application/octet-stream", "bytes": 12}]}], "asks": []}}"#
+    }
 
     private static var flowsJSON: String {
         let backlog = (1...12).map { #"{"bead": "yd-draft-\#($0)", "title": "Draft \#($0)", "expected": "—", "working": false}"# }

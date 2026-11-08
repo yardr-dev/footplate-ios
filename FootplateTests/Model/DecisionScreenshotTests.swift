@@ -7,8 +7,9 @@ import XCTest
 // fake-followed state (design 3.5, the bead's screenshots): the
 // decisions list, a routine card with its context, its details rows
 // (its own bead's first, then the bead it is about) and its Ask about
-// this, the card's own bead expanded to its description and notes, the
-// other bead expanded the same, the conversation Ask about this opens,
+// this, the card's own bead expanded to its description and notes, one
+// of them carrying a picture, the other bead expanded the same, the
+// conversation Ask about this opens,
 // a weighty card with its own row shut, a harness login's code card
 // with its sign-in link, an API key's card, and starter's summary card
 // with the text of one of its files.
@@ -43,14 +44,25 @@ final class DecisionScreenshotTests: XCTestCase {
             mailroom: mailroom, nav: nav,
             now: { now }, zone: { TimeZone(secondsFromGMT: 0)! }
         )
-        home.beads = beads().merging(["yd-pack": try packBead(), "yd-bars": barsChange()]) { $1 }
+        // The card's own bead has a note that carries a picture the yard
+        // holds; its pictures lie in a folder of their own, taken away with
+        // the test.
+        let png = timetablePNG()
+        home.blobs[sha256Hex(png)] = png
+        home.beads = beads(carrying: png).merging(["yd-pack": try packBead(), "yd-bars": barsChange()]) { $1 }
+        let picturesDir = FileManager.default.temporaryDirectory.appendingPathComponent("note-pictures-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: picturesDir) }
+        let notePictures = NotePictures(pictures: Pictures(directory: picturesDir))
         home.up(loaded())
         let decisions = DecisionsModel(records: records, mailroom: mailroom, nav: nav, now: { now }, zone: { TimeZone(secondsFromGMT: 0)! })
         let conversation = ConversationModel(mailroom: mailroom, now: { now }, zone: { TimeZone(secondsFromGMT: 0)! })
-        let decision = DecisionModel(mailroom: mailroom, records: records, nav: nav, conversation: conversation, unlock: FakeUnlock(), now: { now }, zone: { TimeZone(secondsFromGMT: 0)! })
+        let decision = DecisionModel(
+            mailroom: mailroom, records: records, nav: nav, conversation: conversation, unlock: FakeUnlock(),
+            notePictures: notePictures, now: { now }, zone: { TimeZone(secondsFromGMT: 0)! }
+        )
         let line = LineModel(
             followers: { ["": home, "laptop": laptop] }, records: records, pairer: pairer, nav: nav,
-            conversation: conversation, origins: { _ in fake.origin }, now: { now }
+            conversation: conversation, notePictures: notePictures, origins: { _ in fake.origin }, now: { now }
         )
 
         let dir = ProcessInfo.processInfo.environment["DECISION_SHOTS_DIR"]
@@ -82,6 +94,13 @@ final class DecisionScreenshotTests: XCTestCase {
         await decision.toggleDetails("yd-links")
         XCTAssertEqual(decision.state.details.first?.expanded, true)
         XCTAssertEqual(decision.state.details.first?.notes.map(\.author), ["builder", "yardmaster"])
+        // The second note's picture is asked for as the card is read and
+        // is drawn under its words once it has come.
+        let picturesDeadline = ContinuousClock.now + .seconds(10)
+        while decision.state.details.first?.notes.last?.images.first?.bytes == nil, ContinuousClock.now <= picturesDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(decision.state.details.first?.notes.last?.images, [ShownImage(hash: sha256Hex(png), name: "timetable.png", bytes: png)])
         try await render(
             DecisionScreen(model: decision, yard: "", bead: "yd-links", ask: 3),
             scene: scene, to: dir.appendingPathComponent("own.png"), height: 1300
@@ -307,7 +326,7 @@ final class DecisionScreenshotTests: XCTestCase {
         )
     }
 
-    private func beads() -> [String: Bead] {
+    private func beads(carrying png: Data) -> [String: Bead] {
         [
             "yd-links": Bead(
                 id: "yd-links", title: "Move the links",
@@ -315,7 +334,10 @@ final class DecisionScreenshotTests: XCTestCase {
                 stage: "new",
                 notes: [
                     BeadNote(seq: 1, kind: "note", author: "builder", text: "The test passed on a copy of the links file.", at: "2026-10-08T09:30:00Z"),
-                    BeadNote(seq: 2, kind: "note", author: "yardmaster", text: "64 links still point at the old source.", at: "2026-10-08T10:15:00Z"),
+                    BeadNote(
+                        seq: 2, kind: "note", author: "yardmaster", text: "64 links still point at the old source.", at: "2026-10-08T10:15:00Z",
+                        files: [BlobRef(hash: sha256Hex(png), kind: "image/png", bytes: Int64(png.count), name: "timetable.png")]
+                    ),
                 ],
                 asks: [
                     BeadAsk(

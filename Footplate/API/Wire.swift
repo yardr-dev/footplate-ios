@@ -164,7 +164,7 @@ struct CrewMember: Equatable, Sendable {
     var loginScreen: Bool = false
 }
 
-/// A file a letter carries; the phone says how many and shows none.
+/// A file a letter or a bead's note carries.
 struct BlobRef: Equatable, Sendable {
     var hash: String = ""
     var kind: String = ""
@@ -477,6 +477,9 @@ struct BeadNote: Equatable, Sendable {
     var author: String = ""
     var text: String = ""
     var at: String = ""
+    /// The files the note carries, as a letter's `files`; absent on a
+    /// note without any.
+    var files: [BlobRef] = []
 }
 
 /// One bead whole: body, stage, labels, notes and its asks.
@@ -1026,7 +1029,7 @@ extension BeadAsk: Codable {
 }
 
 extension BeadNote: Codable {
-    enum CodingKeys: String, CodingKey { case seq, kind, author, text, at }
+    enum CodingKeys: String, CodingKey { case seq, kind, author, text, at, files }
     init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         seq = box.int64(.seq)
@@ -1034,6 +1037,7 @@ extension BeadNote: Codable {
         author = box.string(.author)
         text = box.string(.text)
         at = box.string(.at)
+        files = box.list(.files, of: BlobRef.self)
     }
 }
 

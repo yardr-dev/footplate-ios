@@ -377,7 +377,7 @@ struct DecisionScreen: View {
 
     /// One note of the bead a details row opened: who wrote it over its
     /// words, selectable with their web addresses links as the
-    /// description's are.
+    /// description's are, then the pictures and files it carries.
     private func noteRow(_ note: CardNote) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(note.author)
@@ -387,6 +387,10 @@ struct DecisionScreen: View {
                 .themeType(.body)
                 .foregroundStyle(ThemeColor.textPrimary.color)
                 .textSelection(.enabled)
+            if note.carriesFiles {
+                NoteFiles(note: note)
+                    .padding(.top, 6)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, 8)

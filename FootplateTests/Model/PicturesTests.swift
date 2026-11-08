@@ -128,6 +128,52 @@ final class PicturesTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appendingPathComponent(hashA).path))
     }
 
+    // A bead's notes keep their pictures as the conversation's are kept:
+    // each asked for once with the yard's blob call, drawn once it has
+    // come, found on disk by a later launch; a page is never asked for, and
+    // a miss is asked for again with the next read, which heals it.
+    func testANotesPicturesAreAskedForOnceKeptOnDiskAndAMissIsAskedAgain() async throws {
+        let yard = FakeFollowed()
+        yard.blobs[hashA] = pngData
+        let hashB = sha256Hex(jpegData)
+        let files = [
+            BlobRef(hash: hashA, kind: "image/png", bytes: 11, name: "a.png"),
+            BlobRef(hash: hashB, kind: "image/jpeg", bytes: 7, name: "b.jpg"),
+            BlobRef(hash: String(repeating: "dd", count: 32), kind: "text/html; charset=utf-8", bytes: 9, name: "page.html"),
+        ]
+        let notes = [BeadNote(seq: 1, author: "builder", text: "Shots.", files: files)]
+        let note = cardDetails(Bead(id: "yd-a", notes: notes), error: nil, now: parseInstant("2026-10-08T10:11:00Z")!, zone: TimeZone(secondsFromGMT: 0)!).notes[0]
+        let pictures = NotePictures(pictures: Pictures(directory: dir))
+        // Nothing asked yet: the pictures are boxes, the page a line.
+        XCTAssertEqual(pictures.shown(note).images, [ShownImage(hash: hashA, name: "a.png"), ShownImage(hash: hashB, name: "b.jpg")])
+        XCTAssertEqual(note.files, ["page.html"])
+
+        // Asked again while the first is out, it is asked for once; the
+        // yard holds the first and not the second.
+        pictures.fetch(notes, from: yard)
+        pictures.fetch(notes, from: yard)
+        try await waitFor("both answers") { pictures.shown(note).images.allSatisfy { $0.bytes != nil || $0.missed } }
+        XCTAssertEqual(pictures.shown(note).images, [
+            ShownImage(hash: hashA, name: "a.png", bytes: pngData),
+            ShownImage(hash: hashB, name: "b.jpg", missed: true),
+        ])
+        XCTAssertEqual(yard.blobAsked.sorted(), [hashA, hashB].sorted())
+
+        // The next read asks again for the miss alone; the yard holds it
+        // now, and it is drawn.
+        yard.blobs[hashB] = jpegData
+        pictures.fetch(notes, from: yard)
+        try await waitFor("the miss healed") { pictures.shown(note).images.last?.bytes != nil }
+        XCTAssertEqual(pictures.shown(note).images.last, ShownImage(hash: hashB, name: "b.jpg", bytes: jpegData))
+        XCTAssertEqual(yard.blobAsked.sorted(), [hashA, hashB, hashB].sorted())
+
+        // A later launch finds both on disk and asks the yard for none.
+        let later = NotePictures(pictures: Pictures(directory: dir))
+        later.fetch(notes, from: yard)
+        try await waitFor("both from disk") { later.shown(note).images.allSatisfy { $0.bytes != nil } }
+        XCTAssertEqual(yard.blobAsked.count, 3)
+    }
+
     func testAnImageIsAPngOrAJpegByItsKindAPictureByItsMagic() {
         XCTAssertTrue(isImage(BlobRef(hash: "a", kind: "image/png", bytes: 1, name: "a.png")))
         XCTAssertTrue(isImage(BlobRef(hash: "a", kind: "image/jpeg", bytes: 1, name: "a.jpg")))
@@ -139,5 +185,16 @@ final class PicturesTests: XCTestCase {
         XCTAssertFalse(isPicture(Data("words".utf8)))
         XCTAssertFalse(isPicture(Data([0x89, 0x50])))
         XCTAssertFalse(isPicture(Data()))
+    }
+
+    private func waitFor(_ what: String, _ match: @MainActor () -> Bool) async throws {
+        let deadline = ContinuousClock.now + .seconds(10)
+        while !match() {
+            if ContinuousClock.now > deadline {
+                XCTFail("timed out waiting for \(what)")
+                throw TestTimeout(what: what)
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
     }
 }

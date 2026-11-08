@@ -392,9 +392,9 @@ struct ConversationScreen: View {
     }
 }
 
-/// One picture full screen over the conversation: pinch to
-/// zoom, a tap shuts it.
-private struct FullPicture: View {
+/// One picture full screen, over the conversation or, as a note's
+/// opens it, over the screen: pinch to zoom, a tap shuts it.
+struct FullPicture: View {
     var image: ShownImage
     var onClose: () -> Void
     @State private var scale: CGFloat = 1

@@ -66,15 +66,20 @@ final class Demo {
         let mailroom = Mailroom()
         self.mailroom = mailroom
         folder = FileManager.default.temporaryDirectory.appendingPathComponent("demo-\(UUID().uuidString)", isDirectory: true)
-        let conversation = ConversationModel(mailroom: mailroom, pictures: Pictures(directory: folder))
+        let pictures = Pictures(directory: folder)
+        let conversation = ConversationModel(mailroom: mailroom, pictures: pictures)
         self.conversation = conversation
+        let notePictures = NotePictures(pictures: pictures)
         decisions = DecisionsModel(records: records, mailroom: mailroom, nav: nav)
-        decision = DecisionModel(mailroom: mailroom, records: records, nav: nav, conversation: conversation, unlock: LAUnlockPrompt())
+        decision = DecisionModel(
+            mailroom: mailroom, records: records, nav: nav, conversation: conversation,
+            unlock: LAUnlockPrompt(), notePictures: notePictures
+        )
         inbox = InboxModel(pairer: pairer, records: records, followers: { [:] }, mailroom: mailroom, nav: nav, leave: leave)
         // No web view: a demo bead has no page to open.
         line = LineModel(
             followers: { [:] }, records: records, pairer: pairer, nav: nav, conversation: conversation,
-            origins: { _ in "" }
+            notePictures: notePictures, origins: { _ in "" }
         )
         pair = PairModel(pairer: pairer, records: records, nav: nav)
         signIn = SignInModel(pairer: pairer, records: records, nav: nav)

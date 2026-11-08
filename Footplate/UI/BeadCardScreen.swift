@@ -174,7 +174,8 @@ struct BeadCardScreen: View {
     }
 
     /// One note: who wrote it and when, over its words, which are
-    /// selectable with their addresses links.
+    /// selectable with their addresses links, then the pictures and
+    /// files it carries.
     private func noteRow(_ note: CardNote) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 8) {
@@ -191,6 +192,10 @@ struct BeadCardScreen: View {
                 .themeType(.body)
                 .foregroundStyle(ThemeColor.textPrimary.color)
                 .textSelection(.enabled)
+            if note.carriesFiles {
+                NoteFiles(note: note)
+                    .padding(.top, 6)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, 12)

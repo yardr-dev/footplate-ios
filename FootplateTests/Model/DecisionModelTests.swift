@@ -27,11 +27,15 @@ final class DecisionModelTests: XCTestCase {
     private var mailroom: Mailroom!
     private var conversation: ConversationModel!
     private var unlock: FakeUnlock!
+    /// Where the pictures of the details rows' notes are kept, apart from
+    /// the phone's own.
+    private var picturesDir: URL!
 
     private let fixedNow = parseInstant("2026-10-08T11:30:00Z")!
 
     override func setUp() async throws {
         try await super.setUp()
+        picturesDir = FileManager.default.temporaryDirectory.appendingPathComponent("note-pictures-\(UUID().uuidString)")
         fake = FakeYard()
         clock = TestClock()
         unlock = FakeUnlock()
@@ -56,6 +60,7 @@ final class DecisionModelTests: XCTestCase {
         follower?.close()
         yards?.close()
         fake?.closeStreams()
+        try? FileManager.default.removeItem(at: picturesDir)
         try await super.tearDown()
     }
 
@@ -63,6 +68,7 @@ final class DecisionModelTests: XCTestCase {
         let now = fixedNow
         return DecisionModel(
             mailroom: mailroom, records: records, nav: nav, conversation: conversation, unlock: unlock,
+            notePictures: NotePictures(pictures: Pictures(directory: picturesDir)),
             now: { now }, zone: { TimeZone(secondsFromGMT: 0)! }
         )
     }
@@ -720,6 +726,22 @@ final class DecisionModelTests: XCTestCase {
     }
 
     func testADetailsRowExpandsToTheBeadsDescriptionAndNotesAndPickStillWorks() async throws {
+        // The card's own bead carries a picture the yard holds and a text
+        // file; the bead the ask is about carries a different picture
+        // which the yard holds only after a retry.
+        let png = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3])
+        let shot = sha256Hex(png)
+        let otherPNG = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 4, 5, 6])
+        let otherHash = sha256Hex(otherPNG)
+        fake.setBlob(yardName: "laptop", hash: shot, bytes: png)
+        let canned = try XCTUnwrap(Canned.replies["Bead"])
+        let ownFiles = #"[{"hash": "\#(shot)", "type": "image/png", "bytes": 11, "name": "links.png"}, {"hash": "\#(String(repeating: "ab", count: 32))", "type": "text/plain", "bytes": 4, "name": "notes.txt"}]"#
+        let own = canned.replacingOccurrences(
+            of: #""at": "2026-10-08T09:30:00Z"}], "asks""#,
+            with: #""at": "2026-10-08T09:30:00Z", "files": \#(ownFiles)}], "asks""#
+        )
+        XCTAssertNotEqual(own, canned)
+        fake.nextFor(yard: "laptop", path: "/user/call/Bead", FakeResponse.json(200, own))
         let card = await opened("yd-links", 3)
         // The card's own bead is the first row and the bead the ask is
         // about the second, both shut.
@@ -735,6 +757,13 @@ final class DecisionModelTests: XCTestCase {
         XCTAssertEqual(shut[0].body, "The links file declares the new source.")
         XCTAssertEqual(shut[0].notes.map(\.author), ["yardmaster"])
         XCTAssertEqual(shut[0].notes.map(\.text), ["the test passed on a copy"])
+        // Its note's picture is asked for as the card is read, and drawn
+        // once it has come; the text file is a line with its name.
+        let pictured = await waitFor("the own row's picture", state: { card.state.details[0].notes }) {
+            $0.first?.images.first?.bytes != nil
+        }
+        XCTAssertEqual(pictured[0].images, [ShownImage(hash: shot, name: "links.png", bytes: png)])
+        XCTAssertEqual(pictured[0].files, ["notes.txt"])
         XCTAssertFalse(shut[0].loading)
         XCTAssertNil(shut[0].error)
         let reads = calls("Bead").count
@@ -747,7 +776,7 @@ final class DecisionModelTests: XCTestCase {
         let body = "The release train leaves nightly. See https://example.com/train for the timetable."
         // The yard serves the notes out of order: the row stands them
         // newest last, as the bead card does.
-        let notes = #"[{"seq": 2, "kind": "note", "author": "reviewer", "text": "Checked the timetable at https://example.com/timetable.", "at": "2026-10-08T10:00:00Z"}, {"seq": 1, "kind": "note", "author": "builder", "text": "Started on the train.", "at": "2026-10-08T09:30:00Z"}]"#
+        let notes = #"[{"seq": 2, "kind": "note", "author": "reviewer", "text": "Checked the timetable at https://example.com/timetable.", "at": "2026-10-08T10:00:00Z", "files": [{"hash": "\#(otherHash)", "type": "image/png", "bytes": 11, "name": "timetable.png"}]}, {"seq": 1, "kind": "note", "author": "builder", "text": "Started on the train.", "at": "2026-10-08T09:30:00Z"}]"#
         fake.nextFor(yard: "laptop", path: "/user/call/Bead", FakeResponse.json(200, #"{"result": {"id": "yd-train", "title": "Release train", "body": "\#(body)", "stage": "new", "labels": [], "notes": \#(notes), "asks": []}}"#))
         await card.toggleDetails("yd-train")
         let open = card.state.details
@@ -758,6 +787,22 @@ final class DecisionModelTests: XCTestCase {
         XCTAssertEqual(open[1].notes.map(\.author), ["builder", "reviewer"])
         XCTAssertEqual(open[1].notes.map(\.text), ["Started on the train.", "Checked the timetable at https://example.com/timetable."])
         XCTAssertEqual(calls("Bead").filter { $0["bead"] as? String == "yd-train" }.count, 1)
+        // The picture misses on its first read. Closing and reopening the
+        // cached row asks again without reading the bead again.
+        let missed = await waitFor("the second row's missing picture", state: { card.state.details[1].notes }) {
+            $0.last?.images.first?.missed == true
+        }
+        XCTAssertEqual(missed[1].images, [ShownImage(hash: otherHash, name: "timetable.png", missed: true)])
+        await card.toggleDetails("yd-train")
+        fake.setBlob(yardName: "laptop", hash: otherHash, bytes: otherPNG)
+        await card.toggleDetails("yd-train")
+        let drawn = await waitFor("the second row's picture", state: { card.state.details[1].notes }) {
+            $0.last?.images.first?.bytes != nil
+        }
+        XCTAssertEqual(drawn[1].images, [ShownImage(hash: otherHash, name: "timetable.png", bytes: otherPNG)])
+        XCTAssertEqual(drawn[0], CardNote(author: "builder", at: "09:30", text: "Started on the train."))
+        XCTAssertEqual(fake.allRequests.filter { $0.path == "/user/blobs/\(shot)" }.count, 1)
+        XCTAssertEqual(fake.allRequests.filter { $0.path == "/user/blobs/\(otherHash)" }.count, 2)
         // The web address in the description is a link, as the
         // context's are, and so is the one in a note.
         XCTAssertEqual(linked(body).runs.compactMap { $0.link }, [try XCTUnwrap(URL(string: "https://example.com/train"))])

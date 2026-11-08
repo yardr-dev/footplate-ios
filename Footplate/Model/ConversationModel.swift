@@ -32,7 +32,8 @@ func copyableMessage(_ letter: Shown) -> String? {
     letter.text.isEmpty ? nil : letter.text
 }
 
-/// One image of a letter: drawn under its text, opened full on tap.
+/// One image of a letter or of a bead's note: drawn under its text,
+/// opened full on tap.
 struct ShownImage: Equatable, Sendable {
     var hash: String
     var name: String
@@ -89,8 +90,8 @@ private struct ConversationKey: Hashable {
 }
 
 /// What asking for a picture answered: the bytes, or that there
-/// are none.
-private enum Picture: Equatable {
+/// are none. A bead's notes keep their pictures' answers the same way.
+enum Picture: Equatable {
     case got(Data)
     case missed
 }

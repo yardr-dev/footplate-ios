@@ -3,13 +3,21 @@ import Foundation
 
 // The pictures a conversation shows: which files are images, and the
 // bytes fetched for them, kept by hash so a scroll back does not ask
-// the edge again (after Android's model/Pictures.kt).
+// the edge again (after Android's model/Pictures.kt). A bead's notes
+// carry files too: their pictures are fetched and kept the same way.
 
 /// Whether the file is an image the phone draws: a PNG or a JPEG,
 /// what its kind says, as the yard told it apart. Anything else is a
 /// page or a file, which the phone never asks the yard for.
 func isImage(_ file: BlobRef) -> Bool {
     file.kind == "image/png" || file.kind == "image/jpeg"
+}
+
+/// The line a note says a file that is no image by: its name, or what
+/// it is where the sender gave none (a paste has no name).
+func fileLine(_ file: BlobRef) -> String {
+    if !file.name.isEmpty { return file.name }
+    return file.kind.hasPrefix("text/html") ? "Page" : "File"
 }
 
 /// Whether the bytes are a PNG or a JPEG, by their magic: what the
@@ -134,5 +142,72 @@ final class Pictures: @unchecked Sendable {
         try? FileManager.default.setAttributes(privateDirectory, ofItemAtPath: directory.path)
         try? bytes.write(to: file, options: .atomic)
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+    }
+}
+
+/// The pictures the notes of beads show, on the bead card and in a
+/// decision's details: asked for with the yard's blob call through the
+/// same cache the conversation's lie in, once each, and kept by hash so
+/// a card opened again draws them at once. The two screens' models share
+/// one. A note's page or file is said by its name and never asked for.
+@MainActor
+@Observable
+final class NotePictures {
+    private let pictures: Pictures
+    private var fetched: [String: Picture] = [:]
+    /// The hashes with a request out: one is asked for once at a time.
+    private var fetching: Set<String> = []
+
+    init(pictures: Pictures? = nil) {
+        self.pictures = pictures ?? Pictures.live()
+    }
+
+    /// Asks `followed` for every image of `notes` it has not answered,
+    /// and for those it missed again: a miss is a placeholder, not an
+    /// error, and the next read of the details tries once more.
+    func fetch(_ notes: [BeadNote], from followed: any Followed) {
+        let images = notes.flatMap(\.files).filter(isImage)
+            .map { ShownImage(hash: $0.hash, name: $0.name) }
+        fetch(images, from: followed)
+    }
+
+    /// Retries any missed images in notes already read into a details
+    /// row. A row keeps its text while open, but reopening it reads its
+    /// pictures again.
+    func fetch(_ images: [ShownImage], from followed: any Followed) {
+        for image in images {
+            fetch(hash: image.hash, from: followed)
+        }
+    }
+
+    /// `note` with its pictures as asked for so far: the bytes where they
+    /// have come, a miss where the yard held none, and as they were where
+    /// a request is still out.
+    func shown(_ note: CardNote) -> CardNote {
+        var note = note
+        note.images = note.images.map { image in
+            switch fetched[image.hash] {
+            case .got(let bytes): return ShownImage(hash: image.hash, name: image.name, bytes: bytes)
+            case .missed: return ShownImage(hash: image.hash, name: image.name, missed: true)
+            case nil: return image
+            }
+        }
+        return note
+    }
+
+    private func fetch(hash: String, from followed: any Followed) {
+        if case .got = fetched[hash] { return }
+        guard fetching.insert(hash).inserted else { return }
+        let pictures = self.pictures
+        Task { @MainActor in
+            let bytes: Data?
+            do {
+                bytes = try await pictures.bytes(hash: hash) { try await followed.blob(hash: hash) }
+            } catch {
+                bytes = nil
+            }
+            fetching.remove(hash)
+            fetched[hash] = bytes.map { .got($0) } ?? .missed
+        }
     }
 }

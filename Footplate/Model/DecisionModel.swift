@@ -247,6 +247,9 @@ final class DecisionModel {
     private let nav: Nav
     private let conversation: ConversationModel
     private let unlock: any UnlockPrompt
+    /// The pictures the details rows' notes carry, asked for as each
+    /// bead is read.
+    private let notePictures: NotePictures
     private let now: @Sendable () -> Date
     private let zone: @Sendable () -> TimeZone
     private var boardsObserver: UUID? = nil
@@ -263,6 +266,7 @@ final class DecisionModel {
         nav: Nav,
         conversation: ConversationModel,
         unlock: any UnlockPrompt,
+        notePictures: NotePictures? = nil,
         now: @escaping @Sendable () -> Date = { Date() },
         zone: @escaping @Sendable () -> TimeZone = { .current }
     ) {
@@ -271,6 +275,7 @@ final class DecisionModel {
         self.nav = nav
         self.conversation = conversation
         self.unlock = unlock
+        self.notePictures = notePictures ?? NotePictures()
         self.now = now
         self.zone = zone
         boardsObserver = mailroom.observeBoards { [weak self] in
@@ -437,8 +442,19 @@ final class DecisionModel {
             return
         }
         expandedDetails.insert(id)
-        if own { return }
-        if detailBodies[id] != nil || detailReads[id] != nil { return }
+        if own {
+            if let followed = mailroom.followed(target.yard), let readOwn {
+                notePictures.fetch(readOwn.notes.flatMap(\.images), from: followed)
+            }
+            return
+        }
+        if detailBodies[id] != nil {
+            if let followed = mailroom.followed(target.yard) {
+                notePictures.fetch((detailNotes[id] ?? []).flatMap(\.images), from: followed)
+            }
+            return
+        }
+        if detailReads[id] != nil { return }
         guard let followed = mailroom.followed(target.yard) else {
             expandedDetails.remove(id)
             return
@@ -459,6 +475,7 @@ final class DecisionModel {
             // The notes in the bead card's order, by seq with ties as
             // served; their stamps are the card's and are not drawn here.
             detailNotes[id] = cardDetails(bead, error: nil, now: now(), zone: zone()).notes
+            notePictures.fetch(bead.notes, from: followed)
         } catch let error as ApiError {
             guard active, self.activation == activation, screen() == target else { return }
             detailErrors[id] = refusalWords(error)
@@ -751,6 +768,7 @@ final class DecisionModel {
                     body: bead.body,
                     notes: cardDetails(bead, error: nil, now: now(), zone: zone()).notes
                 )
+                notePictures.fetch(bead.notes, from: followed)
                 if errorText?.hasPrefix("The yard has no ask") == true { errorText = nil }
             } else {
                 errorText = "The yard has no ask \(target.ask) on \(target.bead)."
@@ -772,6 +790,7 @@ final class DecisionModel {
         var rows: [AboutDetail] = []
         if var own = readOwn {
             own.expanded = expandedDetails.contains(own.id)
+            own.notes = own.notes.map(notePictures.shown)
             rows.append(own)
         }
         for about in ask.about where about.id != bead {
@@ -781,7 +800,7 @@ final class DecisionModel {
                 stage: about.stage,
                 expanded: expandedDetails.contains(about.id),
                 body: detailBodies[about.id],
-                notes: detailNotes[about.id] ?? [],
+                notes: (detailNotes[about.id] ?? []).map(notePictures.shown),
                 loading: detailReads[about.id] != nil,
                 error: detailErrors[about.id]
             ))
