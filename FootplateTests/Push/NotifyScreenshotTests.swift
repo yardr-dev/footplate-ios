@@ -11,7 +11,8 @@ import XCTest
 // shot is the wording, in the phone's own type and colours.
 // Hand-run for the bead note; the gate runs it too, and it only
 // asserts each shot renders non-empty. PNGs land in
-// `NOTIFY_SHOTS_DIR`, or the temporary directory's `notify-shots`.
+// `TEST_RUNNER_NOTIFY_SHOTS_DIR`, or the temporary directory's
+// `notify-shots`.
 @MainActor
 final class NotifyScreenshotTests: XCTestCase {
     /// A telling as the banner carries it: its title over its body,

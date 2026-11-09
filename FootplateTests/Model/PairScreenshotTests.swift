@@ -6,8 +6,9 @@ import XCTest
 // The pair screen rendered in the simulator (the bead's screenshot):
 // Type the code with Use your own address open. Hand-run for the bead
 // note; the gate runs it too, and it only asserts that the screen
-// renders non-empty at phone size. The PNG lands in `PAIR_SHOTS_DIR`,
-// or the temporary directory's `pair-shots` where that names none.
+// renders non-empty at phone size. The PNG lands in
+// `TEST_RUNNER_PAIR_SHOTS_DIR`, or the temporary directory's `pair-shots`
+// where that names none.
 @MainActor
 final class PairScreenshotTests: XCTestCase {
     func testPairOwnAddressRenders() async throws {

@@ -12,8 +12,8 @@ import XCTest
 // of another account's the account is a member of. Hand-run for the bead
 // note; the gate runs it too, and it only asserts that each screen
 // renders non-empty at phone size.
-// PNGs land in `CREW_SHOTS_DIR`, or the temporary directory's
-// `crew-shots` where that names none.
+// PNGs land in `TEST_RUNNER_CREW_SHOTS_DIR`, or the temporary
+// directory's `crew-shots` where that names none.
 @MainActor
 final class CrewScreenshotTests: XCTestCase {
     func testCrewScreensRender() async throws {

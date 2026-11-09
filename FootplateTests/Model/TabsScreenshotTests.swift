@@ -10,8 +10,9 @@ import XCTest
 // its line, one held in Elsewhere, the Ask landing in the
 // yardmaster's conversation), at phone and pad size. Hand-run for
 // the bead note; the gate runs it too, and it only asserts that each
-// tab renders non-empty at each size. PNGs land in `NAV_SHOTS_DIR`, or
-// the temporary directory's `nav-shots` where that names none.
+// tab renders non-empty at each size. PNGs land in
+// `TEST_RUNNER_NAV_SHOTS_DIR`, or the temporary directory's `nav-shots`
+// where that names none.
 @MainActor
 final class TabsScreenshotTests: XCTestCase {
     private let phone = CGSize(width: 402, height: 874)

@@ -13,8 +13,9 @@ import XCTest
 // over two notes: its Media row, the Media grid and a picture opened full
 // size. Hand-run for the
 // bead note; the gate runs it too, and it only asserts that the screens
-// render non-empty at phone size. The PNGs land in `LINE_SHOTS_DIR`, or
-// the temporary directory's `line-shots` where that names none.
+// render non-empty at phone size. The PNGs land in
+// `TEST_RUNNER_LINE_SHOTS_DIR`, or the temporary directory's `line-shots`
+// where that names none.
 @MainActor
 final class LineScreenshotTests: XCTestCase {
     func testLineScreenRenders() async throws {

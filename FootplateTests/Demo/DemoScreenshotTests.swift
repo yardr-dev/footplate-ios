@@ -8,8 +8,9 @@ import XCTest
 // under their banner with the data the yard makes up, in the system's dark
 // and light, at phone and pad size. Hand-run for the bead note; the gate
 // runs it too, and it only asserts that each screen renders non-empty and
-// that the demo has data to draw. PNGs land in `DEMO_SHOTS_DIR`, or the
-// temporary directory's `demo-shots` where that names none.
+// that the demo has data to draw. PNGs land in
+// `TEST_RUNNER_DEMO_SHOTS_DIR`, or the temporary directory's `demo-shots`
+// where that names none.
 @MainActor
 final class DemoScreenshotTests: XCTestCase {
     private let phone = CGSize(width: 402, height: 874)

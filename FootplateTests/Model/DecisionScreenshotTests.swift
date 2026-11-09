@@ -16,8 +16,8 @@ import XCTest
 // Hand-run for the bead note; the gate runs it too, and it only
 // asserts that each
 // screen renders non-empty at phone size. PNGs land in
-// `DECISION_SHOTS_DIR`, or the temporary directory's `decision-shots`
-// where that names none.
+// `TEST_RUNNER_DECISION_SHOTS_DIR`, or the temporary directory's
+// `decision-shots` where that names none.
 @MainActor
 final class DecisionScreenshotTests: XCTestCase {
     func testDecisionScreensRender() async throws {

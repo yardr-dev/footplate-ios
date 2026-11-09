@@ -78,6 +78,14 @@ sh .yardr/test
 
 It builds the app and runs `FootplateTests` on iPhone 17 Pro simulator
 `7EC91353-EDF5-4E93-B644-46A44BA6CFCB`. A missing simulator fails the gate.
+xcodebuild passes environment to the test process only with the
+`TEST_RUNNER_` prefix, so the screenshot suites take their output
+directory that way:
+
+```sh
+TEST_RUNNER_LINE_SHOTS_DIR=$(mktemp -d) sh .yardr/test LineScreenshotTests
+```
+
 The theme test compares the catalogue's dark and light appearances and the
 phone type roles with vendored yardr-design tokens, and checks the bundled
 fonts are registered. `FootplateUITests` runs separately by hand, against the
