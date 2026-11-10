@@ -52,6 +52,19 @@ final class SecrecyTests: XCTestCase {
         }
         said.append(String(describing: pairError))
         said.append(pairError.message)
+        // And a typed code's run: its refusals name no token either.
+        let device = try makeDeviceKey()
+        let runError = await raisedApiError {
+            _ = try await edge.pairPAKE(code: "AAAA-BBBB", session: session, yard: "laptop", devicePrivate: device.devicePrivate)
+        }
+        said.append(String(describing: runError))
+        said.append(runError.message)
+        fake.next("/user/pair", FakeResponse(status: 400, text: "Bad Request\n"))
+        let noRunError = await raisedApiError {
+            _ = try await edge.pairPAKE(code: "M4TR-9KWE", session: session, yard: "laptop", devicePrivate: device.devicePrivate)
+        }
+        said.append(String(describing: noRunError))
+        said.append(noRunError.message)
         // A token refused before any request names no value either.
         let yardError = await raised(InvalidValueError.self) {
             _ = try await edge.yard(device: paired.token + "\n", session: session).head()

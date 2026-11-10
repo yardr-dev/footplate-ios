@@ -279,4 +279,82 @@ final class EdgeTests: XCTestCase {
         }
         XCTAssertEqual(code, "no_pairing")
     }
+
+    func testATypedCodesRunReadsTheSameRefusalsAndGivesA400ItsOwn() async throws {
+        let edge = try makeEdge()
+        let session = fake.session()
+        let device = try makeDeviceKey()
+        func run(_ code: String = "K7QM-2XPD", session: String? = nil) async -> ApiError {
+            await raisedApiError {
+                _ = try await edge.pairPAKE(code: code, session: session ?? self.fake.session(), devicePrivate: device.devicePrivate)
+            }
+        }
+        // The edge's refusals at the run's first post are the pairing's
+        // own, as a plain code's are.
+        fake.next("/user/pair", .notReady())
+        let notReady = await run()
+        XCTAssertEqual(notReady, .notReady(why: "the yard is building"))
+        fake.next("/user/pair", .pairingSpent())
+        let spent = await run()
+        XCTAssertEqual(spent, pairingSpentError)
+        fake.next("/user/pair", .pairingNotOpen())
+        let notOpen = await run()
+        XCTAssertEqual(notOpen, .refused(code: "pairing_not_open", message: "that pairing code is not open for this yard"))
+        fake.next("/user/pair", FakeResponse.pairingSpent().withHeader("X-Edge-Refusal", "session"))
+        let headed = await run()
+        XCTAssertEqual(headed, .notSignedIn)
+        fake.next("/user/pair", .away())
+        let away = await run()
+        XCTAssertEqual(away, .away)
+        let signedOut = await run(session: "ory_st_unknown")
+        XCTAssertEqual(signedOut, .notSignedIn)
+        // A 400 at the start is a yard that takes no run, the code
+        // unspent; at any later post it is a run that is gone. Neither
+        // is the plain redemption's "no code".
+        fake.next("/user/pair", FakeResponse(status: 400, text: "Bad Request\n"))
+        let noRun = await run()
+        XCTAssertEqual(noRun, pairingRefused("no_pake"))
+        // The yard's 409 and a code it has no pairing for are the
+        // pairing's own.
+        fake.next("/user/pair", .json(409, "not added\n"))
+        let notAdded = await run()
+        XCTAssertEqual(notAdded, pairingRefused("not_added"))
+        fake.next("/user/pair", FakeResponse.notLetIn())
+        let noPairing = await run()
+        XCTAssertEqual(noPairing, pairingRefused("no_pairing"))
+        // The yard answering another step than the one due, or a step
+        // with no run in it, is no answer a run can go on from.
+        fake.next("/user/pair", .json(200, #"{"pake": {"step": "done", "answer": "AAAA"}}"#))
+        let early = await run()
+        XCTAssertEqual(early, .protocol(what: "the pairing: a step \"done\" where \"exchange\" was due"))
+        fake.next("/user/pair", .json(200, #"{"pake": {"step": "exchange"}}"#))
+        let empty = await run()
+        XCTAssertEqual(empty, .protocol(what: "the pairing: a message of no shape"))
+        fake.next("/user/pair", .json(200, "not json"))
+        let unread = await run()
+        XCTAssertEqual(unread, .protocol(what: "the pairing: no step in the answer"))
+        // A code that is no code starts no run, and nothing is sent.
+        let before = fake.requestCount
+        let noCode = await run("K7QM")
+        XCTAssertEqual(noCode, pairingRefused("no_code"))
+        XCTAssertEqual(fake.requestCount, before)
+        // The wrong code is refused at the confirmation, in the pairing's
+        // words, and the right one pairs, with the yard's key in the answer.
+        let wrong = await run("AAAA-BBBB", session: session)
+        XCTAssertEqual(wrong, pairingRefused("wrong_code"))
+        let paired = try await edge.pairPAKE(code: "k7qm-2xpd", session: session, devicePrivate: device.devicePrivate)
+        XCTAssertEqual(paired.paired.user, "jo")
+        XCTAssertTrue(isToken(paired.paired.token))
+        XCTAssertEqual(channelPublicString(paired.yardPublic), fake.channelPublic(yardName: ""))
+        // Once used, no pairing is open.
+        let used = await run(session: session)
+        XCTAssertEqual(used, pairingRefused("no_pairing"))
+    }
+
+    private var pairingSpentError: ApiError {
+        .refused(
+            code: "pairing_spent",
+            message: "that pairing code was opened for another account; it is spent — open a new pairing"
+        )
+    }
 }

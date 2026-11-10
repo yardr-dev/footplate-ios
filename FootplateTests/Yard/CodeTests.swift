@@ -8,8 +8,8 @@ import XCTest
 final class CodeTests: XCTestCase {
     private let edge = "https://my.yardr.dev"
 
-    private func code(_ code: String, _ yard: String = "", _ address: String = "") -> CodeRead {
-        .code(PairingCode(code: code, yard: yard, address: address))
+    private func code(_ code: String, _ yard: String = "", _ address: String = "", typed: Bool = false) -> CodeRead {
+        .code(PairingCode(code: code, yard: yard, address: address, typed: typed))
     }
 
     private let noAddress = "That is no address: https://yard.example.net, the scheme, the host and the port alone."
@@ -124,10 +124,10 @@ final class CodeTests: XCTestCase {
     }
 
     func testATypedCodeIsReadWithOrWithoutItsDash() {
-        XCTAssertEqual(typedCode(yard: "", code: "K7QM-2XPD"), code("K7QM-2XPD"))
-        XCTAssertEqual(typedCode(yard: " laptop ", code: "k7qm2xpd"), code("K7QM-2XPD", "laptop"))
-        XCTAssertEqual(typedCode(yard: "", code: "K7QM 2XPD"), code("K7QM-2XPD"))
-        XCTAssertEqual(typedCode(yard: " alice/lab ", code: "r2vh6nqd"), code("R2VH-6NQD", "alice/lab"))
+        XCTAssertEqual(typedCode(yard: "", code: "K7QM-2XPD"), code("K7QM-2XPD", typed: true))
+        XCTAssertEqual(typedCode(yard: " laptop ", code: "k7qm2xpd"), code("K7QM-2XPD", "laptop", typed: true))
+        XCTAssertEqual(typedCode(yard: "", code: "K7QM 2XPD"), code("K7QM-2XPD", typed: true))
+        XCTAssertEqual(typedCode(yard: " alice/lab ", code: "r2vh6nqd"), code("R2VH-6NQD", "alice/lab", typed: true))
         XCTAssertEqual(typedCode(yard: "alice/", code: "R2VH-6NQD"), .refused(why: noMemberYard))
         XCTAssertEqual(memberYard("alice/lab")?.owner, "alice")
         XCTAssertEqual(memberYard("alice/lab")?.yard, "lab")

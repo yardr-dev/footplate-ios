@@ -19,6 +19,8 @@
 @class ChannelOpener;
 @class ChannelPairingHandshake;
 @class ChannelPairingOpening;
+@class ChannelPairingPAKEOpening;
+@class ChannelPairingPAKEResponder;
 @class ChannelSealer;
 @class ChannelSession;
 
@@ -181,6 +183,80 @@ device alone.
 @end
 
 /**
+ * A typed-code pairing a device has begun: its first message sent,
+its confirmation still to make. First is the run's blinded P-256
+point, 65 bytes uncompressed; the device's own channel key
+crosses later, sealed under the derived key (SealKey).
+ */
+@interface ChannelPairingPAKEOpening : NSObject <goSeqRefInterface> {
+}
+@property(strong, readonly) _Nonnull id _ref;
+
+- (nonnull instancetype)initWithRef:(_Nonnull id)ref;
+- (nonnull instancetype)init;
+@property (nonatomic) NSData* _Nullable first;
+/**
+ * Finish takes the yard's second message and answers the device's
+confirmation of the run: 32 bytes, the HMAC of the transcript
+under its confirmation key (RFC 9382, section 4).
+ */
+- (NSData* _Nullable)finish:(NSData* _Nullable)second error:(NSError* _Nullable* _Nullable)error;
+/**
+ * OpenAnswer opens the yard's sealed answer to this run: the
+pairing's answer (the token, the user, the device and the yard,
+with a push voucher) and the yard's channel public key as
+channel_key, for the device to pin, readable by this device
+alone.
+ */
+- (NSData* _Nullable)openAnswer:(NSData* _Nullable)sealed error:(NSError* _Nullable* _Nullable)error;
+/**
+ * SealKey seals the device's channel public key under the run's
+derived key, for the yard to record beside the token it issues.
+ */
+- (NSData* _Nullable)sealKey:(NSError* _Nullable* _Nullable)error;
+/**
+ * Verify checks the yard's confirmation of the run. Only a run
+that passes it has a yard at its other end that holds the code:
+until then the device seals nothing and trusts nothing it is
+answered, which the library holds too, giving no key before it.
+ */
+- (BOOL)verify:(NSData* _Nullable)yardConfirm error:(NSError* _Nullable* _Nullable)error;
+@end
+
+/**
+ * A typed-code pairing the yard has answered: its second message
+sent, the device's confirmation still to check. Second is the
+yard's blinded point, 65 bytes uncompressed.
+ */
+@interface ChannelPairingPAKEResponder : NSObject <goSeqRefInterface> {
+}
+@property(strong, readonly) _Nonnull id _ref;
+
+- (nonnull instancetype)initWithRef:(_Nonnull id)ref;
+- (nonnull instancetype)init;
+@property (nonatomic) NSData* _Nullable second;
+/**
+ * Confirm checks the device's confirmation of the run and answers
+the yard's. One that does not hold fails with PAKEUnconfirmed's
+sentence: one online guess at the code, spent. The device key
+is opened only after this passes, and the answer sealed only in
+a run that passed it.
+ */
+- (NSData* _Nullable)confirm:(NSData* _Nullable)device error:(NSError* _Nullable* _Nullable)error;
+/**
+ * OpenKey opens the device's sealed channel public key in a
+confirmed run, as PublicString writes it: the key the device is
+recorded with.
+ */
+- (NSString* _Nonnull)openKey:(NSData* _Nullable)sealed error:(NSError* _Nullable* _Nullable)error;
+/**
+ * SealAnswer seals payload as a confirmed run's answer: the
+pairing's answer, readable by the device that ran it alone.
+ */
+- (NSData* _Nullable)sealAnswer:(NSData* _Nullable)payload error:(NSError* _Nullable* _Nullable)error;
+@end
+
+/**
  * Sealer seals one call's records as its plaintext is handed
 over, for a caller that streams: Seal answers each chunk's
 framed records, SealFinal the closing one.
@@ -257,6 +333,29 @@ the device addresses it and as a first record binds it.
  */
 FOUNDATION_EXPORT NSString* _Nonnull const ChannelOuterPath;
 /**
+ * PAKESuite is the suite the yard pins for the clients: RFC 9382
+section 6's SPAKE2-P256-SHA256-HKDF-HMAC, with the suite's own
+M and N, the identities "A" (the device) and "B" (the yard), and
+no additional authenticated data. The AAD is empty on purpose:
+the library folds a non-empty one into the transcript as well as
+into the confirmation KDF, which an RFC client would not do, so
+a non-empty one would pin a client to the library's variant.
+The password is the cleaned code as eight ASCII bytes, and w is
+derived from it as the suite's hash derives it. Every length in
+the transcript is the RFC's eight-byte little-endian one, and
+the derived Ke, the first half of the transcript's SHA-256, is
+the key the static keys and the answer cross under.
+ */
+FOUNDATION_EXPORT NSString* _Nonnull const ChannelPAKESuite;
+/**
+ * PAKEUnconfirmed starts the sentence of the one failure of a run
+that proves a guess was made: the other side's confirmation does
+not hold, so its code was not this side's or a message was
+rewritten on the way. The app reads it by this word, since a
+bound error carries no more than its text.
+ */
+FOUNDATION_EXPORT NSString* _Nonnull const ChannelPAKEUnconfirmed;
+/**
  * StreamLongLived is the outer stream marker's one value: set
 exactly when the inner answer may sit idle without bound (the
 events stream, and nothing else today).
@@ -264,6 +363,12 @@ events stream, and nothing else today).
 FOUNDATION_EXPORT NSString* _Nonnull const ChannelStreamLongLived;
 
 @interface Channel : NSObject
+/**
+ * ErrPAKEConfirmation is that failure, as the yard names it.
+ */
++ (NSError* _Nullable) errPAKEConfirmation;
++ (void) setErrPAKEConfirmation:(NSError* _Nullable)v;
+
 /**
  * ErrRecordGap is a record that stands at an index other than
 the next its call expects.
@@ -289,6 +394,15 @@ final record: the part that arrived is no whole answer.
 + (void) setErrTruncated:(NSError* _Nullable)v;
 
 @end
+
+/**
+ * AnswerPairingPAKE answers a run's first message with the
+yard's second, on the code of the pairing it has open. A first
+message that is no point of the suite is refused here, before
+any confirmation can be tried against it: it is no guess at the
+code.
+ */
+FOUNDATION_EXPORT ChannelPairingPAKEResponder* _Nullable ChannelAnswerPairingPAKE(NSString* _Nullable code, NSData* _Nullable first, NSError* _Nullable* _Nullable error);
 
 /**
  * GenerateKey makes a fresh X25519 channel key pair for one yard,
@@ -355,5 +469,11 @@ first message's payload: the device's half of a sealed
 redemption, run by flynn/noise.
  */
 FOUNDATION_EXPORT ChannelPairingOpening* _Nullable ChannelStartPairing(NSData* _Nullable devicePrivate, NSData* _Nullable yardPublic, NSString* _Nullable code, NSError* _Nullable* _Nullable error);
+
+/**
+ * StartPairingPAKE begins a run for the device channel key
+devicePrivate on the pairing code, as the device typed it.
+ */
+FOUNDATION_EXPORT ChannelPairingPAKEOpening* _Nullable ChannelStartPairingPAKE(NSData* _Nullable devicePrivate, NSString* _Nullable code, NSError* _Nullable* _Nullable error);
 
 #endif

@@ -126,18 +126,29 @@ final class PairModelTests: XCTestCase {
         world.pair.typeCode()
         world.pair.typed(yard: "", code: "k7qm2xpd")
         world.pair.readTyped()
-        XCTAssertEqual(world.pair.state.step, .read(PairingCode(code: "K7QM-2XPD", yard: "")))
+        XCTAssertEqual(world.pair.state.step, .read(PairingCode(code: "K7QM-2XPD", yard: "", typed: true)))
         await world.pair.pair()
         XCTAssertFalse(world.nav.pairing)
         XCTAssertEqual(world.nav.place, .crew)
 
+        // A typed code took no key from a QR, so it is redeemed through
+        // the PAKE: three posts of one run, each with the session beside
+        // it, and the device's `/user/me` then rides the channel the run
+        // pinned (its handshake, then the sealed call) with no token.
         let sent = Array(world.fake.allRequests[baseline...])
-        XCTAssertEqual(sent.map(\.path), ["/user/pair", "/user/me"])
+        XCTAssertEqual(sent.map(\.path), ["/user/pair", "/user/pair", "/user/pair", "/user/e2e", "/user/e2e"])
+        XCTAssertEqual(
+            sent.prefix(3).map { ($0.bodyObject()["pake"] as? [String: Any])?["step"] as? String },
+            ["start", "confirm", "finish"]
+        )
         XCTAssertTrue(sent.allSatisfy { $0.header("X-Edge-Token") == session })
         XCTAssertTrue(sent.allSatisfy { $0.header("X-Edge-Yard") == nil })
+        XCTAssertTrue(sent.allSatisfy { $0.header("Authorization") == nil })
         XCTAssertEqual(world.records.kept.yards.map(\.name), ["laptop", ""])
         XCTAssertEqual(world.records.kept.selected, "")
         XCTAssertEqual(world.records.kept.selectedYard?.yard, "south")
+        XCTAssertEqual(world.records.kept.selectedYard?.sealedHow, "paired")
+        XCTAssertNotNil(world.records.kept.selectedYard?.channel)
 
         // And a yard of another account the account is a member of, the
         // third: its code names it `owner/yard`, which is how the edge
@@ -176,7 +187,7 @@ final class PairModelTests: XCTestCase {
         world.pair.typeCode()
         world.pair.typed(yard: "jo/laptop", code: world.fake.laptop.code ?? "")
         world.pair.readTyped()
-        XCTAssertEqual(world.pair.state.step, .read(PairingCode(code: "M4TR-9KWE", yard: "jo/laptop")))
+        XCTAssertEqual(world.pair.state.step, .read(PairingCode(code: "M4TR-9KWE", yard: "jo/laptop", typed: true)))
         await world.pair.pair()
         await signInAs(world)
         await waitForYards(world, 1)
@@ -194,20 +205,45 @@ final class PairModelTests: XCTestCase {
         legacy.records.keepSession(account: legacy.fake.email, session: legacy.fake.session())
         XCTAssertEqual(legacy.records.kept.account?.handle, "")
         legacy.fake.next("/kratos/sessions/whoami", .json(200, #"{"identity": {"traits": {"email": "jo@example.com", "handle": "jo"}}}"#))
-        for (yard, code) in [("jo/laptop", legacy.fake.laptop.code ?? ""), ("alice/lab", legacy.fake.lab.code ?? "")] {
-            legacy.nav.showPair()
-            legacy.pair.typeCode()
-            legacy.pair.typed(yard: yard, code: code)
-            legacy.pair.readTyped()
-            await legacy.pair.pair()
-        }
+        // The own yard is typed; the other account's is scanned, since a
+        // code typed for another account's yard is refused (below).
+        legacy.nav.showPair()
+        legacy.pair.typeCode()
+        legacy.pair.typed(yard: "jo/laptop", code: legacy.fake.laptop.code ?? "")
+        legacy.pair.readTyped()
+        await legacy.pair.pair()
+        legacy.nav.showPair()
+        legacy.pair.scanned("\(legacy.fake.origin)#\(legacy.fake.lab.code ?? "")#alice/lab")
+        await legacy.pair.pair()
         XCTAssertEqual(
             legacy.fake.allRequests.map(\.path),
-            ["/kratos/sessions/whoami", "/user/pair", "/user/me", "/user/pair", "/user/me"]
+            ["/kratos/sessions/whoami", "/user/pair", "/user/pair", "/user/pair", "/user/e2e", "/user/e2e", "/user/pair", "/user/me"]
         )
         XCTAssertEqual(legacy.records.kept.account?.handle, "jo")
         XCTAssertEqual(legacy.records.kept.yards.map(\.name), ["laptop", "alice/lab"])
         XCTAssertEqual(legacy.records.kept.yards.map(\.owner), ["", "alice"])
+
+        // A code typed for another account's yard is refused before
+        // anything is sent, and is still good: the edge hands a member's
+        // code out, so a PAKE on it would not seal the phone, and only
+        // the QR the operator opens on the yard's own screen does.
+        let member = try makeWorld()
+        member.records.keepSession(account: member.fake.email, handle: "jo", session: member.fake.session())
+        member.pair.typeCode()
+        member.pair.typed(yard: "alice/lab", code: member.fake.lab.code ?? "")
+        member.pair.readTyped()
+        await member.pair.pair()
+        XCTAssertEqual(member.pair.state.error, pairingRefusedWords("member_code"))
+        XCTAssertTrue(member.pair.state.error?.contains("Nothing was sent, and the code is still good.") == true)
+        XCTAssertEqual(member.fake.requestCount, 0)
+        XCTAssertNotNil(member.fake.lab.code)
+        XCTAssertTrue(member.records.kept.yards.isEmpty)
+    }
+
+    /// What the pairing says of a refusal `code`, as the sentence a
+    /// person reads.
+    private func pairingRefusedWords(_ code: String) -> String {
+        pairingRefused(code).message
     }
 
     func testAWrongCodeAnEndedPairingAndTheEdgesRefusalsAreSaid() async throws {

@@ -333,6 +333,139 @@ final class Edge: Sendable {
         }
     }
 
+    /// Redeems a pairing code that was typed or read aloud, through a
+    /// PAKE (docs/users.md in the yardr repository, "By a typed code,
+    /// through a PAKE"): where no QR gave the device the yard's key,
+    /// the device and the yard run SPAKE2 on the code in three posts
+    /// of `/user/pair` (`start`, `confirm`, `finish`) and exchange
+    /// their channel keys under the key the run derives. The edge
+    /// that relays them reads no code, no token and no key, gets one
+    /// online guess at the code a run, and has no recorded run to
+    /// test candidate codes against. That holds only where the code
+    /// itself never crossed the edge: a code it handed out, as it
+    /// does a member's, is known to it, which can then sit in the run
+    /// as either end. The device sends nothing that holds its key
+    /// until the yard's confirmation has held, and no plain
+    /// redemption follows a refusal: a yard that takes no run is
+    /// said so, with the code unspent, since an edge that could
+    /// turn a refusal into a plain code would have the code and
+    /// the token. The yard's channel key, which the sealed answer
+    /// carries beside the token, is the one the device pins as a
+    /// QR's is pinned.
+    func pairPAKE(code: String, session: String, yard: String = "", devicePrivate: Data) async throws -> (paired: Paired, yardPublic: Data) {
+        try requireToken(session)
+        try requireName(yard)
+        // A code that is no code is refused before anything is sent,
+        // and it is still good.
+        let opening = try deviceStep { try PairingPAKEOpening(devicePrivate: devicePrivate, code: code) }
+        let exchange = try await pakeStep(
+            ["step": "start", "msg": base64URL(opening.first)],
+            expecting: "exchange", session: session, yard: yard
+        )
+        guard !exchange.session.isEmpty, let second = dataFromBase64URL(exchange.msg) else {
+            throw ApiError.protocol(what: "the pairing: a message of no shape")
+        }
+        let confirmation = try deviceStep { try opening.finish(second) }
+        let confirmed = try await pakeStep(
+            ["step": "confirm", "session": exchange.session, "confirm": base64URL(confirmation)],
+            expecting: "confirmed", session: session, yard: yard
+        )
+        guard let yardConfirmation = dataFromBase64URL(confirmed.confirm) else {
+            throw ApiError.protocol(what: "the pairing: a message of no shape")
+        }
+        // From here the yard has shown it holds the code, or nothing
+        // more is sent.
+        try deviceStep { try opening.verify(yardConfirmation) }
+        let sealedKey = try deviceStep { try opening.sealKey() }
+        let done = try await pakeStep(
+            ["step": "finish", "session": exchange.session, "key": base64URL(sealedKey)],
+            expecting: "done", session: session, yard: yard
+        )
+        guard let sealedAnswer = dataFromBase64URL(done.answer) else {
+            throw ApiError.protocol(what: "the pairing: a message of no shape")
+        }
+        let plain = try deviceStep { try opening.openAnswer(sealedAnswer) }
+        let paired = try decodePaired(plain)
+        guard let published = jsonObject(String(decoding: plain, as: UTF8.self))?["channel_key"] as? String,
+              let yardPublic = try? parseChannelPublic(published)
+        else {
+            throw ApiError.protocol(what: "the pairing: no channel key of the yard's in the answer")
+        }
+        return (paired, yardPublic)
+    }
+
+    /// One step of a PAKE run: its post, with the edge's session and
+    /// the yard's name beside it as any pairing's, and the yard's
+    /// answer read as the step `expected`. A refusal reads in the
+    /// words of any redemption's, but for a 400, which this form
+    /// gives its own: at the start it is a yard that takes no run (no
+    /// channel key to exchange, or older than the PAKE), and after
+    /// it a run that is no longer live (ran out, or another began),
+    /// and neither spends the code or counts a try.
+    private func pakeStep(_ step: [String: String], expecting expected: String, session: String, yard: String) async throws -> PAKEStep {
+        var request = makeRequest(path: "/user/pair")
+        request.httpMethod = "POST"
+        request.setValue(session, forHTTPHeaderField: edgeTokenHeader)
+        if !yard.isEmpty {
+            request.setValue(yard, forHTTPHeaderField: edgeYardHeader)
+        }
+        request.setValue(jsonContentType, forHTTPHeaderField: "Content-Type")
+        request.httpBody = try jsonBody(["pake": step])
+        let answer = try await exchange(request)
+        if answer.edgeRefusal != nil || isEdgeShape(answer.body) {
+            if let gifted = giftedPairing(answer) {
+                throw gifted
+            }
+            throw refusal(status: answer.status, edgeRefusal: answer.edgeRefusal, retryAfterHeader: answer.retryAfter, body: answer.body)
+                ?? ApiError.protocol(what: "the pairing: status \(answer.status)")
+        }
+        if let refused = pairRefused(answer.body) {
+            throw pairingRefused(refused)
+        }
+        switch answer.status {
+        case 200:
+            guard let said = jsonObject(answer.body)?["pake"] as? [String: Any],
+                  let named = said["step"] as? String
+            else {
+                throw ApiError.protocol(what: "the pairing: no step in the answer")
+            }
+            guard named == expected else {
+                throw ApiError.protocol(what: "the pairing: a step \"\(named)\" where \"\(expected)\" was due")
+            }
+            func field(_ name: String) -> String { said[name] as? String ?? "" }
+            return PAKEStep(session: field("session"), msg: field("msg"), confirm: field("confirm"), answer: field("answer"))
+        case 400 where expected == "exchange":
+            throw pairingRefused("no_pake")
+        case 400:
+            throw pairingRefused("pake_over")
+        case 409:
+            throw pairingRefused("not_added")
+        case 401, 404:
+            throw pairingRefused("no_pairing")
+        default:
+            throw refusal(status: answer.status, edgeRefusal: nil, retryAfterHeader: answer.retryAfter, body: answer.body)
+                ?? ApiError.protocol(what: "the pairing: status \(answer.status)")
+        }
+    }
+
+    /// What a failed step of the device's half of a run is said as:
+    /// no code, a yard that did not show it holds the code, or a
+    /// message of no shape. The binding's sentence for the last is
+    /// for the log's reader, never the person's.
+    private func deviceStep<T>(_ step: () throws -> T) throws -> T {
+        do {
+            return try step()
+        } catch let failure as ChannelFailure {
+            if failure.unconfirmed {
+                throw pairingRefused("unconfirmed")
+            }
+            if failure.description.contains("no pairing code") {
+                throw pairingRefused("no_code")
+            }
+            throw ApiError.protocol(what: "the pairing: \(failure.description)")
+        }
+    }
+
     /// The calls of one paired yard, as its device: `device` is the
     /// token the pairing answered, `session` the edge's, `name` the
     /// yard's name at the edge (empty: the account's own yard, and no
@@ -506,6 +639,15 @@ final class Edge: Sendable {
     }
 }
 
+/// A step of a PAKE redemption as the yard answers it: the fields each
+/// step names, base64url without padding, and nothing else.
+private struct PAKEStep {
+    var session: String
+    var msg: String
+    var confirm: String
+    var answer: String
+}
+
 /// Whether the body's shape is the edge's (`{"error": "edge: …"}`).
 func isEdgeShape(_ body: String) -> Bool {
     if case .edge = bodyShape(body) { return true }
@@ -534,6 +676,14 @@ func pairingRefused(_ code: String) -> ApiError {
         message = "That is no code: a code is eight letters and digits, as the yard printed them."
     case "no_pairing":
         message = "No pairing is open at this yard: none was opened, or the code was used, ran out or was ended. Its operator opens one: yardr user device pair <user> <device>"
+    case "member_code":
+        message = "A code typed for another account's yard cannot seal this phone: the edge hands a member's code out, so it can read it. Ask the yard's operator to open a pairing QR on the yard's own screen, and scan that. Nothing was sent, and the code is still good."
+    case "no_pake":
+        message = "This yard takes no typed code sealed: it holds no channel key, or is older than that. Update yardr on the yard, or scan the pairing QR its operator opens on the yard's own screen. Nothing was spent, and the code is still good."
+    case "pake_over":
+        message = "The run to pair this phone ran out, or another began, before it finished. Nothing was spent: try the code again."
+    case "unconfirmed":
+        message = "The answer did not show it came from the yard that holds the code. Nothing was sent on, and the code is not spent. Check the connection, then try the code again."
     default:
         message = "The yard refused the pairing: \(code)."
     }

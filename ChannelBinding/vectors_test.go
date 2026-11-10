@@ -2,10 +2,15 @@ package channel
 
 import (
 	"bytes"
+	"crypto/elliptic"
 	"encoding/hex"
+	"errors"
+	"math/big"
 	"testing"
 
+	"github.com/backkem/spake2-go"
 	"github.com/flynn/noise"
+	"go.dedis.ch/kyber/v4"
 )
 
 // The proofs the design asks for before channel work (section
@@ -324,4 +329,107 @@ func TestSnowHandshakeTranscript(t *testing.T) {
 		"00000053333333333333333333333333333333334444444444444444444444444444444400000000000000000000000000000000372a4a26931b659081a5f2ae31aa81b4f61859160c63f29c12cf1e048e6662011a71fd0000005033333333333333333333333333333333444444444444444444444444444444440000000000000001000000000000000100c8bf55e4ba58ba39b5d763e0d567663fbdd78dc1db99fdf2d7a39a08c4e12a",
 		"000000553333333333333333333333333333333344444444444444444444444444444444000000000000000000000000000000001f58310fa26c1f9eeca64711fc8208f848f18bfbcbce5170ad9840e0e9fcad0b2d49a44abe00000050333333333333333333333333333333334444444444444444444444444444444400000000000000010000000000000001ad01d0e0e606f2e5cd1ccc1ead90125dda0cd77a1485db48e942a65f53e7f2df",
 		"snow handshake call", "snow handshake answer")
+}
+
+// The recorded run of the yard's own PAKE library, for the device's
+// half to be held against another maker (pake.go). It is spake2-go
+// v0.0.1, the module the yard runs, with yardkey's pakeSeal and
+// pakeOpen copied as they stand (yardr 563c16e9a), as the desktop's
+// bead recorded it (footplate 1274fc9, src/pake.rs): the code
+// K7QM-2XPD, the device's scalar fixed to the 64 bytes 0x00 to 0x3f
+// reduced mod the group order, the yard's random. The device's first
+// message and its confirmation are what this side makes, so the test
+// holds them; the yard's second message, its confirmation and its
+// sealed answer are what the yard's library made, so the test opens
+// them, and the key between them is the one the yard sealed under.
+const (
+	pakeRecordedCode          = "K7QM-2XPD"
+	pakeRecordedFirst         = "04adce33bc9da5545c2390ec13b7aee8498e7973255f699db216578be09f083eb5a5b42add86107e0f9ac715f2d96cb0d8d748c60ed4db481b2816b127cb369f47"
+	pakeRecordedSecond        = "042b6da207dcfb7366cb3b8e66519da2e7040eb052ea301e0f08e43a3bf42df2ea754d019e0fe4d02c18bffd3379a0cdf4229aa64143536b539c92f1f61ba4f77b"
+	pakeRecordedDeviceConfirm = "60e84f12df3def1160e41c3d10bffa5312002bed88703cc0a9ca003455ddfd5c"
+	pakeRecordedYardConfirm   = "b1e14ad4c71c7edd351fabbff7d9ca3b4c7a01d3cea4106c36030e0c7df9498a"
+	pakeRecordedKey           = "873159305e28cc54cef73b79bbc92277"
+	pakeRecordedAnswer        = `{"token":"yardr-dev-paired-1","user":"jo","device":"laptop","yard":"south","channel_key":"CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk"}`
+	pakeRecordedSealed        = "1665f162ab5ee982b1bd6e332334125d6e83e0465e8cc51ac277d1a3bcc69c11cfe81d124ef4093b1b77f34c2bcd69145e7203c9bc615376ddcbb69f4ea6b190ae4168a4daa618a7918a9d2d25148c2fe44efd5bf89f0d2eabe684be38a3b3964606ad208f601ea6c5f9eee6b8481b16047d99485141101dbfa432b26b04bd70e95c6d884d6b8f10466ddb003bcdbcb8689653e384c1c54b2a68d93355dd15d36b402d"
+)
+
+// groupMethods is the group a spake2-go ciphersuite takes, which the
+// library declares in an internal package and so cannot be named here:
+// what is named is its method set, which the library's own group
+// satisfies and a test's wrapper may stand in for.
+type groupMethods interface {
+	String() string
+	Curve() elliptic.Curve
+	ScalarLen() int
+	Scalar() kyber.Scalar
+	RandomScalar() kyber.Scalar
+	PointLen() int
+	Point() kyber.Point
+	Generator() (kyber.Point, error)
+	Order() *big.Int
+}
+
+// fixedScalarGroup is the library's group with the one scalar the run
+// draws at its start fixed, so a recorded run can be replayed: the
+// run's x is the big-endian integer of x reduced mod the group order.
+type fixedScalarGroup struct {
+	groupMethods
+	x []byte
+}
+
+func (g *fixedScalarGroup) RandomScalar() kyber.Scalar {
+	return g.Scalar().SetBytes(g.x)
+}
+
+func TestPAKEReplaysTheYardsRecordedRun(t *testing.T) {
+	held := pakeOptions
+	defer func() { pakeOptions = held }()
+	x := make([]byte, 64)
+	for i := range x {
+		x[i] = byte(i)
+	}
+	pakeOptions = func() *spake2.Options {
+		o := spake2.DefaultOptions()
+		o.Ciphersuite.Group = &fixedScalarGroup{groupMethods: o.Ciphersuite.Group, x: x}
+		return o
+	}
+	devicePrivate := bytes.Repeat([]byte{0x11}, 32)
+	opening, err := StartPairingPAKE(devicePrivate, pakeRecordedCode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := hex.EncodeToString(opening.First); got != pakeRecordedFirst {
+		t.Fatalf("first = %s, want the recorded %s", got, pakeRecordedFirst)
+	}
+	confirm, err := opening.Finish(mustHex(t, pakeRecordedSecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := hex.EncodeToString(confirm); got != pakeRecordedDeviceConfirm {
+		t.Fatalf("device confirmation = %s, want the recorded %s", got, pakeRecordedDeviceConfirm)
+	}
+	if err := opening.Verify(mustHex(t, pakeRecordedYardConfirm)); err != nil {
+		t.Fatalf("the recorded yard confirmation does not hold: %v", err)
+	}
+	ke, err := opening.run.SharedKey()
+	if err != nil || hex.EncodeToString(ke) != pakeRecordedKey {
+		t.Fatalf("key = %x, %v, want the recorded %s", ke, err, pakeRecordedKey)
+	}
+	answer, err := opening.OpenAnswer(mustHex(t, pakeRecordedSealed))
+	if err != nil || string(answer) != pakeRecordedAnswer {
+		t.Fatalf("opened %q, %v", answer, err)
+	}
+	// The yard's own run is no oracle for another code: the recorded
+	// device confirmation is refused by a fresh yard run on any code,
+	// the right one included, since the fresh run's transcript is its
+	// own.
+	for _, candidate := range []string{"K7QM-2XPD", "K7QM-2XPE", "0000-0000", "ZZZZ-ZZZZ"} {
+		responder, err := AnswerPairingPAKE(candidate, mustHex(t, pakeRecordedFirst))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := responder.Confirm(mustHex(t, pakeRecordedDeviceConfirm)); !errors.Is(err, ErrPAKEConfirmation) {
+			t.Errorf("a recorded confirmation on %s = %v, want ErrPAKEConfirmation", candidate, err)
+		}
+	}
 }

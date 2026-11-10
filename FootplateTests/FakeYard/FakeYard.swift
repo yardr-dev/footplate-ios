@@ -154,6 +154,21 @@ struct StreamScript: Sendable {
     var hang: Bool = false
 }
 
+/// A typed code's PAKE run as the fake yard holds it (userpair.go's
+/// pakeSession): the yard's half of the exchange, the device's
+/// confirmation once it has held, and the yard's own.
+final class PAKERun: @unchecked Sendable {
+    let session: String
+    let handshake: YardPAKEHandshake
+    var deviceConfirmation: Data?
+    var yardConfirmation = Data()
+
+    init(session: String, handshake: YardPAKEHandshake) {
+        self.session = session
+        self.handshake = handshake
+    }
+}
+
 /// A hanging stream the fake holds open, until `closeStreams` or its hour.
 private struct OpenStream {
     let continuation: AsyncThrowingStream<UInt8, Error>.Continuation
@@ -195,6 +210,10 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
         var pinned: [String: String] = [:]
         /// Live channel sessions by their tag, as base64url.
         var channelSessions: [String: SealedSession] = [:]
+        /// The one live PAKE run of a typed code's redemption: a new
+        /// start replaces it, and a failed confirmation or a finish
+        /// spends it.
+        var pake: PAKERun?
 
         init(name: String, user: String, device: String, yard: String, code: String?) {
             self.name = name
@@ -235,6 +254,7 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
     /// The relay's rows as the fake router holds them, by yard name:
     /// the push token a register call last wrote for that yard.
     private var pushRows: [String: String] = [:]
+    private var answeredPairings: [Data] = []
 
     /// The push token registered for the yard named `yardName`, or
     /// nil where no row stands (never registered, or unregistered).
@@ -270,6 +290,24 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         yards.first { $0.name == yardName }!.pinned["pinned"] = devicePublic
+    }
+
+    /// The device channel public key the yard named `yardName` pinned
+    /// for `token`, as its pairing recorded it: nil for a token no
+    /// pairing of a key minted.
+    func pinnedKey(yardName: String, token: String) -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return yards.first { $0.name == yardName }?.pinned[token]
+    }
+
+    /// The bodies the fake answered the pairing path with, in order:
+    /// what the edge reads of a pairing's answers, beside `allRequests`,
+    /// what it reads of its requests.
+    var pairingAnswers: [Data] {
+        lock.lock()
+        defer { lock.unlock() }
+        return answeredPairings
     }
 
     /// Drops the fake yard's live channel sessions, as a yard restart or
@@ -453,7 +491,16 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
             try await Task.sleep(for: delay)
         }
         let response = answerLocked(recorded: recorded)
+        if path == "/user/pair" {
+            notePairingAnswer(response.body)
+        }
         return (response.body, response.head)
+    }
+
+    private func notePairingAnswer(_ body: Data) {
+        lock.lock()
+        answeredPairings.append(body)
+        lock.unlock()
     }
 
     func bytes(for request: URLRequest) async throws -> (AsyncThrowingStream<UInt8, Error>, HTTPHead) {
@@ -1061,9 +1108,79 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
         }
     }
 
+    /// A PAKE step as the yard answers it: `{"pake": {...}}` with the
+    /// fields the step names.
+    private func pakeReply(_ fields: [String: String]) -> FakeResponse {
+        let body = try! JSONSerialization.data(withJSONObject: ["pake": fields], options: [.sortedKeys])
+        return FakeResponse.json(200, String(decoding: body, as: UTF8.self))
+    }
+
+    /// A typed code redeemed through a PAKE, as the yard serves it
+    /// (docs/users.md, "By a typed code, through a PAKE"): three
+    /// posts of one run on the code of the pairing it has open. A
+    /// message that does not open is 400 and no try; a confirmation
+    /// that does not hold is 403 `wrong_code` and spends the run; a
+    /// finish of a confirmed run spends it whatever it carries, and
+    /// redeems with the device's key pinned and the yard's own key
+    /// beside the token, sealed under the run's key.
+    private func pairPAKELocked(yard: YardState, open: String, ask: [String: Any]) -> FakeResponse {
+        let bad = FakeResponse(status: 400, text: "Bad Request\n")
+        func field(_ name: String) -> String { ask[name] as? String ?? "" }
+        switch field("step") {
+        case "start":
+            guard let first = dataFromBase64URL(field("msg")),
+                  let handshake = try? YardPAKEHandshake(code: open, first: first)
+            else { return bad }
+            let session = base64URL(Data((0..<16).map { _ in UInt8.random(in: 0...255) }))
+            yard.pake = PAKERun(session: session, handshake: handshake)
+            return pakeReply(["step": "exchange", "session": session, "msg": base64URL(handshake.second)])
+        case "confirm":
+            guard let run = yard.pake, run.session == field("session"),
+                  let confirm = dataFromBase64URL(field("confirm"))
+            else { return bad }
+            if let held = run.deviceConfirmation {
+                // A repeated valid confirmation gets the same answer
+                // if a relay lost it; any other is no live step.
+                guard held == confirm else { return bad }
+                return pakeReply(["step": "confirmed", "confirm": base64URL(run.yardConfirmation)])
+            }
+            do {
+                run.yardConfirmation = try run.handshake.confirm(confirm)
+                run.deviceConfirmation = confirm
+            } catch let failure as ChannelFailure where failure.unconfirmed {
+                yard.pake = nil
+                return FakeResponse.wrongCode()
+            } catch {
+                yard.pake = nil
+                return bad
+            }
+            return pakeReply(["step": "confirmed", "confirm": base64URL(run.yardConfirmation)])
+        case "finish":
+            guard let run = yard.pake, run.session == field("session"), run.deviceConfirmation != nil else { return bad }
+            yard.pake = nil
+            guard let sealedKey = dataFromBase64URL(field("key")),
+                  let deviceKey = try? run.handshake.openKey(sealedKey)
+            else { return bad }
+            yard.code = nil
+            let token = mintTokenLocked(yard)
+            yard.pinned[token] = deviceKey
+            let answer = "{\"token\": \"\(token)\", \"user\": \"\(yard.user)\", \"device\": \"\(yard.device)\", \"yard\": \"\(yard.yard)\", \"voucher\": \"yardr-voucher-fake\", \"channel_key\": \"\(yard.channelPublic)\"}"
+            guard let reply = try? run.handshake.sealAnswer(Data(answer.utf8)) else {
+                return FakeResponse(status: 500, text: "Internal Server Error\n")
+            }
+            return pakeReply(["step": "done", "answer": base64URL(reply)])
+                .withHeader("Cache-Control", "no-store")
+        default:
+            return bad
+        }
+    }
+
     private func pairLocked(yard: YardState, recorded: RecordedRequest) -> FakeResponse {
         guard let open = yard.code else {
             return FakeResponse(status: 401, text: "Unauthorized\n")
+        }
+        if let ask = recorded.bodyObject()["pake"] as? [String: Any] {
+            return pairPAKELocked(yard: yard, open: open, ask: ask)
         }
         if let sealed = recorded.bodyObject()["sealed"] as? String {
             return pairSealedLocked(yard: yard, open: open, sealed: sealed)

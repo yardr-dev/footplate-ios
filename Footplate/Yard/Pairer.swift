@@ -44,7 +44,9 @@ final class Pairer {
     }
 
     /// Pairs with `code` under the session kept: the code to
-    /// `/user/pair` with `X-Edge-Yard` where the code names a yard, the
+    /// `/user/pair` with `X-Edge-Yard` where the code names a yard
+    /// (sealed where its QR held the yard's channel key, through a
+    /// PAKE where it was typed, plain where a QR held no key), the
     /// device token kept at once (the pairing's answer is the one time
     /// it is anywhere), then `/user/me` for who the device is. Throws
     /// `ApiError.notSignedIn` where no session is kept, or where the
@@ -85,6 +87,15 @@ final class Pairer {
         if !code.channel.isEmpty {
             return try await pairSealed(code: code, name: name, session: account.session)
         }
+        // A code that was typed or read aloud took no key from a QR,
+        // so at the edge it is redeemed through a PAKE and never
+        // plain: the edge would read the code and the token. No
+        // fallback to the plain redemption follows a refusal of the
+        // run, since an edge that could turn one into the other
+        // would have both.
+        if code.typed {
+            return try await pairTyped(code: code, name: name, session: account.session)
+        }
         let paired = try await edge.pair(code: code.code, session: account.session, yard: name)
         let kept = PairedYard(name: name, yard: paired.yard, user: paired.user, device: paired.device, token: paired.token)
         records.keepYard(kept)
@@ -121,9 +132,44 @@ final class Pairer {
             code: code.code, session: session, yard: name,
             devicePrivate: device.devicePrivate, yardPublic: yardPublic
         )
+        return try await keepSealed(paired: paired, name: name, session: session, devicePrivate: device.devicePrivate, yardPublic: yardPublic)
+    }
+
+    /// Pairs a typed code through a PAKE (`Edge.pairPAKE`): a key
+    /// pair of this phone's for the yard, the code run as SPAKE2's
+    /// password with the yard that holds it, the two channel keys
+    /// exchanged under the key the run derives, and the yard's own
+    /// key learned from its sealed answer in place of a QR's. The
+    /// edge reads no code, token or key, and gets one online guess
+    /// a run. It holds where the code never crossed the edge: a code
+    /// the edge handed out, as it does a member's, is known to it,
+    /// which could sit in the run as either end, so a code typed
+    /// for another account's yard is refused before anything is
+    /// sent, with the code still good. A member is sealed by the QR
+    /// the yard's operator opens on its own screen, which no typed
+    /// code stands in for.
+    private func pairTyped(code: PairingCode, name: String, session: String) async throws -> PairedYard {
+        if memberYard(name) != nil {
+            throw pairingRefused("member_code")
+        }
+        let device = try makeDeviceKey()
+        let (paired, yardPublic) = try await edge.pairPAKE(
+            code: code.code, session: session, yard: name,
+            devicePrivate: device.devicePrivate
+        )
+        return try await keepSealed(paired: paired, name: name, session: session, devicePrivate: device.devicePrivate, yardPublic: yardPublic)
+    }
+
+    /// Keeps a yard a sealed pairing (a QR's key, or a PAKE's) paired,
+    /// the private half beside the token and the yard's key pinned,
+    /// recorded paired, then reads who the device is through the
+    /// channel the two keys found. The pairing stands whatever
+    /// `/user/me` answers: the follower asks it again, and says what
+    /// is wrong where something is.
+    private func keepSealed(paired: Paired, name: String, session: String, devicePrivate: Data, yardPublic: Data) async throws -> PairedYard {
         let kept = PairedYard(
             name: name, yard: paired.yard, user: paired.user, device: paired.device, token: paired.token,
-            channelPrivate: device.devicePrivate, yardChannelPublic: yardPublic, sealedHow: "paired"
+            channelPrivate: devicePrivate, yardChannelPublic: yardPublic, sealedHow: "paired"
         )
         records.keepYard(kept)
         let me: Me
@@ -138,7 +184,7 @@ final class Pairer {
             user: me.user,
             device: me.saidBy.isEmpty ? paired.device : me.saidBy,
             token: paired.token,
-            channelPrivate: device.devicePrivate, yardChannelPublic: yardPublic, sealedHow: "paired"
+            channelPrivate: devicePrivate, yardChannelPublic: yardPublic, sealedHow: "paired"
         )
         records.keepYard(yard)
         return yard

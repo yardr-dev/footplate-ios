@@ -5,17 +5,39 @@ import NoiseChannel
 // 2026-11-05-yardr-device-e2e.md, sections 3.1 and 3.2), as the
 // bound library speaks it: `flynn/noise` v1.1.0 bound from Go by
 // gomobile (ChannelBinding/, NoiseChannel.xcframework), holding
-// no Noise construction of its own. This file marshals bytes
-// across that boundary and names its failures; what a failure is
-// said as to a person is the client's. The bound version and the
-// binding are not yet independently reviewed, and nothing here
-// calls them audited: the app shows no sealed claim on their
-// word, and a yard with a channel is shown not yet sealed.
+// no Noise construction of its own, and beside it the PAKE a typed
+// code is redeemed through, `spake2-go` v0.0.1, the yard's own
+// library, bound the same way and holding no PAKE of its own.
+// This file marshals bytes across that boundary and names its
+// failures; what a failure is said as to a person is the
+// client's. The bound versions and the binding are not yet
+// independently reviewed (spake2-go states it has had no formal
+// audit), and nothing here calls them audited: the app shows no
+// sealed claim on their word, and a yard with a channel is shown
+// not yet sealed.
 
 /// Why a channel step did not go: the binding's sentence, kept
 /// for the log of the call that failed. No key stands in it.
 struct ChannelFailure: Error, Equatable, Sendable, CustomStringConvertible {
     var description: String
+
+    /// Whether this is a PAKE run's one failure that proves a guess
+    /// was made: the other side's confirmation did not hold. The
+    /// binding's errors carry their text alone, so it is read by the
+    /// sentence the binding starts it with.
+    var unconfirmed: Bool {
+        description.hasPrefix(ChannelPAKEUnconfirmed)
+    }
+}
+
+/// Runs a step of the bound library, naming its failure as the
+/// channel's own where it throws.
+private func bound<T>(_ step: () throws -> T) throws -> T {
+    do {
+        return try step()
+    } catch {
+        throw ChannelFailure(description: (error as NSError).localizedDescription)
+    }
 }
 
 /// One yard's channel key pair as the records keep it: the
@@ -103,6 +125,60 @@ final class PairingOpening: @unchecked Sendable {
     /// readable by this device alone.
     func openAnswer(_ reply: Data) throws -> Data {
         try opening.openAnswer(reply)
+    }
+}
+
+/// A typed-code pairing a device has begun, to be redeemed through a
+/// PAKE (design 3.1 candidate 1A, bead 18): SPAKE2 on the code, run by
+/// the bound spake2-go v0.0.1 as the yard runs it, with none of the
+/// PAKE written here. The device and the yard exchange their channel
+/// keys under the key the run derives, so whoever carries the run
+/// gets one online guess at the code and no way to test a recorded
+/// one. The library states it has had no formal audit, and nothing
+/// here calls it audited. Its steps come in the order the run has
+/// them, and the device's key is sealed only after the yard's
+/// confirmation holds: the library gives no key before it.
+final class PairingPAKEOpening: @unchecked Sendable {
+    private let opening: ChannelPairingPAKEOpening
+    /// The run's first message, the blinded point of the suite (65
+    /// bytes uncompressed), for the start step's body.
+    let first: Data
+
+    init(devicePrivate: Data, code: String) throws {
+        var error: NSError?
+        guard let opening = ChannelStartPairingPAKE(devicePrivate, code, &error),
+              let first = opening.first
+        else {
+            throw ChannelFailure(description: error?.localizedDescription ?? "the channel refused")
+        }
+        self.opening = opening
+        self.first = first
+    }
+
+    /// Takes the yard's second message and makes the device's
+    /// confirmation of the run (32 bytes).
+    func finish(_ second: Data) throws -> Data {
+        try bound { try opening.finish(second) }
+    }
+
+    /// Holds the yard's confirmation to the code. Only a run that
+    /// passes has a yard at its other end that holds the code, and
+    /// a failure of it is `ChannelFailure.unconfirmed`.
+    func verify(_ yardConfirmation: Data) throws {
+        try bound { try opening.verify(yardConfirmation) }
+    }
+
+    /// The device's channel public key sealed under the run's key,
+    /// for the yard to record beside the token it issues.
+    func sealKey() throws -> Data {
+        try bound { try opening.sealKey() }
+    }
+
+    /// Opens the yard's sealed answer to this run: the pairing's
+    /// answer with the yard's channel public key beside it,
+    /// readable by this device alone.
+    func openAnswer(_ sealed: Data) throws -> Data {
+        try bound { try opening.openAnswer(sealed) }
     }
 }
 
@@ -247,6 +323,50 @@ final class YardPairingHandshake: @unchecked Sendable {
     /// message: the one answer that holds the device's token.
     func sealAnswer(_ payload: Data) throws -> Data {
         try handshake.sealAnswer(payload)
+    }
+}
+
+/// A typed-code pairing's run as the yard answered it: its second
+/// message, and the device's confirmation still to hold to the code.
+final class YardPAKEHandshake: @unchecked Sendable {
+    private let responder: ChannelPairingPAKEResponder
+    /// The yard's second message, for the start step's answer.
+    let second: Data
+
+    init(code: String, first: Data) throws {
+        var error: NSError?
+        guard let responder = ChannelAnswerPairingPAKE(code, first, &error),
+              let second = responder.second
+        else {
+            throw ChannelFailure(description: error?.localizedDescription ?? "the channel refused")
+        }
+        self.responder = responder
+        self.second = second
+    }
+
+    /// Holds the device's confirmation to the code and answers the
+    /// yard's; one that does not hold is `ChannelFailure.unconfirmed`,
+    /// one online guess at the code, spent.
+    func confirm(_ device: Data) throws -> Data {
+        try bound { try responder.confirm(device) }
+    }
+
+    /// The device's channel public key, as `channelPublicString`
+    /// writes it, opened in a confirmed run alone.
+    func openKey(_ sealed: Data) throws -> String {
+        // The binding answers a string, which gomobile imports with
+        // an error pointer in place of `throws`.
+        var error: NSError?
+        let key = responder.openKey(sealed, error: &error)
+        if let error {
+            throw ChannelFailure(description: error.localizedDescription)
+        }
+        return key
+    }
+
+    /// Seals the pairing's answer, in a confirmed run alone.
+    func sealAnswer(_ payload: Data) throws -> Data {
+        try bound { try responder.sealAnswer(payload) }
     }
 }
 

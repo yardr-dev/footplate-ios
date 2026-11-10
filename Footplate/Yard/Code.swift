@@ -22,6 +22,13 @@ struct PairingCode: Equatable, Sendable {
     /// Empty where the QR held none, and the pairing is the plain
     /// one, exactly as before.
     var channel: String = ""
+    /// Whether the code was typed or read aloud (**Type the code**),
+    /// and no QR gave it: it holds no key of the yard's, so at the
+    /// edge it is redeemed through a PAKE, never plain. A scanned
+    /// QR with no fourth field is not typed: its own screen told the
+    /// phone the yard has no channel, which the edge cannot rewrite,
+    /// and its code is redeemed plain as it always was.
+    var typed: Bool = false
 }
 
 /// What a scan or the typed fields read as.
@@ -161,7 +168,7 @@ func typedCode(yard: String, code: String) -> CodeRead {
     if name.contains("/"), memberYard(name) == nil {
         return .refused(why: "That is no yard's name: another account's yard is its owner's handle, a slash and the yard's name.")
     }
-    return .code(PairingCode(code: String(clean.prefix(4)) + "-" + String(clean.dropFirst(4)), yard: name))
+    return .code(PairingCode(code: String(clean.prefix(4)) + "-" + String(clean.dropFirst(4)), yard: name, typed: true))
 }
 
 /// The code as yardr's `pairing.CleanCode` reads it: no dash or space,

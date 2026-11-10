@@ -15,10 +15,27 @@ does. No code is shared with the other footplates: this one is Swift drawn
 with SwiftUI on the same protocol.
 
 A person has one account, and a yard another person owns and made them a
-member of pairs beside their own: from a code that names it `owner/yard`,
-signed in as themselves. The head line and the yard switch call it
-`lab — member of alice's yard`. When its owner removes the membership, the
-yard leaves the phone with one sentence that says so.
+member of pairs beside their own: from a scanned pairing QR that names it
+`owner/yard`, signed in as themselves. The head line and the yard switch call
+it `lab — member of alice's yard`. When its owner removes the membership, the
+yard leaves the phone with one sentence that says so. A code typed for
+another account's yard is refused before anything is sent, and stays good: the
+edge hands a member's code out, so a typed one could not seal the phone. The QR
+the yard's operator opens on the yard's own screen does.
+
+A code typed or read aloud pairs through a PAKE (SPAKE2, RFC 9382). The phone
+and the yard run it on the code and swap their channel keys under the key it
+derives, so the edge that relays the run reads no code, token or key. It gets
+one online guess at the code a run, and a recorded run gives it nothing to test
+candidates against. That holds for a code that never crossed the edge, such as
+one shown on the yard's own screen; a code the edge hands out, a member's for
+one, is outside it. A typed code is never redeemed plain at the edge. A yard
+that takes no run (no channel key, or older than the PAKE) is said so with the
+code unspent, and the person scans the QR its operator opens instead. A scanned
+QR with no fourth field keeps its plain redemption, and so does a yard of your
+own address. The PAKE is the yard's own `spake2-go`, bound the way `flynn/noise`
+is (`ChannelBinding/`). It states it has had no formal audit, nothing here
+claims one, and the phone shows no sealed claim yet.
 
 A paired yard can be given a name of the person's own, since the name the
 edge gives it, or its address's host and port, tells few yards apart. Rename
@@ -127,6 +144,12 @@ xcodebuild test -project Footplate.xcodeproj -scheme Footplate \
   -only-testing:FootplateUITests/AAPairForHand \
   -only-testing:FootplateUITests/LineScreenTests
 ```
+
+The stand-in answers a pairing plain and speaks no channel, and a typed
+code is redeemed through the PAKE now (never plain at the edge), so
+`AAPairForHand`, which types one, cannot pair against it until the stand-in
+speaks both (footplate-ios-354f); the classes after it start from a paired
+simulator and wait on that too.
 
 `LineScreenTests` checks that the app reads the canned line board from
 the stand-in edge. `MediaScreenTests` opens `yd-gate`, whose notes carry
