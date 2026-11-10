@@ -6,7 +6,8 @@ import XCTest
 // The crew screens rendered in the simulator against fake-followed
 // state (design 3.5, the bead's screenshots): the inbox with unread
 // rows, one conversation, a conversation naming bead ids, a chip's
-// bead as a sheet over the chat, and the yard switch with two yards,
+// bead as a sheet over the chat, a conversation with a party of a
+// linked yard, and the yard switch with two yards,
 // one away, at the default text size and at two
 // large ones, with a yard of its own beside the edge's, and with a yard
 // of another account's the account is a member of. Hand-run for the bead
@@ -166,6 +167,89 @@ final class CrewScreenshotTests: XCTestCase {
             ConversationScreen(model: conversation, line: line, yard: "", with: "yardmaster"),
             scene: scene, to: dir.appendingPathComponent("conversation-chips.png")
         )
+        conversation.leave()
+    }
+
+    /// A conversation with a party of a linked yard (footplate-ios-8mhz):
+    /// the party's letter read from the page, then the person's own,
+    /// which the yard tells of as a `mail` event with `to_peer`, drawn at
+    /// once in its bubble with no second page read. The Crew list holds
+    /// the conversation's row, and its tap opens the conversation under
+    /// the party's address.
+    func testAConversationWithALinkedYardsPartyShowsTheLetterThePersonSent() async throws {
+        let scene = try XCTUnwrap(
+            UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first,
+            "no window scene to render in"
+        )
+        let fake = FakeYard()
+        let records = Records(secret: MemoryShelf(), plain: MemoryShelf(), origin: fake.origin)
+        records.keepSession(account: fake.email, session: fake.session())
+        records.keepYard(PairedYard(name: "", yard: "south", user: "jo", device: "phone", token: "yardr-dev-south-1"))
+        records.noteNotificationsAsked()
+        let nav = Nav()
+        let home = FakeFollowed()
+        let mailroom = Mailroom()
+        mailroom.setFollowers(["": home])
+        let now = parseInstant("2026-10-08T12:00:00Z")!
+        let pairer = Pairer(edge: try fake.edge(), records: records)
+        let inbox = InboxModel(
+            pairer: pairer, records: records, followers: { ["": home] },
+            mailroom: mailroom, nav: nav, now: { now }, zone: { TimeZone(secondsFromGMT: 0)! }
+        )
+        let conversation = ConversationModel(mailroom: mailroom, now: { now }, zone: { TimeZone(secondsFromGMT: 0)! })
+        let line = LineModel(
+            followers: { ["": home] }, records: records, pairer: pairer,
+            nav: nav, conversation: conversation, origins: { _ in "https://edge.example" },
+            now: { now }, zone: { TimeZone(secondsFromGMT: 0)! }
+        )
+        let notifier = Notifier(mailroom: mailroom, records: records, allowed: { true }, tell: { _ in })
+        // The party's letter is in the inbox, as the yard keeps mail
+        // from `<name>@<peer>`, and is what the page holds.
+        let party = Letter(
+            seq: 30, at: "2026-10-08T09:30:00Z", from: "yardmaster@yardr", to: "jo",
+            text: "The shed on this side is painted. Shall I land it?", read: true
+        )
+        var read = loaded()
+        read.inbox.mail.append(party)
+        home.up(read)
+        home.pages["yardmaster@yardr|0"] = Page(letters: [party], more: false)
+
+        let dir = try shotsDirectory()
+        let deadline = ContinuousClock.now + .seconds(10)
+        while inbox.state.rows.isEmpty, ContinuousClock.now <= deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        conversation.open(yard: "", with: "yardmaster@yardr")
+        while conversation.state.letters.isEmpty, ContinuousClock.now <= deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(conversation.state.letters.map(\.mine), [false])
+        // The person's letter to the party, as the yard tells of it: the
+        // name in the other yard and the link, the person the actor.
+        home.event(Event(
+            seq: 152, kind: "mail", actor: "jo", at: "2026-10-08T09:33:00Z", bead: "",
+            data: [
+                "to": .string("yardmaster"), "to_peer": .string("yardr"),
+                "text": .string("Land it. I will look at it on the train."), "id": .string("m-1"),
+            ]
+        ))
+        while conversation.state.letters.count < 2, ContinuousClock.now <= deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(conversation.state.title, "yardmaster@yardr")
+        XCTAssertEqual(conversation.state.letters.map(\.mine), [false, true])
+        XCTAssertEqual(home.asked.map { "\($0.0)|\($0.1)" }, ["yardmaster@yardr|0"], "the letter came by the stream, not by a page read")
+        XCTAssertTrue(inbox.state.rows.contains { $0.name == "yardmaster@yardr" && $0.line == "Land it. I will look at it on the train." })
+
+        await notifier.refresh()
+        let crew = CrewScreen(model: inbox, nav: nav, conversation: conversation, line: line, notifier: notifier)
+        try await render(crew, scene: scene, to: dir.appendingPathComponent("inbox-linked-yard.png"))
+        inbox.open("yardmaster@yardr")
+        XCTAssertEqual(nav.crewPath, [ConversationRoute(yard: "", with: "yardmaster@yardr")])
+        let light = try await renderWindow(crew, scene: scene, style: .light, to: dir.appendingPathComponent("conversation-linked-yard-light.png"))
+        defer { light.isHidden = true }
+        let dark = try await renderWindow(crew, scene: scene, style: .dark, to: dir.appendingPathComponent("conversation-linked-yard-dark.png"))
+        defer { dark.isHidden = true }
         conversation.leave()
     }
 
@@ -638,9 +722,14 @@ final class CrewScreenshotTests: XCTestCase {
 
     /// As `render`, but drawing the window whole: a presented sheet
     /// stands outside the hosting view, so the hosting view alone
-    /// would shoot the chat without it.
-    private func renderWindow(_ view: some View, scene: UIWindowScene, to file: URL) async throws -> UIWindow {
+    /// would shoot the chat without it. `style` is the appearance from
+    /// the first draw, where a navigation bar's large title takes it;
+    /// the system's where none is given.
+    private func renderWindow(
+        _ view: some View, scene: UIWindowScene, style: UIUserInterfaceStyle = .unspecified, to file: URL
+    ) async throws -> UIWindow {
         let hosting = UIHostingController(rootView: AnyView(view))
+        hosting.overrideUserInterfaceStyle = style
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 402, height: 874)
         window.rootViewController = hosting

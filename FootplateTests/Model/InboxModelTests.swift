@@ -182,7 +182,7 @@ final class InboxModelTests: XCTestCase {
         conversation.leave()
     }
 
-    func testMailEventMovesItsRowToTheTop() async {
+    func testMailEventMovesItsRowToTheTop() async throws {
         home.up(loaded(notices: false))
         let model = inbox()
         _ = await waitFor("the rows", state: { model.state }) { !$0.rows.isEmpty }
@@ -196,6 +196,45 @@ final class InboxModelTests: XCTestCase {
         let again = await waitFor("yardmaster on top", state: { model.state }) { $0.rows.first?.name == "yardmaster" }
         XCTAssertEqual(again.rows[0].line, "Land it.")
         XCTAssertEqual(again.rows[0].unread, "2 unread")
+
+        // Mail to a party of a linked yard has `to_peer`. Another's is
+        // none of this inbox's: no letter, no row.
+        let lettersBefore = mailroom.boards[""]?.letters
+        home.event(event(157, "mail", "relief", ["to": .string("yardmaster"), "to_peer": .string("yardr"), "text": .string("Not the person's.")]))
+        XCTAssertEqual(mailroom.boards[""]?.applied, 157)
+        XCTAssertEqual(mailroom.boards[""]?.letters, lettersBefore)
+        XCTAssertEqual(model.state.rows.map(\.name), again.rows.map(\.name))
+        // The person's own is a letter of the conversation with
+        // <to>@<to_peer>, a row of its own, and not the yardmaster's
+        // of this yard nor an unread.
+        home.event(event(158, "mail", "jo", ["to": .string("yardmaster"), "to_peer": .string("yardr"), "text": .string("Land it on your side."), "id": .string("m-1")]))
+        let peer = await waitFor("the linked yard's party on top", state: { model.state }) { $0.rows.first?.name == "yardmaster@yardr" }
+        XCTAssertEqual(peer.rows.map(\.name), ["yardmaster@yardr", "yardmaster", "relief", "signalman", "jo", "yard"])
+        XCTAssertEqual(peer.rows[0].line, "Land it on your side.")
+        XCTAssertEqual(peer.rows[0].time, "11:00")
+        XCTAssertNil(peer.rows[0].unread)
+        XCTAssertNil(peer.rows[0].state)
+        XCTAssertEqual(peer.rows[1].line, "Land it.")
+        XCTAssertEqual(peer.rows[1].unread, "2 unread")
+        let board = try XCTUnwrap(mailroom.boards[""])
+        XCTAssertEqual(board.lettersWith("yardmaster@yardr").map { "\($0.seq)|\($0.from)|\($0.to)" }, ["158|jo|yardmaster@yardr"])
+        XCTAssertEqual(board.lettersWith("yardmaster").map(\.seq), [13, 14, 156])
+        XCTAssertEqual(board.unread.keys.sorted(), [13, 14, 155])
+
+        // Open, the conversation with that address shows the person's
+        // next letter to it at once, with no page read to bring it.
+        let conversation = conversation()
+        conversation.open(yard: "", with: "yardmaster@yardr")
+        let opened = await waitFor("the conversation with the party", state: { conversation.state }) { !$0.letters.isEmpty }
+        XCTAssertEqual(opened.title, "yardmaster@yardr")
+        XCTAssertEqual(opened.letters.map(\.seq), [158])
+        XCTAssertEqual(opened.letters.map(\.mine), [true])
+        home.event(event(159, "mail", "jo", ["to": .string("yardmaster"), "to_peer": .string("yardr"), "text": .string("And the fence.")]))
+        let shown = await waitFor("the next letter", state: { conversation.state }) { $0.letters.count == 2 }
+        XCTAssertEqual(shown.letters.map(\.seq), [158, 159])
+        XCTAssertEqual(shown.letters.map(\.mine), [true, true])
+        XCTAssertEqual(home.asked.map { "\($0.0)|\($0.1)" }, ["yardmaster@yardr|0"])
+        conversation.leave()
     }
 
     func testOlderPageReadOnScrollUpWhileYardHasMore() async {

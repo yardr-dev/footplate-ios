@@ -127,13 +127,21 @@ struct Board: Equatable, Sendable {
     }
 
     /// A letter to or from the user; any other mail is not this
-    /// inbox's, nor is mail to a linked yard, which the phone does
-    /// not carry.
+    /// inbox's. Mail to a party of a linked yard has `to_peer`: the
+    /// user's own is kept as a letter to `<to>@<to_peer>`, the address
+    /// of the conversation with that party, so an open conversation
+    /// shows it at once; anyone else's is not this inbox's. A party's
+    /// letter back arrives as mail to the user from `<name>@<peer>`.
+    /// How far a letter to a linked yard has gone (queued, delivered)
+    /// the phone does not say.
     private func mail(_ event: Event) -> Board {
-        let to = event.text("to")
-        if !event.text("to_peer").isEmpty { return self }
+        var to = event.text("to")
         var toMe = false
-        if to == me, case .bool(let isUser) = event.data["to_user"] {
+        let peer = event.text("to_peer")
+        if !peer.isEmpty {
+            if event.actor != me { return self }
+            to = "\(to)@\(peer)"
+        } else if to == me, case .bool(let isUser) = event.data["to_user"] {
             toMe = isUser
         }
         if !toMe, event.actor != me { return self }
