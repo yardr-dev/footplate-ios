@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // One bead opened (design 3.5, after Android's BeadCardView): its title
 // and head, the strip of its line with the bead's stage marked, what is
@@ -12,6 +13,9 @@ import SwiftUI
 struct BeadCardScreen: View {
     @Bindable var model: LineModel
     var route: BeadRoute
+    /// A chip tapped: its bead opens. On the Lines place the card pushes
+    /// onto the stack; over the chat the sheet hands off to the line.
+    var openBead: ((String) -> Void)? = nil
     @Environment(\.openURL) private var openURL
     /// The Media grid is pushed over the card.
     @State private var showMedia = false
@@ -61,7 +65,7 @@ struct BeadCardScreen: View {
         }
         now(card.bead)
         ask(card)
-        details(card.details)
+        details(card.details, beads: card.knownBeads)
         if !card.webView.isEmpty {
             web()
         }
@@ -123,7 +127,7 @@ struct BeadCardScreen: View {
     /// board's facts above stand while the bead is read; a read that
     /// failed says so here, under what an earlier read gave.
     @ViewBuilder
-    private func details(_ details: CardDetails) -> some View {
+    private func details(_ details: CardDetails, beads: Set<String>) -> some View {
         if details.loading {
             HStack(spacing: 8) {
                 ProgressView()
@@ -156,10 +160,16 @@ struct BeadCardScreen: View {
                     .foregroundStyle(ThemeColor.textSecondary.color)
                     .padding(.top, 8)
             } else {
-                linkedText(details.body)
-                    .themeType(.body)
-                    .foregroundStyle(ThemeColor.textPrimary.color)
+                MessageText(text: details.body, beads: beads)
+                    .environment(\.openURL, beadLinks)
                     .textSelection(.enabled)
+                    .contextMenu {
+                        if let copy = copyableProse(details.body) {
+                            Button("Copy description") {
+                                UIPasteboard.general.string = copy
+                            }
+                        }
+                    }
                     .padding(.top, 8)
                     .accessibilityIdentifier("bead-body")
             }
@@ -171,7 +181,8 @@ struct BeadCardScreen: View {
                 .accessibilityAddTraits(.isHeader)
                 .padding(.top, 16)
             ForEach(Array(details.notes.enumerated()), id: \.offset) { _, note in
-                noteRow(note)
+                NoteRow(note: note, beads: beads, openBead: chipBead)
+                    .padding(.top, 12)
             }
         }
         if let error = details.error {
@@ -209,32 +220,20 @@ struct BeadCardScreen: View {
         .padding(.top, 8)
     }
 
-    /// One note: who wrote it and when, over its words, which are
-    /// selectable with their addresses links, then the pictures and
-    /// files it carries.
-    private func noteRow(_ note: CardNote) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 8) {
-                Text(note.author)
-                    .themeType(.label)
-                    .foregroundStyle(ThemeColor.textPrimary.color)
-                if !note.at.isEmpty {
-                    Text(note.at)
-                        .themeType(.meta)
-                        .foregroundStyle(ThemeColor.textSecondary.color)
-                }
-            }
-            linkedText(note.text)
-                .themeType(.body)
-                .foregroundStyle(ThemeColor.textPrimary.color)
-                .textSelection(.enabled)
-            if note.carriesFiles {
-                NoteFiles(note: note)
-                    .padding(.top, 6)
-            }
+    /// Links in the description: a chip opens its bead, and a web
+    /// address opens as before.
+    private var beadLinks: OpenURLAction {
+        proseLinks(openBead: chipBead)
+    }
+
+    /// A chip tapped: its bead opens, onto the stack or, over the chat,
+    /// through the sheet's handoff.
+    private func chipBead(_ id: String) {
+        if let openBead {
+            openBead(id)
+        } else {
+            model.openBead(id)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.top, 12)
     }
 
     /// The bead's page at the yard's web view, in the phone's browser,

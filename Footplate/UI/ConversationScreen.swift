@@ -251,7 +251,10 @@ struct ConversationScreen: View {
         .sheet(item: sheetBinding, onDismiss: beadSheetDismissed) { route in
             NavigationStack {
                 VStack(spacing: 0) {
-                    BeadCardScreen(model: line, route: route)
+                    // A chip in the sheet's card hands off to the line,
+                    // as Open on the line does: the sheet is no place to
+                    // push another card behind.
+                    BeadCardScreen(model: line, route: route, openBead: { openOnLine(BeadRoute(yard: route.yard, bead: $0)) })
                     Button("Open on the line") {
                         openOnLine(route)
                     }

@@ -297,22 +297,42 @@ struct DecisionScreen: View {
         .accessibilityIdentifier("decision-ask")
     }
 
-    /// The ask's context: its lines in place, always, with their web
-    /// addresses links.
+    /// The ask's context: its lines in place, always, each drawn as a
+    /// letter's words are, selectable with a copy of it as written.
     private func contextLines(_ state: DecisionState) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(Array(state.context.enumerated()), id: \.offset) { _, line in
-                linkedText(line)
-                    .themeType(.body)
-                    .foregroundStyle(ThemeColor.textPrimary.color)
+                MessageText(text: line, beads: state.knownBeads)
+                    .environment(\.openURL, detailLinks)
+                    .textSelection(.enabled)
+                    .contextMenu {
+                        if let copy = copyableProse(line) {
+                            Button("Copy line") {
+                                UIPasteboard.general.string = copy
+                            }
+                        }
+                    }
             }
         }
     }
 
+    /// Links in the context and the details: a chip opens its bead's
+    /// row, and a web address opens as before.
+    private var detailLinks: OpenURLAction {
+        proseLinks(openBead: openDetails)
+    }
+
+    /// A chip tapped: its bead's details row opens, where it is one and
+    /// shut.
+    private func openDetails(_ id: String) {
+        guard model.state.details.contains(where: { $0.id == id && !$0.expanded }) else { return }
+        Task { await model.toggleDetails(id) }
+    }
+
     /// One bead the card shows, its own first and then each the ask is
     /// about: shut, its row; tapped open, the bead's description in
-    /// place, selectable with its links as the context's are, then its
-    /// notes, or its loading or its error.
+    /// place, drawn as a letter's words are, then its notes, or its
+    /// loading or its error.
     private func detailsRow(_ detail: AboutDetail) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Button {
@@ -355,10 +375,16 @@ struct DecisionScreen: View {
                             .themeType(.body)
                             .foregroundStyle(ThemeColor.textSecondary.color)
                     } else {
-                        linkedText(body)
-                            .themeType(.body)
-                            .foregroundStyle(ThemeColor.textPrimary.color)
+                        MessageText(text: body, beads: model.state.knownBeads)
+                            .environment(\.openURL, detailLinks)
                             .textSelection(.enabled)
+                            .contextMenu {
+                                if let copy = copyableProse(body) {
+                                    Button("Copy description") {
+                                        UIPasteboard.general.string = copy
+                                    }
+                                }
+                            }
                     }
                     if !detail.notes.isEmpty {
                         Text("Notes")
@@ -367,33 +393,13 @@ struct DecisionScreen: View {
                             .accessibilityAddTraits(.isHeader)
                             .padding(.top, 8)
                         ForEach(Array(detail.notes.enumerated()), id: \.offset) { _, note in
-                            noteRow(note)
+                            NoteRow(note: note, beads: model.state.knownBeads, openBead: openDetails, showTime: false)
+                                .padding(.top, 8)
                         }
                     }
                 }
             }
         }
-    }
-
-    /// One note of the bead a details row opened: who wrote it over its
-    /// words, selectable with their web addresses links as the
-    /// description's are, then the pictures and files it carries.
-    private func noteRow(_ note: CardNote) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(note.author)
-                .themeType(.label)
-                .foregroundStyle(ThemeColor.textPrimary.color)
-            linkedText(note.text)
-                .themeType(.body)
-                .foregroundStyle(ThemeColor.textPrimary.color)
-                .textSelection(.enabled)
-            if note.carriesFiles {
-                NoteFiles(note: note)
-                    .padding(.top, 6)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.top, 8)
     }
 
     /// A details row's second line: the bead's title with its stage.

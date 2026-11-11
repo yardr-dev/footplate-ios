@@ -151,6 +151,14 @@ private struct CodeBlock: View {
     }
 }
 
+/// The whole text a long-press on prose drawn through `MessageText`
+/// offers to copy, or nil where it has none. The copy is the words
+/// entire, as they were written, never one link of them; a code block's
+/// own Copy gives the code alone, without its fences.
+func copyableProse(_ text: String) -> String? {
+    text.isEmpty ? nil : text
+}
+
 /// `block`'s words as a Text draws them in the face of `role`, which is
 /// `size` points at the person's text size: the web addresses and the
 /// known bead ids of `beads` links and chips, but no chip in code, and the

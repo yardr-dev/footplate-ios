@@ -84,7 +84,14 @@ final class DecisionScreenshotTests: XCTestCase {
             DecisionScreen(model: decision, yard: "", bead: "yd-links", ask: 3),
             scene: scene, to: dir.appendingPathComponent("routine.png")
         )
-        XCTAssertEqual(decision.state.context, ["The links file declares the new source; 64 links still point at the old one."])
+        let context = decision.state.context
+        XCTAssertEqual(context, [
+            "The links file declares the new source; **64 links** still point at the old one.",
+            "yd-train leaves nightly with what is green.",
+        ])
+        XCTAssertEqual(decision.state.knownBeads, ["yd-links", "yd-train"])
+        XCTAssertEqual(messageBlocks(context[0])[0].marks.map(\.marks), [Marks(bold: true)])
+        XCTAssertEqual(copyableProse(context[0]), context[0])
         // The card's own bead has its row first, the bead the ask is
         // about the second, both shut.
         XCTAssertEqual(decision.state.details.map(\.id), ["yd-links", "yd-train"])
@@ -94,6 +101,13 @@ final class DecisionScreenshotTests: XCTestCase {
         await decision.toggleDetails("yd-links")
         XCTAssertEqual(decision.state.details.first?.expanded, true)
         XCTAssertEqual(decision.state.details.first?.notes.map(\.author), ["builder", "yardmaster"])
+        let description = try XCTUnwrap(decision.state.details.first?.body)
+        XCTAssertEqual(messageBlocks(description).map(\.kind), [.text, .code])
+        XCTAssertEqual(copyableProse(description), description)
+        XCTAssertEqual(
+            copyableProse(decision.state.details.first?.notes.last?.text ?? ""),
+            "Checked: `links.yaml` is **valid**."
+        )
         // The second note's picture is asked for as the card is read and
         // is drawn under its words once it has come.
         let picturesDeadline = ContinuousClock.now + .seconds(10)
@@ -101,15 +115,25 @@ final class DecisionScreenshotTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTAssertEqual(decision.state.details.first?.notes.last?.images, [ShownImage(hash: sha256Hex(png), name: "timetable.png", bytes: png)])
-        try await render(
+        let (markdownWindow, markdownHost) = host(
             DecisionScreen(model: decision, yard: "", bead: "yd-links", ask: 3),
-            scene: scene, to: dir.appendingPathComponent("own.png"), height: 1300
+            scene: scene, height: 1300
         )
+        let markdownDeadline = ContinuousClock.now + .seconds(10)
+        while horizontalScrolls(in: markdownWindow).isEmpty, ContinuousClock.now <= markdownDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(horizontalScrolls(in: markdownWindow).count, 1, "the one fenced block scrolls")
+        try snapshot(markdownHost.view, in: markdownWindow, to: dir.appendingPathComponent("decision-markdown.png"), height: 1300)
+        markdownWindow.isHidden = true
         await decision.toggleDetails("yd-links")
         await decision.toggleDetails("yd-train")
         let train = try XCTUnwrap(decision.state.details.first { $0.id == "yd-train" })
         XCTAssertTrue(train.expanded)
         XCTAssertEqual(train.notes.map(\.author), ["builder", "reviewer"])
+        let trainBody = try XCTUnwrap(train.body)
+        XCTAssertTrue(messageBlocks(trainBody).first?.marks.contains { $0.marks.bold } == true)
+        XCTAssertEqual(copyableProse(trainBody), trainBody)
         try await render(
             DecisionScreen(model: decision, yard: "", bead: "yd-links", ask: 3),
             scene: scene, to: dir.appendingPathComponent("details.png")
@@ -275,6 +299,14 @@ final class DecisionScreenshotTests: XCTestCase {
         XCTAssertGreaterThan(png.count, 10000, "the rendered screen looks blank")
     }
 
+    /// The scroll views that scroll sideways: the code blocks, which are
+    /// short, beside the card's own, which fills the window.
+    private func horizontalScrolls(in view: UIView) -> [UIScrollView] {
+        var found = view.subviews.flatMap { horizontalScrolls(in: $0) }
+        if let scroll = view as? UIScrollView, !(scroll is UITextView), scroll.bounds.height < 400 { found.append(scroll) }
+        return found
+    }
+
     /// How solid the lowest thing drawn is, from 0 to 1: of the rows of its
     /// band of ink (up from the lowest row with a pixel unlike the corner
     /// under the margin), the greatest share of a row that is ink. Text is
@@ -327,22 +359,34 @@ final class DecisionScreenshotTests: XCTestCase {
     }
 
     private func beads(carrying png: Data) -> [String: Bead] {
-        [
+        let body = """
+        The links file declares the new source. See https://example.com/links for the old and the new address.
+
+        Move them with:
+
+        ```
+        yardr bead show yd-train
+        ```
+        """
+        return [
             "yd-links": Bead(
                 id: "yd-links", title: "Move the links",
-                body: "The links file declares the new source. See https://example.com/links for the old and the new address.",
+                body: body,
                 stage: "new",
                 notes: [
                     BeadNote(seq: 1, kind: "note", author: "builder", text: "The test passed on a copy of the links file.", at: "2026-10-08T09:30:00Z"),
                     BeadNote(
-                        seq: 2, kind: "note", author: "yardmaster", text: "64 links still point at the old source.", at: "2026-10-08T10:15:00Z",
+                        seq: 2, kind: "note", author: "yardmaster", text: "Checked: `links.yaml` is **valid**.", at: "2026-10-08T10:15:00Z",
                         files: [BlobRef(hash: sha256Hex(png), kind: "image/png", bytes: Int64(png.count), name: "timetable.png")]
                     ),
                 ],
                 asks: [
                     BeadAsk(
                         ask: 3, question: "Move this yard's links to the declared source now?",
-                        context: ["The links file declares the new source; 64 links still point at the old one."],
+                        context: [
+                            "The links file declares the new source; **64 links** still point at the old one.",
+                            "yd-train leaves nightly with what is green.",
+                        ],
                         options: [
                             AskOption(label: "Move them now", consequence: "all 64 links point at the new source tonight"),
                             AskOption(label: "After Friday", consequence: "keep the old source until the release is out"),
@@ -354,11 +398,11 @@ final class DecisionScreenshotTests: XCTestCase {
             ),
             "yd-train": Bead(
                 id: "yd-train", title: "Release train",
-                body: "The release train leaves nightly with what is green. See https://example.com/train for the timetable.",
+                body: "The release **train** leaves nightly with what is green. See https://example.com/train for the timetable.",
                 stage: "new",
                 notes: [
                     BeadNote(seq: 1, kind: "note", author: "builder", text: "Started. The timetable is kept at https://example.com/timetable.", at: "2026-10-08T09:30:00Z"),
-                    BeadNote(seq: 2, kind: "note", author: "reviewer", text: "The nightly run is green.", at: "2026-10-08T10:15:00Z"),
+                    BeadNote(seq: 2, kind: "note", author: "reviewer", text: "The **nightly** run is `green`.", at: "2026-10-08T10:15:00Z"),
                 ],
                 asks: []
             ),

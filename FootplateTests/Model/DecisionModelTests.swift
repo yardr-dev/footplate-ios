@@ -714,12 +714,14 @@ final class DecisionModelTests: XCTestCase {
         let card = await opened("yd-links", 3)
         let first = card.state
         XCTAssertEqual(first.context, ["The links file declares the new source; 64 links still point at the old one."])
+        XCTAssertEqual(first.knownBeads, ["yd-links", "yd-train"])
 
         // The next ask has its own, as the first had, and so has this
         // one when it is opened again after it.
         card.open(yard: "laptop", bead: "yd-map", ask: 7)
         let next = await waitFor("the next ask", state: { card.state }) { $0.read && $0.ask == 7 }
         XCTAssertEqual(next.context, ["a delivery arrived from U024BE7LH in C1, who maps to nobody."])
+        XCTAssertEqual(next.knownBeads, ["yd-map"], "an ask about nothing still chips its own bead")
         card.open(yard: "laptop", bead: "yd-links", ask: 3)
         let again = await waitFor("the first ask again", state: { card.state }) { $0.read && $0.ask == 3 }
         XCTAssertEqual(again.context, first.context)

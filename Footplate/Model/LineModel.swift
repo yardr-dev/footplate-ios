@@ -261,6 +261,9 @@ struct BeadCard: Equatable, Sendable {
     var webView: String
     /// The bead's labels, body and notes; the board has none of them.
     var details: CardDetails = CardDetails()
+    /// The bead ids that chip in the description and the notes: every
+    /// id the board names.
+    var knownBeads: Set<String> = []
 }
 
 struct LineState: Equatable, Sendable {
@@ -509,6 +512,7 @@ final class LineModel {
         var details = cardDetails(read?.bead, error: read?.error, now: now(), zone: zone())
         details.notes = details.notes.map(notePictures.shown)
         card?.details = details
+        card?.knownBeads = flowBeads(board)
         return card
     }
 
@@ -989,6 +993,23 @@ private func backlogFirst(_ stages: [FlowStage]) -> [FlowStage] {
 /// One depot's flow; nil where the depot or the flow is none.
 private func flowNamed(_ board: Flows, depot: String, flow: String) -> DepotFlow? {
     board.depots.first { $0.name == depot }?.flows.first { $0.name == flow }
+}
+
+/// Every bead id the board names: on the lines, in the depots'
+/// Elsewhere, with no line, and landed. What chips in a card's
+/// description and notes, as mail's known beads chip in a letter.
+func flowBeads(_ board: Flows) -> Set<String> {
+    var ids = Set(board.unassigned.map(\.bead))
+    for depot in board.depots {
+        ids.formUnion(depot.elsewhere.map(\.bead))
+        for flow in depot.flows {
+            for stage in flow.stages {
+                ids.formUnion(stage.beads.map(\.bead))
+            }
+            ids.formUnion(flow.landings.map(\.bead))
+        }
+    }
+    return ids
 }
 
 /// Whether the board still holds what a pushed route shows: the flow of

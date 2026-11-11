@@ -621,6 +621,12 @@ final class LineModelTests: XCTestCase {
         try await waitFor("the bead read again") { [home] in (home?.beadCompleted.count ?? 0) >= 2 }
 
         let card = try XCTUnwrap(model.card(for: route))
+        XCTAssertEqual(card.knownBeads, flowBeads(richBoard()))
+        var landed = board()
+        landed.depots[1].flows[0].landings = [FlowLanding(bead: "yd-points", title: "Oil the points", landedAt: "2026-10-08T11:41:00Z")]
+        XCTAssertEqual(flowBeads(landed).count, flowBeads(board()).count + 1)
+        XCTAssertTrue(flowBeads(landed).contains("yd-points"))
+        XCTAssertEqual(flowBeads(Flows()), [])
         // The bead's details as the yard answered: its labels and body,
         // and its notes newest last whatever order they were served in
         // (notes of one seq keep the order served), each with its author

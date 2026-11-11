@@ -88,4 +88,21 @@ final class MessageTextTests: XCTestCase {
         // Its face is the Text's own: the role's, here the code's.
         XCTAssertNil(found[0].font)
     }
+
+    /// A copy of prose drawn through `MessageText` (footplate-ios-0thy):
+    /// the words entire, as written, never one link of them; none where
+    /// it has none. A code block's own Copy is the code alone, without
+    /// its fences.
+    func testCopyOfProseIsItsWordsWhole() {
+        let rows: [(text: String, copy: String?)] = [
+            ("Meet at the shed.", "Meet at the shed."),
+            ("Read https://x.example/a then.", "Read https://x.example/a then."),
+            ("a **bold**, an *italic* and `code` here", "a **bold**, an *italic* and `code` here"),
+            ("Run:\n```sh\n  cd yard\n```\nThen wait.", "Run:\n```sh\n  cd yard\n```\nThen wait."),
+            ("", nil),
+        ]
+        for (text, copy) in rows {
+            XCTAssertEqual(copyableProse(text), copy, text)
+        }
+    }
 }

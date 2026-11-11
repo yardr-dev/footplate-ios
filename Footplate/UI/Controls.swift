@@ -64,12 +64,25 @@ struct NoticeRow: View {
 /// the system opens, underlined and in the accent, so no colour alone
 /// says what is a link; the bead ids of `beads` are chips that open the
 /// bead whole, in the accent on the sunken surface, in mono, with no
-/// underline. The asker's words on a decision, a bead's on its card, mail
-/// in a conversation.
+/// underline. A decision's question; every longer prose draws through
+/// `MessageText`.
 func linkedText(_ line: String, beads: Set<String> = []) -> Text {
     var words = linked(line, beads: beads)
     styleLinks(&words)
     return Text(words)
+}
+
+/// Links in prose drawn through `MessageText`: a chip opens its bead
+/// through `openBead`, and a web address opens as before.
+@MainActor
+func proseLinks(openBead: @escaping (String) -> Void) -> OpenURLAction {
+    OpenURLAction { url in
+        if let id = chippedBead(url) {
+            openBead(id)
+            return .handled
+        }
+        return .systemAction
+    }
 }
 
 /// The links and the chips of `words` drawn as `linkedText` draws them.
@@ -111,6 +124,49 @@ struct FieldRow: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 6)
+    }
+}
+
+/// One note of a bead, on its card and in a decision's details: who
+/// wrote it, when where the card says so, its words drawn as a
+/// letter's are with their links and chips, selectable with a copy of
+/// them as written, then the pictures and files it carries.
+struct NoteRow: View {
+    var note: CardNote
+    var beads: Set<String> = []
+    var openBead: (String) -> Void = { _ in }
+    /// The bead card says when each note was written; a decision's
+    /// details say whose alone.
+    var showTime: Bool = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 8) {
+                Text(note.author)
+                    .themeType(.label)
+                    .foregroundStyle(ThemeColor.textPrimary.color)
+                if showTime, !note.at.isEmpty {
+                    Text(note.at)
+                        .themeType(.meta)
+                        .foregroundStyle(ThemeColor.textSecondary.color)
+                }
+            }
+            MessageText(text: note.text, beads: beads)
+                .environment(\.openURL, proseLinks(openBead: openBead))
+                .textSelection(.enabled)
+                .contextMenu {
+                    if let copy = copyableProse(note.text) {
+                        Button("Copy note") {
+                            UIPasteboard.general.string = copy
+                        }
+                    }
+                }
+            if note.carriesFiles {
+                NoteFiles(note: note)
+                    .padding(.top, 6)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

@@ -154,6 +154,9 @@ struct DecisionState: Equatable, Sendable {
     /// One details row for the card's own bead, first, then one for each
     /// bead the ask is about but for the card's own.
     var details: [AboutDetail] = []
+    /// The bead ids that chip in the context and the details: the rows'
+    /// own, each opening its row.
+    var knownBeads: Set<String> = []
     var options: [Choice] = []
     /// Why the recommended option, under the list.
     var why: String = ""
@@ -302,13 +305,15 @@ final class DecisionModel {
         let gated = approvable
             ? ask.run != nil || chosen > 0
             : givesCode || (chosen > 0 && needsGate(weight: weight, identity: ask.identity, options: ask.options, option: chosen))
+        let details = detailRows(of: ask, bead: bead)
         return DecisionState(
             read: true,
             ask: openedAsk,
             weighty: weight.map(weightLine),
             question: ask.question,
             context: ask.context,
-            details: detailRows(of: ask, bead: bead),
+            details: details,
+            knownBeads: Set(details.map(\.id)),
             options: ask.options.enumerated().map { index, option in
                 Choice(number: Int64(index + 1), label: option.label, consequence: option.consequence, recommended: ask.recommend == Int64(index + 1))
             },

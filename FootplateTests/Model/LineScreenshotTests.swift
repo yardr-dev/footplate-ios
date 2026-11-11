@@ -93,7 +93,24 @@ final class LineScreenshotTests: XCTestCase {
         let card = try XCTUnwrap(line.card(for: route))
         XCTAssertTrue(card.details.read)
         XCTAssertEqual(card.details.notes.map(\.author), ["mckean", "yardmaster", "train-new"])
+        XCTAssertEqual(messageBlocks(card.details.body).map(\.kind), [
+            .heading(2), .text,
+            .item(marker: "•", depth: 0), .item(marker: "•", depth: 0),
+            .text, .code, .text,
+        ])
+        XCTAssertTrue(card.knownBeads.contains("yd-greet"))
+        XCTAssertEqual(copyableProse(card.details.body), card.details.body)
+        XCTAssertEqual(copyableProse(card.details.notes[0].text), card.details.notes[0].text)
         try await render(NavigationStack { BeadCardScreen(model: line, route: route) }, scene: scene, to: dir.appendingPathComponent("bead-card.png"))
+        let markdownWindow = try await renderWindow(
+            NavigationStack { BeadCardScreen(model: line, route: route) },
+            scene: scene, to: dir.appendingPathComponent("bead-card-markdown.png"), height: 1800
+        )
+        let code = try XCTUnwrap(horizontalScrolls(in: markdownWindow).first)
+        XCTAssertEqual(horizontalScrolls(in: markdownWindow).count, 1, "the one fenced block scrolls")
+        XCTAssertEqual(code.convert(code.bounds, to: markdownWindow).minX, 20, accuracy: 2)
+        XCTAssertEqual(code.convert(code.bounds, to: markdownWindow).maxX, 402 - 20, accuracy: 2)
+        markdownWindow.isHidden = true
         // The card of a bead still being read keeps the board's facts and
         // says it is reading; one whose read is refused says so, whole.
         let shed = BeadRoute(yard: "", bead: "yd-shed")
@@ -213,13 +230,28 @@ final class LineScreenshotTests: XCTestCase {
     private func trainBead() -> Bead {
         Bead(
             id: "yd-train", title: "Release train",
-            body: "The release train leaves nightly with what is green.\nSee https://example.com/train for the timetable.",
+            body: """
+            ## What moved
+
+            Two beads **landed**: yd-greet is in, and `yd-shed` waits in review.
+
+            - Land the shed
+            - Tell the signalman
+
+            Look at it with:
+
+            ```
+            yardr bead show yd-greet
+            ```
+
+            The list is at https://example.org/docs.
+            """,
             stage: "new",
             labels: ["topic:trains", "kind:feat", "size:medium"],
             notes: [
-                BeadNote(seq: 2, kind: "note", author: "mckean", text: "Keep the night run; the day run can wait.", at: "2026-10-07T16:20:00Z"),
-                BeadNote(seq: 5, kind: "note", author: "yardmaster", text: "Plan: read the timetable, then move the departure to 02:00.", at: "2026-10-08T09:45:00Z"),
-                BeadNote(seq: 6, kind: "note", author: "train-new", text: "Moved. test: sh .yardr/test @ a1b2c3d: pass, 226 ok, 0 failed", at: "2026-10-08T11:20:00Z"),
+                BeadNote(seq: 2, kind: "note", author: "mckean", text: "**Keep** the night run; the day run can wait.", at: "2026-10-07T16:20:00Z"),
+                BeadNote(seq: 5, kind: "note", author: "yardmaster", text: "Plan: read `timetable.md`, then move the departure to 02:00.", at: "2026-10-08T09:45:00Z"),
+                BeadNote(seq: 6, kind: "note", author: "train-new", text: "Moved. Checked https://example.org/timetable; yd-greet moved next.", at: "2026-10-08T11:20:00Z"),
             ]
         )
     }
@@ -276,6 +308,55 @@ final class LineScreenshotTests: XCTestCase {
         // The screen's onDisappear lands before the next step reads the
         // model it left.
         try await Task.sleep(for: .milliseconds(200))
+    }
+
+    /// As `render`, but drawing the window whole at `height` and leaving
+    /// it up for measuring: the caller hides it.
+    private func renderWindow(
+        _ view: some View, scene: UIWindowScene, to file: URL, height: CGFloat
+    ) async throws -> UIWindow {
+        let hosting = UIHostingController(rootView: AnyView(view))
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 402, height: height)
+        window.rootViewController = hosting
+        window.makeKeyAndVisible()
+        hosting.view.frame = window.bounds
+        try await Task.sleep(for: .milliseconds(700))
+        try snapshot(window, to: file, height: height)
+        return window
+    }
+
+    /// The window as it stands, written as a PNG.
+    private func snapshot(_ window: UIWindow, to file: URL, height: CGFloat) throws {
+        window.layoutIfNeeded()
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 3
+        let image = UIGraphicsImageRenderer(bounds: window.bounds, format: format).image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        }
+        let png = try XCTUnwrap(image.pngData(), "the rendered screen has no PNG")
+        XCTAssertEqual(image.size, CGSize(width: 402, height: height))
+        try png.write(to: file)
+        XCTAssertGreaterThan(png.count, 10000, "the rendered screen looks blank")
+    }
+
+    /// The scroll views that scroll sideways: the code blocks, which are
+    /// short, beside the card's own, which fills the window.
+    private func horizontalScrolls(in view: UIView) -> [UIScrollView] {
+        var found = view.subviews.flatMap { horizontalScrolls(in: $0) }
+        if let scroll = view as? UIScrollView, !(scroll is UITextView), scroll.bounds.height < 400 { found.append(scroll) }
+        return found
+    }
+
+    /// The window drawn light and then dark, as `<name>-light.png` and
+    /// `<name>-dark.png`, whatever the simulator is set to.
+    private func shootAppearances(of window: UIWindow, named name: String, in dir: URL) async throws {
+        for (style, word) in [(UIUserInterfaceStyle.light, "light"), (.dark, "dark")] {
+            window.overrideUserInterfaceStyle = style
+            try await Task.sleep(for: .milliseconds(400))
+            try snapshot(window, to: dir.appendingPathComponent("\(name)-\(word).png"), height: window.bounds.height)
+        }
+        window.overrideUserInterfaceStyle = .unspecified
     }
 
     private func loaded() -> Loaded {
