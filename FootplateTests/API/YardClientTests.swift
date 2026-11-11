@@ -88,6 +88,15 @@ final class YardClientTests: XCTestCase {
                     files: [MailFile(hash: "497790947d4666760ce38f3c00e852c71fdb66cae849bae8e9ede352719e1581", name: "yard.jpg")]
                 )
             }),
+            ("MailPeer", #"{"to":"clerk","peer":"north","text":"Is the ledger closed?","actor":"jo"}"#, {
+                try await laptop.mailPeer(to: "clerk", peer: "north", text: "Is the ledger closed?", actor: "jo")
+            }),
+            ("MailPeer", #"{"to":"clerk","peer":"north","text":"The ledger, closed.","actor":"jo","files":[{"hash":"497790947d4666760ce38f3c00e852c71fdb66cae849bae8e9ede352719e1581","name":"ledger.jpg"}]}"#, {
+                try await laptop.mailPeer(
+                    to: "clerk", peer: "north", text: "The ledger, closed.", actor: "jo",
+                    files: [MailFile(hash: "497790947d4666760ce38f3c00e852c71fdb66cae849bae8e9ede352719e1581", name: "ledger.jpg")]
+                )
+            }),
             ("AckUserInbox", #"{"name":"jo","through":51}"#, {
                 try await laptop.ackUserInbox(name: "jo", through: 51)
             }),

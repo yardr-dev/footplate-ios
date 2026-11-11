@@ -14,7 +14,9 @@ import XCTest
 // note; the gate runs it too, and it only asserts that each screen
 // renders non-empty at phone size.
 // PNGs land in `TEST_RUNNER_CREW_SHOTS_DIR`, or the temporary
-// directory's `crew-shots` where that names none.
+// directory's `crew-shots` where that names none. A letter sent to
+// a linked yard's party stands in its bubble with no refusal under
+// the field (footplate-ios-s70v).
 @MainActor
 final class CrewScreenshotTests: XCTestCase {
     func testCrewScreensRender() async throws {
@@ -170,13 +172,13 @@ final class CrewScreenshotTests: XCTestCase {
         conversation.leave()
     }
 
-    /// A conversation with a party of a linked yard (footplate-ios-8mhz):
-    /// the party's letter read from the page, then the person's own,
-    /// which the yard tells of as a `mail` event with `to_peer`, drawn at
-    /// once in its bubble with no second page read. The Crew list holds
-    /// the conversation's row, and its tap opens the conversation under
-    /// the party's address.
-    func testAConversationWithALinkedYardsPartyShowsTheLetterThePersonSent() async throws {
+    /// A conversation with a party of a linked yard (footplate-ios-8mhz,
+    /// footplate-ios-s70v): the party's letter is read from the page, the
+    /// person replies through the field, and the yard's `mail` event with
+    /// `to_peer` draws the reply in its bubble. The Crew list holds the
+    /// conversation's row, and its tap opens the conversation under the
+    /// party's address.
+    func testAReplyToALinkedYardsPartyIsSentAndShownInTheConversation() async throws {
         let scene = try XCTUnwrap(
             UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first,
             "no window scene to render in"
@@ -206,49 +208,59 @@ final class CrewScreenshotTests: XCTestCase {
         // The party's letter is in the inbox, as the yard keeps mail
         // from `<name>@<peer>`, and is what the page holds.
         let party = Letter(
-            seq: 30, at: "2026-10-08T09:30:00Z", from: "yardmaster@yardr", to: "jo",
-            text: "The shed on this side is painted. Shall I land it?", read: true
+            seq: 30, at: "2026-10-08T09:30:00Z", from: "clerk@north", to: "jo",
+            text: "The ledger closes at noon. Is yours shut?", read: true
         )
         var read = loaded()
         read.inbox.mail.append(party)
         home.up(read)
-        home.pages["yardmaster@yardr|0"] = Page(letters: [party], more: false)
+        home.pages["clerk@north|0"] = Page(letters: [party], more: false)
 
         let dir = try shotsDirectory()
         let deadline = ContinuousClock.now + .seconds(10)
         while inbox.state.rows.isEmpty, ContinuousClock.now <= deadline {
             try await Task.sleep(for: .milliseconds(10))
         }
-        conversation.open(yard: "", with: "yardmaster@yardr")
+        conversation.open(yard: "", with: "clerk@north")
         while conversation.state.letters.isEmpty, ContinuousClock.now <= deadline {
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTAssertEqual(conversation.state.letters.map(\.mine), [false])
-        // The person's letter to the party, as the yard tells of it: the
-        // name in the other yard and the link, the person the actor.
+        conversation.draft("Ours is shut. Is the ledger closed?")
+        await conversation.send()
+        XCTAssertEqual(home.sent.map { $0.0 }, ["clerk@north"])
+        XCTAssertEqual(home.sent.map { $0.1 }, ["Ours is shut. Is the ledger closed?"])
+        XCTAssertNil(conversation.state.error, "the send was not refused")
+        XCTAssertEqual(conversation.state.draft, "")
+        // The yard tells of the sent letter with the recipient split
+        // between `to` and `to_peer`.
         home.event(Event(
             seq: 152, kind: "mail", actor: "jo", at: "2026-10-08T09:33:00Z", bead: "",
             data: [
-                "to": .string("yardmaster"), "to_peer": .string("yardr"),
-                "text": .string("Land it. I will look at it on the train."), "id": .string("m-1"),
+                "to": .string("clerk"), "to_peer": .string("north"),
+                "text": .string("Ours is shut. Is the ledger closed?"), "id": .string("m-1"),
             ]
         ))
         while conversation.state.letters.count < 2, ContinuousClock.now <= deadline {
             try await Task.sleep(for: .milliseconds(10))
         }
-        XCTAssertEqual(conversation.state.title, "yardmaster@yardr")
+        XCTAssertEqual(conversation.state.title, "clerk@north")
         XCTAssertEqual(conversation.state.letters.map(\.mine), [false, true])
-        XCTAssertEqual(home.asked.map { "\($0.0)|\($0.1)" }, ["yardmaster@yardr|0"], "the letter came by the stream, not by a page read")
-        XCTAssertTrue(inbox.state.rows.contains { $0.name == "yardmaster@yardr" && $0.line == "Land it. I will look at it on the train." })
+        XCTAssertEqual(home.asked.map { "\($0.0)|\($0.1)" }, ["clerk@north|0"], "the letter came by the stream, not by a page read")
+        XCTAssertTrue(inbox.state.rows.contains { $0.name == "clerk@north" && $0.line == "Ours is shut. Is the ledger closed?" })
 
         await notifier.refresh()
         let crew = CrewScreen(model: inbox, nav: nav, conversation: conversation, line: line, notifier: notifier)
         try await render(crew, scene: scene, to: dir.appendingPathComponent("inbox-linked-yard.png"))
-        inbox.open("yardmaster@yardr")
-        XCTAssertEqual(nav.crewPath, [ConversationRoute(yard: "", with: "yardmaster@yardr")])
-        let light = try await renderWindow(crew, scene: scene, style: .light, to: dir.appendingPathComponent("conversation-linked-yard-light.png"))
+        inbox.open("clerk@north")
+        XCTAssertEqual(nav.crewPath, [ConversationRoute(yard: "", with: "clerk@north")])
+        let light = try await renderWindow(
+            crew, scene: scene, style: .light, to: dir.appendingPathComponent("conversation-mailpeer-sent-light.png")
+        )
         defer { light.isHidden = true }
-        let dark = try await renderWindow(crew, scene: scene, style: .dark, to: dir.appendingPathComponent("conversation-linked-yard-dark.png"))
+        let dark = try await renderWindow(
+            crew, scene: scene, style: .dark, to: dir.appendingPathComponent("conversation-mailpeer-sent-dark.png")
+        )
         defer { dark.isHidden = true }
         conversation.leave()
     }

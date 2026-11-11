@@ -82,6 +82,27 @@ final class FollowTests: XCTestCase {
         XCTAssertEqual(fake.taken().path, "/user/events?after=151")
     }
 
+    func testMailIsSentAsTheUserAndSplitToMailPeerOnTheAt() async throws {
+        let yards = await makeYards()
+        let laptop = try await follow(yards, yardName: "laptop")
+        _ = try await laptop.waitFor("up") { $0.status == .up }
+        try await waitForRequests(fake, 11)
+        for _ in 1...11 {
+            _ = fake.taken() // the load's calls and the stream
+        }
+        try await laptop.mail(to: "yardmaster", text: "Land it.", files: [])
+        let mail = fake.taken()
+        XCTAssertEqual(mail.path, "/user/call/Mail")
+        XCTAssertEqual(mail.header("X-Edge-Yard"), "laptop")
+        assertBody(mail, #"{"to":"yardmaster","text":"Land it.","actor":"jo"}"#)
+        // An address of a linked yard goes to MailPeer, split on the @.
+        try await laptop.mail(to: "clerk@north", text: "Is the ledger closed?", files: [])
+        let peer = fake.taken()
+        XCTAssertEqual(peer.path, "/user/call/MailPeer")
+        XCTAssertEqual(peer.header("X-Edge-Yard"), "laptop")
+        assertBody(peer, #"{"to":"clerk","peer":"north","text":"Is the ledger closed?","actor":"jo"}"#)
+    }
+
     func testStateChangesAreObserved() async throws {
         let yards = await makeYards()
         let laptop = try await follow(yards, yardName: "laptop")

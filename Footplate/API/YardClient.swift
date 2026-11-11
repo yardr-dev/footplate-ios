@@ -244,6 +244,17 @@ final class YardClient: Sendable {
         _ = try await call(method: "Mail", args: args)
     }
 
+    /// Sends mail to `to` of the linked yard `peer`: what the yard
+    /// queues is not read, and the `mail` event follows. Refused when
+    /// the link carries no mail out, with nothing queued.
+    func mailPeer(to: String, peer: String, text: String, actor: String, files: [MailFile] = []) async throws {
+        var args: [String: Any] = ["to": to, "peer": peer, "text": text, "actor": actor]
+        if !files.isEmpty {
+            args["files"] = files.map { ["hash": $0.hash, "name": $0.name] }
+        }
+        _ = try await call(method: "MailPeer", args: args)
+    }
+
     /// Marks the user's mail read through a seq.
     func ackUserInbox(name: String, through: Int64) async throws {
         _ = try await call(method: "AckUserInbox", args: ["name": name, "through": through])

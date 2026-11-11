@@ -547,7 +547,14 @@ extension Follower: Followed {
     }
 
     func mail(to: String, text: String, files: [MailFile]) async throws {
-        try await client.mail(to: to, text: text, actor: me(), files: files)
+        if let at = to.firstIndex(of: "@") {
+            try await client.mailPeer(
+                to: String(to[..<at]), peer: String(to[to.index(after: at)...]),
+                text: text, actor: me(), files: files
+            )
+        } else {
+            try await client.mail(to: to, text: text, actor: me(), files: files)
+        }
     }
 
     func putBlob(_ bytes: Data) async throws -> BlobRef {

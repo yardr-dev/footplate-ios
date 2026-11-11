@@ -16,6 +16,7 @@ enum Canned {
         "Conversation": #"{"result": [{"seq": 13, "at": "2026-10-08T09:30:00Z", "from": "yardmaster", "to": "jo", "text": "The shed is painted. Shall I land it?", "read": false}, {"seq": 36, "at": "2026-10-08T09:30:00Z", "from": "jo", "to": "yardmaster", "text": "On the train. Land the shed when it is green.", "read": false, "via": "phone"}], "more": true}"#,
         "PutBlob": #"{"result": {"hash": "497790947d4666760ce38f3c00e852c71fdb66cae849bae8e9ede352719e1581", "type": "image/jpeg", "bytes": 11}}"#,
         "Mail": "{}",
+        "MailPeer": "{}",
         "AckUserInbox": "{}",
         "UserNotifications": #"{"result": {"notifications": [{"seq": 10, "at": "2026-10-08T09:30:00Z", "kind": "created", "bead": "yd-shed", "text": "yd-shed created (all) by yardmaster originator=jo stage=new title=Paint the shed type=task", "read": false}, {"seq": 11, "at": "2026-10-08T09:30:00Z", "kind": "noted", "bead": "yd-shed", "text": "yd-shed noted (all) by yardmaster note=1 on \"Paint the shed\"", "read": false}], "unread": 2, "last": 11}}"#,
         "AckUserNotifications": "{}",
