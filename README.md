@@ -114,12 +114,20 @@ stand-in edge below.
 and logout, one account's pairing, `/user/me`, every `/user/call/<Method>`
 answered from `FootplateTests/FakeYard/Canned.swift`'s board, the
 `/user/events` stream with a heartbeat every 25 seconds, and a page per
-bead. It checks no credentials and serves `127.0.0.1` alone. It prints
-its URL, for the build's `EDGE_URL`, and every request to standard
-error:
+bead. It checks no credentials and serves `127.0.0.1` alone. A typed code
+pairs through the PAKE and a paired device calls sealed, as through a
+yard: that half is the Go yard-helper (`ChannelBinding/fakeedge/`, over
+the channel binding), which the script starts with `go run` and routes
+`/user/pair` PAKE bodies and all of `/user/e2e` to; the board stays in
+Python, which the helper forwards opened inner calls back to. Go must be
+on `PATH` (`brew install go`); without it the stand-in refuses to run.
+It prints its URL, for the build's `EDGE_URL`, and every request to
+standard error:
 
 Run `python3 scripts/test-fake-edge.py` to check that values in its JSON
-responses and bead pages stay data.
+responses and bead pages stay data, and that PAKE bodies and the channel
+route to the yard half. Run `go test ./fakeedge/` from `ChannelBinding/`
+to check the yard half pairs a typed code and serves a sealed call.
 
 ```sh
 edge_dir=$(mktemp -d)
@@ -145,11 +153,9 @@ xcodebuild test -project Footplate.xcodeproj -scheme Footplate \
   -only-testing:FootplateUITests/LineScreenTests
 ```
 
-The stand-in answers a pairing plain and speaks no channel, and a typed
-code is redeemed through the PAKE now (never plain at the edge), so
-`AAPairForHand`, which types one, cannot pair against it until the stand-in
-speaks both (footplate-ios-354f); the classes after it start from a paired
-simulator and wait on that too.
+The stand-in speaks the PAKE and the channel through its yard half,
+so `AAPairForHand`, which types a code, pairs against it; the classes
+after it start from a paired simulator.
 
 `LineScreenTests` checks that the app reads the canned line board from
 the stand-in edge. `MediaScreenTests` opens `yd-gate`, whose notes carry
@@ -161,7 +167,9 @@ shell exits, including after an interrupted test run.
 
 The pairing and the notification answer stay in the simulator, so a
 later run pairs nothing and starts from the tabs. For a fresh run,
-uninstall the test build first:
+uninstall the test build first — and after any restart of the
+stand-in, whose yard half mints a new channel keypair every run: a
+pairing pinned to the last run's key seals nothing to the next:
 
 ```sh
 xcrun simctl uninstall 7EC91353-EDF5-4E93-B644-46A44BA6CFCB dev.yardr.footplate.edge

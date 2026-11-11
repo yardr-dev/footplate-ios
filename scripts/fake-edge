@@ -5,7 +5,13 @@
 # /user/events stream with a heartbeat every 25 seconds, a page per
 # bead, and three pictures (/user/blobs/<hash>) that the notes of yd-gate
 # carry, for the Media grid. It checks no credentials and serves loopback
-# alone.
+# alone. A typed code pairs through the PAKE and a paired device calls
+# sealed, as through a yard; that half is the Go yard-helper beside the
+# channel binding (ChannelBinding/fakeedge/), which this script starts
+# with `go run` and routes to: a /user/pair body holding "pake", and
+# all of /user/e2e. The board stays here: the helper forwards the
+# inner calls its envelopes open back here as plain HTTP. Go must be
+# on PATH (brew install go); without it the stand-in refuses to run.
 #
 #   scripts/fake-edge [port]   # 0 or left out: a free loopback port
 #
@@ -30,9 +36,14 @@
 # The UI tests stay by hand: nothing runs this from the gate.
 import hashlib
 import html
+import http.client
 import json
+import os
 import re
+import shutil
+import signal
 import struct
+import subprocess
 import sys
 import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -43,6 +54,27 @@ from urllib.parse import urlsplit
 ROOT = Path(__file__).resolve().parent.parent
 CANNED = ROOT / "FootplateTests" / "FakeYard" / "Canned.swift"
 HEARTBEAT_EVERY = 25
+
+# The yard half's address, once main has started it; the proxy reads it.
+HELPER_HOST = "127.0.0.1"
+HELPER_PORT = 0
+
+
+def route(path, raw):
+    """Where a request is served: "helper" (the Go yard) or "local"
+    (here). A /user/pair body holding "pake" is a PAKE step for the
+    yard, and all of /user/e2e is the yard's channel; everything else
+    the edge answers itself, a plain pairing among it."""
+    if path == "/user/e2e":
+        return "helper"
+    if path == "/user/pair":
+        try:
+            body = json.loads(raw) if raw else {}
+        except ValueError:
+            return "local"
+        if isinstance(body, dict) and "pake" in body:
+            return "helper"
+    return "local"
 
 # One reply per line of Canned.swift's dicts: `"name": #"..."#`
 # (the raw literal holds no `"#`, so the match ends at the line's
@@ -57,6 +89,18 @@ FLOWS_SPLIT = '"# + backlog + #"'
 
 def json_body(value):
     return json.dumps(value, separators=(",", ":"))
+
+
+def relay_response(answer, output):
+    """Relays an answer as it arrives, including a chunked long-lived
+    response: read1 returns the available chunk without waiting for the
+    next heartbeat to fill a large read."""
+    while True:
+        chunk = answer.read1(65536)
+        if not chunk:
+            return
+        output.write(chunk)
+        output.flush()
 
 
 def solid_png(width, height, rgb):
@@ -182,21 +226,62 @@ class StandIn(BaseHTTPRequestHandler):
     def _json_value(self, status, value):
         self._json(status, json_body(value))
 
-    def _body_object(self):
+    def _body_raw(self):
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             length = 0
-        raw = self.rfile.read(length) if length else b""
+        return self.rfile.read(length) if length else b""
+
+    def _body_object(self):
+        raw = self._body_raw()
         try:
             value = json.loads(raw) if raw else {}
             return value if isinstance(value, dict) else {}
         except ValueError:
             return {}
 
+    def _proxy(self, raw):
+        # Forwards this request to the yard half and relays its answer
+        # with its status: whole where it names a length, and chunk by
+        # chunk where it streams (the sealed events). A yard half that
+        # is gone, or that goes while a stream is relayed, ends the
+        # relay instead of raising: a relay thread never prints at
+        # shutdown, where the interpreter aborts on the contention.
+        headers = {}
+        for name, value in self.headers.items():
+            if name.lower() in ("host", "content-length", "connection",
+                                "keep-alive", "proxy-authenticate",
+                                "proxy-authorization", "te", "trailer",
+                                "transfer-encoding", "upgrade"):
+                continue
+            headers[name] = value
+        try:
+            conn = http.client.HTTPConnection(HELPER_HOST, HELPER_PORT)
+            conn.request(self.command, self.path, body=raw, headers=headers)
+            answer = conn.getresponse()
+        except Exception as error:
+            self._send(502, f"the yard half is not answering: {error}\n", "text/plain")
+            return
+        try:
+            self.send_response(answer.status)
+            for name in ("Content-Type", "Content-Length", "Cache-Control",
+                         "X-Edge-E2E", "X-Edge-E2E-Call"):
+                value = answer.getheader(name)
+                if value is not None:
+                    self.send_header(name, value)
+            self.end_headers()
+            relay_response(answer, self.wfile)
+        except Exception:
+            pass
+        finally:
+            conn.close()
+
     def do_GET(self):  # noqa: N802
         split = urlsplit(self.path)
-        if split.path == "/kratos/self-service/login/api":
+        if route(split.path, b"") == "helper":
+            self._proxy(b"")
+        elif split.path == "/kratos/self-service/login/api":
             self._json_value(200, {"id": mint("flow"), "type": "api", "ui": {"method": "POST", "nodes": []}})
         elif split.path == "/user/me":
             yard = self.headers.get("X-Edge-Yard") or "south"
@@ -233,8 +318,14 @@ class StandIn(BaseHTTPRequestHandler):
                 },
             })
         elif split.path == "/user/pair":
+            raw = self._body_raw()
+            if route(split.path, raw) == "helper":
+                self._proxy(raw)
+                return
             yard = self.headers.get("X-Edge-Yard") or "south"
             self._json_value(200, {"token": mint("stand-in-token"), "user": "jo", "device": "phone", "yard": yard})
+        elif split.path == "/user/e2e":
+            self._proxy(self._body_raw())
         elif split.path.startswith("/user/call/"):
             method = split.path[len("/user/call/"):]
             bead = self._body_object().get("bead") if method == "Bead" else None
@@ -269,7 +360,65 @@ class StandIn(BaseHTTPRequestHandler):
             pass
 
 
+def start_yard(upstream):
+    """Runs the yard half over the upstream edge and answers its
+    process: Go must be on PATH, and the helper must print its URL,
+    or the stand-in refuses to run half-served."""
+    if shutil.which("go") is None:
+        sys.exit("scripts/fake-edge: the stand-in's yard half needs Go on PATH "
+                 "(brew install go); refusing to serve half a stand-in")
+    try:
+        proc = subprocess.Popen(
+            ["go", "run", "./fakeedge", upstream],
+            cwd=ROOT / "ChannelBinding",
+            stdout=subprocess.PIPE, stderr=sys.stderr, text=True,
+            start_new_session=True)
+    except OSError as error:
+        sys.exit(f"scripts/fake-edge: cannot start the yard half: {error}")
+    try:
+        line = proc.stdout.readline()
+    except BaseException:
+        # SIGINT and the stand-in's SIGTERM handler can interrupt the
+        # startup wait too; the process group already exists then.
+        stop_yard(proc)
+        raise
+    if not line.startswith("http://"):
+        stop_yard(proc)
+        sys.exit("scripts/fake-edge: the yard half printed no URL; "
+                 "refusing to serve half a stand-in")
+    split = urlsplit(line.strip())
+    if not split.hostname or not split.port:
+        stop_yard(proc)
+        sys.exit(f"scripts/fake-edge: the yard half printed no URL in {line.strip()!r}; "
+                 "refusing to serve half a stand-in")
+    return proc, split.hostname, split.port
+
+
+def stop_yard(proc):
+    """Stops the yard half by its process group: `go run` and the
+    helper it built go together, so no by-hand run leaves one."""
+    if proc.poll() is not None:
+        return
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.wait()
+
+
+def _terminate(signum, frame):
+    raise KeyboardInterrupt
+
+
 def main(argv):
+    global HELPER_HOST, HELPER_PORT
     port = 0
     if len(argv) > 2:
         sys.exit("usage: scripts/fake-edge [port]")
@@ -281,17 +430,24 @@ def main(argv):
     server = ThreadingHTTPServer(("127.0.0.1", port), StandIn)
     server.daemon_threads = True
     url = "http://127.0.0.1:%d" % server.server_address[1]
-    # The URL alone on standard output, for EDGE_URL=$(scripts/fake-edge).
-    sys.stdout.write(url + "\n")
-    sys.stdout.flush()
-    sys.stderr.write("stand-in edge at %s (%d replies from %s)\n" % (url, len(REPLIES), CANNED))
-    sys.stderr.flush()
+    # The by-hand recipe stops the edge by its pid: SIGTERM ends here
+    # as KeyboardInterrupt does, including while `go run` starts.
+    signal.signal(signal.SIGTERM, _terminate)
+    proc = None
     try:
+        proc, HELPER_HOST, HELPER_PORT = start_yard(url)
+        # The URL alone on standard output, for EDGE_URL=$(scripts/fake-edge).
+        sys.stdout.write(url + "\n")
+        sys.stdout.flush()
+        sys.stderr.write("stand-in edge at %s (%d replies from %s)\n" % (url, len(REPLIES), CANNED))
+        sys.stderr.flush()
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
         server.server_close()
+        if proc is not None:
+            stop_yard(proc)
 
 
 if __name__ == "__main__":

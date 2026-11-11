@@ -8,6 +8,7 @@ import sys
 import unittest
 import zlib
 from pathlib import Path
+from unittest.mock import patch
 
 
 sys.dont_write_bytecode = True
@@ -47,6 +48,78 @@ class FakeEdgeResponseTests(unittest.TestCase):
         files = [[f["hash"] for f in note.get("files", [])] for note in result["notes"]]
         self.assertEqual([len(note) for note in files], [0, 1, 2])
         self.assertEqual({h for note in files for h in note}, set(fake_edge.BLOBS))
+
+    def test_a_pake_body_and_the_channel_go_to_the_yard_half(self):
+        route = fake_edge.route
+        pake = json.dumps({"pake": {"step": "start", "msg": "AA"}}).encode()
+        self.assertEqual(route("/user/pair", pake), "helper")
+        self.assertEqual(route("/user/e2e", b"\x00\x01"), "helper")
+        self.assertEqual(route("/user/e2e", b""), "helper")
+
+    def test_a_plain_pairing_and_everything_else_stays_here(self):
+        route = fake_edge.route
+        self.assertEqual(route("/user/pair", json.dumps({"code": "K7QM-2XPD"}).encode()), "local")
+        self.assertEqual(route("/user/pair", json.dumps({"sealed": "AA"}).encode()), "local")
+        self.assertEqual(route("/user/pair", b""), "local")
+        self.assertEqual(route("/user/pair", b"not json"), "local")
+        self.assertEqual(route("/user/pair", b"[1, 2]"), "local")
+        self.assertEqual(route("/user/me", b""), "local")
+        self.assertEqual(route("/user/call/Flows", b"{}"), "local")
+        self.assertEqual(route("/user/events", b""), "local")
+
+    def test_a_sealed_stream_is_relayed_before_the_next_chunk_arrives(self):
+        class Answer:
+            def __init__(self):
+                self.reads = 0
+
+            def read1(inner, size):
+                self.assertEqual(size, 65536)
+                inner.reads += 1
+                if inner.reads == 1:
+                    return b"first heartbeat\n"
+                if inner.reads == 2:
+                    self.assertEqual(output.parts, [b"first heartbeat\n"])
+                    self.assertEqual(output.flushes, 1)
+                    return b"second heartbeat\n"
+                self.assertEqual(inner.reads, 3)
+                return b""
+
+            def read(inner, size):
+                raise AssertionError("a whole read would wait for later stream chunks")
+
+        class Output:
+            def __init__(self):
+                self.parts = []
+                self.flushes = 0
+
+            def write(self, chunk):
+                self.parts.append(chunk)
+
+            def flush(self):
+                self.flushes += 1
+
+        output = Output()
+        fake_edge.relay_response(Answer(), output)
+        self.assertEqual(output.parts, [b"first heartbeat\n", b"second heartbeat\n"])
+        self.assertEqual(output.flushes, 2)
+
+    def test_interrupting_helper_startup_stops_its_process_group(self):
+        class Pipe:
+            def readline(self):
+                raise KeyboardInterrupt
+
+        class Process:
+            def __init__(self):
+                self.pid = 123
+                self.stdout = Pipe()
+
+        process = Process()
+        with patch.object(fake_edge.shutil, "which", return_value="/usr/bin/go"), \
+             patch.object(fake_edge.subprocess, "Popen", return_value=process), \
+             patch.object(fake_edge, "stop_yard") as stop:
+            with self.assertRaises(KeyboardInterrupt):
+                fake_edge.start_yard("http://127.0.0.1:12345")
+        stop.assert_called_once_with(process)
 
 
 if __name__ == "__main__":
