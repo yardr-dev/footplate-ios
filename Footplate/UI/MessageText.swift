@@ -15,7 +15,13 @@ import UIKit
 private let apartGap: CGFloat = 12
 private let nearGap: CGFloat = 6
 
-struct MessageText: View {
+// Equatable on its words and beads alone (footplate-ios-g0jx): the
+// conversation draws it `.equatable()`, so a letter already drawn is
+// not read into blocks again when the screen redraws for another
+// letter or for the draft. The faces below still follow the person's
+// text size through `BlockView`'s scaled metric, which SwiftUI keeps
+// current without this body running again.
+struct MessageText: View, Equatable {
     let text: String
     var beads: Set<String> = []
 

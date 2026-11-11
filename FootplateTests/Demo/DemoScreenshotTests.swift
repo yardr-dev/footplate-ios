@@ -97,10 +97,10 @@ final class DemoScreenshotTests: XCTestCase {
         demo.nav.openConversation(yard: "demo", with: "yardmaster")
         demo.conversation.open(yard: "demo", with: "yardmaster")
         defer { demo.conversation.leave() }
-        while demo.conversation.state.letters.count < 4, ContinuousClock.now <= deadline {
+        while demo.conversation.state.letters.count < 30, ContinuousClock.now <= deadline {
             try await Task.sleep(for: .milliseconds(10))
         }
-        XCTAssertEqual(demo.conversation.state.letters.count, 4)
+        XCTAssertEqual(demo.conversation.state.letters.count, 30)
         try await render(tabs(), scene: scene, size: phone, style: .dark, to: dir.appendingPathComponent("conversation-iphone-dark.png"))
         demo.nav.crewPath = []
         demo.nav.place = .decide

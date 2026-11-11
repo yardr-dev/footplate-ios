@@ -25,14 +25,17 @@ final class DemoYardTests: XCTestCase {
         let yard = demoYard()
         XCTAssertEqual(yard.me, Me(user: "guest", saidBy: "phone", yard: "demo", yardmaster: "yardmaster"))
         XCTAssertEqual(yard.crew.map(\.name), ["yardmaster", "signalman", "shunter"])
-        // The unread first, oldest first; then the read, newest first.
+        // The unread first, oldest first; then the read, newest first:
+        // the long thread is all read, so the two unread stand before
+        // it and the read run newest first under them.
         let inbox = yard.inbox(limit: 0)
-        XCTAssertEqual(inbox.mail.map(\.seq), [4, 5, 3, 2])
+        XCTAssertEqual(Array(inbox.mail.map(\.seq).prefix(4)), [294, 295, 293, 292])
+        XCTAssertEqual(inbox.mail.count, 198)
         XCTAssertEqual(inbox.unread, 2)
-        XCTAssertEqual(inbox.last, 5)
+        XCTAssertEqual(inbox.last, 295)
         XCTAssertEqual(inbox.from, ["yardmaster"])
-        XCTAssertEqual(yard.inbox(limit: 1).mail.map(\.seq), [4])
-        XCTAssertEqual(yard.user("guest"), User(name: "guest", cursor: 3, notificationCursor: 2))
+        XCTAssertEqual(yard.inbox(limit: 1).mail.map(\.seq), [294])
+        XCTAssertEqual(yard.user("guest"), User(name: "guest", cursor: 293, notificationCursor: 2))
         // One question to answer, a routine one: no weight, so no unlock,
         // and nothing a phone cannot give.
         let open = yard.asks.open
@@ -89,21 +92,32 @@ final class DemoYardTests: XCTestCase {
     func testAConversationPagesBackwardsOldestFirst() {
         let yard = demoYard()
         let newest = yard.conversation(a: "guest", b: "yardmaster", limit: 2, before: 0)
-        XCTAssertEqual(newest.letters.map(\.seq), [4, 5])
+        XCTAssertEqual(newest.letters.map(\.seq), [294, 295])
         XCTAssertTrue(newest.more)
-        let older = yard.conversation(a: "guest", b: "yardmaster", limit: 2, before: 4)
-        XCTAssertEqual(older.letters.map(\.seq), [1, 2])
-        XCTAssertFalse(older.more)
+        let older = yard.conversation(a: "guest", b: "yardmaster", limit: 2, before: 294)
+        XCTAssertEqual(older.letters.map(\.seq), [291, 292])
+        XCTAssertTrue(older.more)
+        // The long thread behind them (footplate-ios-g0jx): a page of
+        // thirty from its middle, pictures among its letters, and the
+        // whole of it read with no limit.
+        let middle = yard.conversation(a: "guest", b: "yardmaster", limit: 30, before: 291)
+        XCTAssertEqual(middle.letters.map(\.seq), (261...290).map(Int64.init))
+        XCTAssertTrue(middle.more)
+        XCTAssertEqual(middle.letters.filter { !$0.files.isEmpty }.count, 2)
+        let whole = yard.conversation(a: "guest", b: "yardmaster", limit: 0, before: 0)
+        XCTAssertEqual(whole.letters.count, 294)
+        XCTAssertFalse(whole.more)
+        XCTAssertEqual(whole.letters.filter { !$0.files.isEmpty }.count, 10)
         // What the person sent is in it; what another wrote is not.
-        XCTAssertEqual(yard.conversation(a: "guest", b: "signalman", limit: 30, before: 0).letters.map(\.seq), [3])
+        XCTAssertEqual(yard.conversation(a: "guest", b: "signalman", limit: 30, before: 0).letters.map(\.seq), [293])
     }
 
     func testMailIsAnEventTheBoardReads() throws {
         var yard = demoYard()
         yard.mail(to: "yardmaster", text: "Land it today", files: [])
-        XCTAssertEqual(yard.head, 6)
+        XCTAssertEqual(yard.head, 296)
         let event = try XCTUnwrap(yard.events.last)
-        XCTAssertEqual(event.seq, 6)
+        XCTAssertEqual(event.seq, 296)
         XCTAssertEqual(event.kind, "mail")
         XCTAssertEqual(event.actor, "guest")
         XCTAssertEqual(event.text("to"), "yardmaster")
@@ -120,14 +134,14 @@ final class DemoYardTests: XCTestCase {
 
     func testReadingTheMailAndTheNoticesIsToldOnce() throws {
         var yard = demoYard()
-        yard.ackInbox(through: 5)
+        yard.ackInbox(through: 295)
         XCTAssertEqual(yard.inbox(limit: 0).unread, 0)
-        XCTAssertEqual(yard.user("guest").cursor, 5)
+        XCTAssertEqual(yard.user("guest").cursor, 295)
         yard.ackNotifications(through: 3)
         XCTAssertEqual(yard.notifications.unread, 0)
         XCTAssertEqual(yard.events.map(\.kind), ["mail_read", "notifications_read"])
         XCTAssertEqual(yard.events.first?.text("reader"), "guest")
-        XCTAssertEqual(yard.events.first?.number("through"), 5)
+        XCTAssertEqual(yard.events.first?.number("through"), 295)
         // Behind the cursor: nothing is read, so nothing is told.
         yard.ackInbox(through: 3)
         yard.ackNotifications(through: 1)

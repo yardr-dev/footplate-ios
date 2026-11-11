@@ -81,6 +81,24 @@ final class MessageTextTests: XCTestCase {
         XCTAssertNil(found[4].font)
     }
 
+    // The conversation draws a letter `.equatable()` (footplate-ios-g0jx),
+    // so the equality this leans on must hold exactly where the words
+    // and the beads are the same, and nowhere else.
+    func testALetterIsTheSameDrawnThingOnlyForTheSameWordsAndBeads() {
+        XCTAssertEqual(
+            MessageText(text: "a **bold** yd-links", beads: beads),
+            MessageText(text: "a **bold** yd-links", beads: beads)
+        )
+        XCTAssertNotEqual(
+            MessageText(text: "a **bold** yd-links", beads: beads),
+            MessageText(text: "a plain yd-links", beads: beads)
+        )
+        XCTAssertNotEqual(
+            MessageText(text: "a **bold** yd-links", beads: beads),
+            MessageText(text: "a **bold** yd-links", beads: [])
+        )
+    }
+
     func testACodeBlockHoldsNoChipAndItsWordsAsTheyStand() {
         let found = runs("```sh\nyardr bead show yd-links\n```")
         XCTAssertEqual(found.map(\.words), ["yardr bead show yd-links"])

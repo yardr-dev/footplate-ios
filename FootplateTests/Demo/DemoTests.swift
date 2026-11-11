@@ -138,10 +138,10 @@ final class DemoTests: XCTestCase {
 
         demo.conversation.open(yard: "demo", with: "yardmaster")
         defer { demo.conversation.leave() }
-        try await until("the conversation is read") { demo.conversation.state.letters.count == 4 }
+        try await until("the conversation is read") { demo.conversation.state.letters.count == 30 }
         demo.conversation.draft("Land it today")
         await demo.conversation.send()
-        try await until("the letter comes back as its event") { demo.conversation.state.letters.count == 5 }
+        try await until("the letter comes back as its event") { demo.conversation.state.letters.count == 31 }
         let sent = try XCTUnwrap(demo.conversation.state.letters.last)
         XCTAssertTrue(sent.mine)
         XCTAssertEqual(sent.text, "Land it today")
@@ -173,7 +173,7 @@ final class DemoTests: XCTestCase {
         defer { demo.close() }
         demo.conversation.open(yard: "demo", with: "yardmaster")
         defer { demo.conversation.leave() }
-        try await until("the conversation is read") { demo.conversation.state.letters.count == 4 }
+        try await until("the conversation is read") { demo.conversation.state.letters.count == 30 }
         let png = UIGraphicsImageRenderer(size: CGSize(width: 8, height: 8)).pngData { context in
             UIColor.red.setFill()
             context.fill(CGRect(x: 0, y: 0, width: 8, height: 8))
@@ -181,7 +181,7 @@ final class DemoTests: XCTestCase {
         demo.conversation.attach(bytes: png, name: "shed.png", yard: "demo", with: "yardmaster")
         try await until("the picture is shrunk") { demo.conversation.state.attached != nil }
         await demo.conversation.send()
-        try await until("the picture's letter comes back") { demo.conversation.state.letters.count == 5 }
+        try await until("the picture's letter comes back") { demo.conversation.state.letters.count == 31 }
         XCTAssertEqual(demo.conversation.state.letters.last?.mine, true)
         XCTAssertEqual(demo.conversation.state.letters.last?.images.count, 1)
         XCTAssertTrue(FileManager.default.fileExists(atPath: demo.folder.path))
@@ -254,7 +254,9 @@ final class DemoTests: XCTestCase {
         XCTAssertTrue(asked.contains("POST /user/call/AnswerAsk"))
         XCTAssertTrue(asked.contains("POST /user/call/Flows"))
         XCTAssertTrue(asked.contains("GET /user/events"))
-        let yardPaths = asked.filter { $0 == "GET /user/me" || $0 == "GET /user/events" || $0.hasPrefix("POST /user/call/") }
+        let yardPaths = asked.filter {
+            $0 == "GET /user/me" || $0 == "GET /user/events" || $0.hasPrefix("POST /user/call/") || $0.hasPrefix("GET /user/blobs/")
+        }
         XCTAssertEqual(asked, yardPaths)
 
         services.leaveDemo()

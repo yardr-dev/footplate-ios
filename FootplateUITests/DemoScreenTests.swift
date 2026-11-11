@@ -76,7 +76,10 @@ final class DemoScreenTests: XCTestCase {
         field.tap()
         field.typeText("Run this:\n```\nselect 1;\nselect 2;\n```")
         app.buttons["Send"].tap()
-        let copy = app.buttons["code-copy"]
+        // Every letter of the thread stands in the tree now, each
+        // fenced one with its Copy: the one on the screen serves.
+        let copy = app.buttons.matching(NSPredicate(format: "identifier == 'code-copy'"))
+            .allElementsBoundByIndex.last { $0.frame.intersects(app.frame) } ?? app.buttons["code-copy"]
         XCTAssertTrue(copy.waitForExistence(timeout: 10))
         XCTAssertEqual(copy.label, "Copy code")
         attach(app, "Demo conversation with a code block")

@@ -38,9 +38,9 @@ final class DemoTransportTests: XCTestCase {
         let transport = DemoTransport()
         let loaded = try await client(transport).load()
         XCTAssertEqual(loaded.me, Me(user: "guest", saidBy: "phone", yard: "demo", yardmaster: "yardmaster"))
-        XCTAssertEqual(loaded.head, 5)
+        XCTAssertEqual(loaded.head, 295)
         XCTAssertEqual(loaded.settings.operator, "guest")
-        XCTAssertEqual(loaded.user, User(name: "guest", cursor: 3, notificationCursor: 2))
+        XCTAssertEqual(loaded.user, User(name: "guest", cursor: 293, notificationCursor: 2))
         XCTAssertEqual(loaded.crew.map(\.name), ["yardmaster", "signalman", "shunter"])
         XCTAssertEqual(loaded.inbox.unread, 2)
         XCTAssertEqual(loaded.notifications.unread, 1)
@@ -55,10 +55,10 @@ final class DemoTransportTests: XCTestCase {
     func testTheCallsAScreenMakesAreAnswered() async throws {
         let client = try client(DemoTransport())
         let page = try await client.conversation(a: "guest", b: "yardmaster", limit: 30)
-        XCTAssertEqual(page.letters.map(\.seq), [1, 2, 4, 5])
-        XCTAssertFalse(page.more)
-        let older = try await client.conversation(a: "guest", b: "yardmaster", limit: 1, before: 5)
-        XCTAssertEqual(older.letters.map(\.seq), [4])
+        XCTAssertEqual(page.letters.map(\.seq), Array(265...292) + [294, 295])
+        XCTAssertTrue(page.more)
+        let older = try await client.conversation(a: "guest", b: "yardmaster", limit: 1, before: 295)
+        XCTAssertEqual(older.letters.map(\.seq), [294])
         XCTAssertTrue(older.more)
         let bead = try await client.bead("yd-4k2m")
         XCTAssertEqual(bead.title, "Cache the departures board")
@@ -66,7 +66,7 @@ final class DemoTransportTests: XCTestCase {
         let flows = try await client.flows()
         XCTAssertEqual(flows.depots.map(\.name), ["timetable"])
         XCTAssertEqual(flows.travelling, 2)
-        try await client.ackUserInbox(name: "guest", through: 5)
+        try await client.ackUserInbox(name: "guest", through: 295)
         try await client.ackUserNotifications(name: "guest", through: 3)
         let inbox = try await client.userInbox(name: "guest", limit: 0)
         XCTAssertEqual(inbox.unread, 0)
@@ -75,21 +75,21 @@ final class DemoTransportTests: XCTestCase {
     func testAWriteIsToldToTheStreamOpenBeforeItAndToOneOpenedAfterIt() async throws {
         let client = try client(DemoTransport())
         try await within("the events of two writes") {
-            var open = client.events(after: 5).makeAsyncIterator()
+            var open = client.events(after: 295).makeAsyncIterator()
             try await client.mail(to: "yardmaster", text: "Land it today", actor: "guest")
             let told = try await open.next()
-            XCTAssertEqual(told?.seq, 6)
+            XCTAssertEqual(told?.seq, 296)
             XCTAssertEqual(told?.kind, "mail")
             XCTAssertEqual(told?.text("text"), "Land it today")
             // A stream opened after it is told what it missed first.
-            var late = client.events(after: 5).makeAsyncIterator()
+            var late = client.events(after: 295).makeAsyncIterator()
             let replay = try await late.next()
-            XCTAssertEqual(replay?.seq, 6)
+            XCTAssertEqual(replay?.seq, 296)
             // And one opened after the head is told nothing before the next.
-            var after = client.events(after: 6).makeAsyncIterator()
+            var after = client.events(after: 296).makeAsyncIterator()
             try await client.answerAsk(bead: "yd-4k2m", ask: 3, option: 1, words: "", actor: "guest")
             let next = try await after.next()
-            XCTAssertEqual(next?.seq, 7)
+            XCTAssertEqual(next?.seq, 297)
             XCTAssertEqual(next?.kind, "noted")
             XCTAssertEqual(next?.bead, "yd-4k2m")
         }
@@ -110,13 +110,13 @@ final class DemoTransportTests: XCTestCase {
         // to read it.
         let client = try client(DemoTransport(heartbeat: .milliseconds(1)))
         try await within("forty events") {
-            var events = client.events(after: 5).makeAsyncIterator()
+            var events = client.events(after: 295).makeAsyncIterator()
             for number in 1...40 {
                 try await client.mail(to: "yardmaster", text: "Letter \(number)", actor: "guest")
             }
             for number in 1...40 {
                 let event = try await events.next()
-                XCTAssertEqual(event?.seq, Int64(5 + number))
+                XCTAssertEqual(event?.seq, Int64(295 + number))
                 XCTAssertEqual(event?.text("text"), "Letter \(number)")
             }
         }

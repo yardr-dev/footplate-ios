@@ -410,27 +410,52 @@ func stamp(_ at: String, now: Date, zone: TimeZone) -> String {
     guard let instant = parseInstant(at) else { return "" }
     var calendar = Calendar(identifier: .gregorian)
     calendar.timeZone = zone
-    let pattern: String
+    let formatter: DateFormatter
     if calendar.isDate(instant, inSameDayAs: now) {
-        pattern = "HH:mm"
+        formatter = stampTimeFormatter
     } else if calendar.component(.year, from: instant) == calendar.component(.year, from: now) {
-        pattern = "d MMM"
+        formatter = stampDayFormatter
     } else {
-        pattern = "d MMM yyyy"
+        formatter = stampYearFormatter
     }
-    let formatter = DateFormatter()
-    formatter.locale = Locale(identifier: "en_US_POSIX")
     formatter.timeZone = zone
-    formatter.dateFormat = pattern
     return formatter.string(from: instant)
 }
 
 /// An RFC 3339 time as the yard writes it, or nil where it is none.
 func parseInstant(_ text: String) -> Date? {
-    let withFraction = ISO8601DateFormatter()
-    withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    if let date = withFraction.date(from: text) { return date }
-    let plain = ISO8601DateFormatter()
-    plain.formatOptions = [.withInternetDateTime]
-    return plain.date(from: text)
+    if let date = instantWithFraction.date(from: text) { return date }
+    return instantPlain.date(from: text)
 }
+
+// The formatters above stand for the app (footplate-ios-g0jx): making
+// one costs more than the reading it does — measured on the simulator
+// at about 0.2 ms of a 0.22 ms stamp — and a conversation's state
+// reads a stamp per letter on every access, so at a few hundred
+// letters the making, not the reading, was the state's whole cost.
+// Every caller is a screen model or the Mailroom, all on the main
+// actor, so a formatter is never inside two readings at once; the
+// zone is set per reading for the same reason, and the two ISO8601
+// formatters are `nonisolated(unsafe)` on that footing alone.
+private func stampFormatter(_ pattern: String) -> DateFormatter {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.dateFormat = pattern
+    return formatter
+}
+
+private let stampTimeFormatter = stampFormatter("HH:mm")
+private let stampDayFormatter = stampFormatter("d MMM")
+private let stampYearFormatter = stampFormatter("d MMM yyyy")
+
+nonisolated(unsafe) private let instantWithFraction: ISO8601DateFormatter = {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter
+}()
+
+nonisolated(unsafe) private let instantPlain: ISO8601DateFormatter = {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime]
+    return formatter
+}()

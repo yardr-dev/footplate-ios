@@ -122,6 +122,62 @@ final class ConversationModelTests: XCTestCase {
         XCTAssertEqual(home.beadAsked, ["yd-shed"])
     }
 
+    /// Reading the state of a long conversation stays cheap
+    /// (footplate-ios-g0jx): a stamp per letter once made a fresh
+    /// formatter per letter, so one reading of three hundred letters
+    /// cost about 67 ms on the simulator and the screen paid it once
+    /// per bubble. Fifty readings that took about 3.3 s there must
+    /// stay well under this bound; it is a simulator bound, not a
+    /// phone's, and set loose for a slower Mac.
+    func testReadingALongConversationStateStaysCheap() async throws {
+        var all: [Letter] = []
+        for seq in 1...300 {
+            let mine = seq % 2 == 0
+            all.append(Letter(
+                seq: Int64(seq), at: "2026-10-08T09:30:00Z",
+                from: mine ? "jo" : "yardmaster", to: mine ? "yardmaster" : "jo",
+                text: "All quiet through the night watch.", read: true
+            ))
+        }
+        home.up(Loaded(
+            me: Me(user: "jo", saidBy: "phone", yard: "south"),
+            head: 300,
+            settings: Settings(),
+            user: User(name: "jo"),
+            crew: [CrewMember(name: "yardmaster", enabled: true, state: "running", status: "working")],
+            users: [User(name: "jo")],
+            inbox: Inbox(mail: all, unread: 0, last: 0, from: []),
+            notifications: Notifications(),
+            asks: Asks()
+        ))
+        func page(before: Int64) -> Page {
+            let older = before > 0 ? all.filter { $0.seq < before } : all
+            let slice = Array(older.suffix(30))
+            return Page(letters: slice, more: older.count > slice.count)
+        }
+        home.pages["yardmaster|0"] = page(before: 0)
+        var before: Int64 = 271
+        while before > 1 {
+            home.pages["yardmaster|\(before)"] = page(before: before)
+            before -= 30
+        }
+        try await waitFor("the board") { [mailroom] in mailroom?.boards[""] != nil }
+        model.open(yard: "", with: "yardmaster")
+        try await waitFor("the first page") { [model] in model?.state.letters.count == 30 }
+        var loads = 0
+        while model.state.more, loads < 20 {
+            loads += 1
+            await model.older()
+        }
+        XCTAssertEqual(model.state.letters.count, 300)
+        // One reading to warm the formatters, then fifty against the clock.
+        _ = model.state
+        let start = ContinuousClock.now
+        for _ in 0..<50 { _ = model.state.letters.count }
+        let elapsed = start.duration(to: .now)
+        XCTAssertLessThan(elapsed, .milliseconds(1500), "fifty readings of a 300 letter state took \(elapsed)")
+    }
+
     /// A chip's tap presents the bead as a sheet over the conversation
     /// and leaves the tab on the crew: nothing is pushed, nowhere
     /// switched. The sheet shuts, and never follows to another

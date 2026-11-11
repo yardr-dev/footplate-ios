@@ -89,24 +89,47 @@ struct ConversationScreen: View {
             VStack(spacing: 0) {
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 20) {
+                        // Not lazy (footplate-ios-g0jx): a lazy stack
+                        // registers a letter only once it has been laid
+                        // out near the reader, so no scroll could name
+                        // the foot before it was reached. The letters
+                        // arrive a page at a time and an unchanged one
+                        // is not read again (MessageText above), so
+                        // laying out the pages read costs the parse of
+                        // each letter once.
+                        VStack(alignment: .leading, spacing: 20) {
                             ForEach(state.letters, id: \.seq) { letter in
-                                letterBubble(letter)
+                                // The beads of the one reading above, not
+                                // a reading per bubble: `state` rebuilds
+                                // every letter's row, so a reading here
+                                // paid it once per letter on screen
+                                // (footplate-ios-g0jx).
+                                letterBubble(letter, beads: state.knownBeads)
                                     .id(letter.seq)
                             }
                         }
                         .padding(.horizontal, 16)
                         .padding(.vertical, 16)
                     }
+                    // The foot is where a conversation stands when it
+                    // opens (footplate-ios-g0jx): the scrolls to it wait
+                    // for the stack's first layout, when every letter
+                    // of the page stands in it to be named.
                     .onAppear {
                         scrollTracking.reset()
                         if let last = state.letters.last {
-                            proxy.scrollTo(last.seq, anchor: .bottom)
+                            scrollToFoot(proxy, last.seq, animated: false)
                         }
                     }
-                    .onChange(of: state.letters.last?.seq) { _, last in
-                        if let last, scrollTracking.follows(mine: state.letters.last?.mine ?? false) {
-                            withAnimation { proxy.scrollTo(last, anchor: .bottom) }
+                    .onChange(of: state.letters.last?.seq) { before, last in
+                        // The first page to land opens at the foot,
+                        // whatever the geometry of the empty screen
+                        // said a moment before; a later letter is
+                        // followed only as the tracking allows.
+                        if before == nil, let last {
+                            scrollToFoot(proxy, last, animated: false)
+                        } else if let last, scrollTracking.follows(mine: state.letters.last?.mine ?? false) {
+                            scrollToFoot(proxy, last, animated: true)
                         }
                     }
                     .onScrollGeometryChange(for: ConversationScrollEdges.self) { geometry in
@@ -118,7 +141,13 @@ struct ConversationScreen: View {
                             hasOlder: state.more
                         )
                     } action: { _, edges in
-                        if scrollTracking.update(edges) {
+                        // Written only where the edges changed, so a
+                        // geometry pass that changes nothing redraws
+                        // nothing (footplate-ios-g0jx).
+                        var tracked = scrollTracking
+                        let older = tracked.update(edges)
+                        if tracked != scrollTracking { scrollTracking = tracked }
+                        if older {
                             Task { await model.older() }
                         }
                     }
@@ -268,6 +297,21 @@ struct ConversationScreen: View {
         }
     }
 
+    /// A scroll to the foot, deferred past the stack's first layout:
+    /// named before it, a scroll finds no letter to go to and is lost
+    /// (footplate-ios-g0jx). The opening scroll jumps: animated over
+    /// the whole thread it crawls, where a followed letter's is short.
+    private func scrollToFoot(_ proxy: ScrollViewProxy, _ seq: Int64, animated: Bool) {
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(300))
+            if animated {
+                withAnimation { proxy.scrollTo(seq, anchor: .bottom) }
+            } else {
+                proxy.scrollTo(seq, anchor: .bottom)
+            }
+        }
+    }
+
     /// The chip's bead as a sheet, shut on a swipe down.
     private var sheetBinding: Binding<BeadRoute?> {
         Binding(get: { model.state.sheet }, set: { if $0 == nil { model.closeBeadSheet() } })
@@ -320,12 +364,17 @@ struct ConversationScreen: View {
     /// The person's own letter is a bubble on the right, kept 60 points
     /// from the left; any other (the crew's, the yard's notices) is
     /// drawn the width of the conversation on no surface.
-    private func letterBubble(_ letter: Shown) -> some View {
+    private func letterBubble(_ letter: Shown, beads: Set<String>) -> some View {
         let bubble = RoundedRectangle(cornerRadius: 8)
         return VStack(alignment: letter.mine ? .trailing : .leading, spacing: letter.mine ? 2 : 6) {
             VStack(alignment: .leading, spacing: 4) {
                 if let copy = copyableMessage(letter) {
-                    MessageText(text: letter.text, beads: model.state.knownBeads)
+                    // Equatable, so a letter whose words and beads are
+                    // unchanged is not read into blocks again when
+                    // another letter arrives or the draft moves
+                    // (footplate-ios-g0jx).
+                    MessageText(text: letter.text, beads: beads)
+                        .equatable()
                         .environment(\.openURL, letterLinks)
                         .contextMenu {
                             Button("Copy message") {

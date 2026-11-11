@@ -22,7 +22,7 @@ struct DemoYard: Sendable {
     static let coordinator = "yardmaster"
 
     /// The seq of the newest event.
-    private(set) var head: Int64 = 5
+    private(set) var head: Int64 = 295
     /// The events since the demo opened, oldest first. What happened
     /// before it is in the state the follower reads.
     private(set) var events: [Event] = []
@@ -30,7 +30,7 @@ struct DemoYard: Sendable {
     private let clock: @Sendable () -> Date
     private(set) var crew: [CrewMember]
     private var letters: [Letter]
-    private var cursor: Int64 = 3
+    private var cursor: Int64 = 293
     private var notices: [Notification]
     private var noticeCursor: Int64 = 2
     private var open: [OpenAsk]
@@ -56,22 +56,81 @@ struct DemoYard: Sendable {
             CrewMember(name: "signalman", enabled: true, state: "running", status: "idle"),
             CrewMember(name: "shunter", enabled: true, state: "stopped"),
         ]
-        letters = [
-            Letter(seq: 1, at: ago(7 * hour), from: Self.user, to: "yardmaster", text: "How did the overnight run go?"),
+        // The long thread with the yardmaster (footplate-ios-g0jx): a
+        // few hundred older letters before the five above, long ones
+        // with code blocks, lists and pictures among them, so opening
+        // the conversation, scrolling through it and a letter arriving
+        // in it can be felt and measured as they are on a real yard.
+        // They are all read. Their words name no bead but ones this
+        // yard holds and no web address, as the rest of the demo does
+        // not.
+        let boardPicture = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEklEQVR4nGP4z8CAFWEXHbQSACj/P8Fu7N9hAAAAAElFTkSuQmCC")!
+        let boardRef = BlobRef(
+            hash: sha256Hex(boardPicture), kind: "image/png", bytes: Int64(boardPicture.count), name: "board.png"
+        )
+        let longWords = """
+        ## Overnight notes
+
+        The run finished **clean** and the board held through the night watch.
+
+        - first watch item with `prime` in code
+        - second watch item with **bold** words inside
+          the same item goes on here
+        1. open the shed
+        2. read the board
+        3. sign the sheet
+
+        ```sh
+        yardr bead show yd-9w1x
+        yardr prime --bead yd-9w1x
+        ```
+
+        Words at the end with *italic* and `code` mixed in.
+        """
+        let listWords = """
+        Watch report for the yard
+
+        - gates shut
+        - lamps lit
+        - sheet signed
+
+        All quiet on the west road and the north gate.
+        """
+        var history: [Letter] = []
+        for seq in 1...290 {
+            let mine = seq % 3 == 0
+            let words = switch seq % 4 {
+            case 0: longWords
+            case 1: listWords
+            case 2: "All quiet through the night watch. The board is read and the sheet is signed."
+            default: "The night run went through each road in turn and left word at every gate. Nothing waited at the shed and nothing was left unsigned on the sheet by the door."
+            }
+            history.append(Letter(
+                seq: Int64(seq),
+                at: stamped(start.addingTimeInterval(-30 * 24 * 3600 + TimeInterval(seq) * 3600)),
+                from: mine ? Self.user : "yardmaster",
+                to: mine ? "yardmaster" : Self.user,
+                text: words,
+                read: true,
+                files: seq % 29 == 0 ? [boardRef] : []
+            ))
+        }
+        letters = history + [
+            Letter(seq: 291, at: ago(7 * hour), from: Self.user, to: "yardmaster", text: "How did the overnight run go?"),
             Letter(
-                seq: 2, at: ago(7 * hour - 2 * minute), from: "yardmaster", to: Self.user,
+                seq: 292, at: ago(7 * hour - 2 * minute), from: "yardmaster", to: Self.user,
                 text: "Clean. yd-9w1x landed and nothing is blocked.", read: true
             ),
             Letter(
-                seq: 3, at: ago(4 * hour), from: "signalman", to: Self.user,
+                seq: 293, at: ago(4 * hour), from: "signalman", to: Self.user,
                 text: "The nightly checks passed on every line.", read: true
             ),
             Letter(
-                seq: 4, at: ago(90 * minute), from: "yardmaster", to: Self.user,
+                seq: 294, at: ago(90 * minute), from: "yardmaster", to: Self.user,
                 text: "yd-4k2m passed review. It is ready to land, and I need your word first: it is waiting under Decide."
             ),
             Letter(
-                seq: 5, at: ago(85 * minute), from: "yardmaster", to: Self.user,
+                seq: 295, at: ago(85 * minute), from: "yardmaster", to: Self.user,
                 text: "yd-7h9q is with a builder now and should be done within the hour."
             ),
         ]
@@ -208,6 +267,8 @@ struct DemoYard: Sendable {
                 ),
             ]
         )
+        blobs[boardRef.hash] = boardPicture
+        refs[boardRef.hash] = boardRef
     }
 
     // MARK: - What a yard answers
