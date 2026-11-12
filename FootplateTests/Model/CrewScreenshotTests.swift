@@ -546,7 +546,7 @@ final class CrewScreenshotTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTAssertEqual(inbox.state.yards.map(\.title), ["south", plantime])
-        XCTAssertEqual(inbox.state.yards.map(\.waiting), ["2 waiting", "1 waiting"])
+        XCTAssertEqual(inbox.state.yards.map(\.waiting), ["2 to decide", "1 to decide"])
 
         let dir = ProcessInfo.processInfo.environment["CREW_SHOTS_DIR"]
             .map { URL(fileURLWithPath: $0) }
@@ -595,7 +595,7 @@ final class CrewScreenshotTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTAssertEqual(inbox.state.yards.map(\.title), ["south", "lab — member of alice's yard"])
-        XCTAssertEqual(inbox.state.yards.map(\.waiting), ["2 waiting", "1 waiting"])
+        XCTAssertEqual(inbox.state.yards.map(\.waiting), ["2 to decide", "1 to decide"])
 
         let dir = ProcessInfo.processInfo.environment["CREW_SHOTS_DIR"]
             .map { URL(fileURLWithPath: $0) }
@@ -653,7 +653,7 @@ final class CrewScreenshotTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTAssertEqual(inbox.state.yards.map(\.title), ["south", "Back shed", "Workshop", "Bench — member of alice's yard"])
-        XCTAssertEqual(inbox.state.yards.map(\.waiting), ["2 waiting", "1 waiting", "1 waiting", "1 waiting"])
+        XCTAssertEqual(inbox.state.yards.map(\.waiting), ["2 to decide", "1 to decide", "1 to decide", "1 to decide"])
         XCTAssertEqual(inbox.state.head, "Back shed · jo")
 
         let dir = ProcessInfo.processInfo.environment["CREW_SHOTS_DIR"]
@@ -674,7 +674,7 @@ final class CrewScreenshotTests: XCTestCase {
         let rows = (1...13).map { n in
             YardRow(
                 name: "yard\(n)", title: "Yard \(n)", user: "jo", device: "phone",
-                selected: n == 4, word: nil, waiting: n % 3 == 0 ? "\(n) waiting" : nil
+                selected: n == 4, word: nil, waiting: n % 3 == 0 ? "\(n) to decide" : nil
             )
         }
         let dir = ProcessInfo.processInfo.environment["CREW_SHOTS_DIR"]

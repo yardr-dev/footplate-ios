@@ -495,7 +495,7 @@ final class InboxModelTests: XCTestCase {
         nav.confirmingForget = true
         let state = await waitFor("the switch", state: { model.state }) { s in s.yards.contains { $0.waiting != nil } }
         let south = state.yards.first { $0.name == "" }!
-        XCTAssertEqual(south.waiting, "2 waiting")
+        XCTAssertEqual(south.waiting, "2 to decide")
         XCTAssertEqual(state.waiting, 2)
         XCTAssertNil(south.word)
         XCTAssertTrue(south.selected)

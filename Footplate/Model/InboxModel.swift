@@ -21,7 +21,7 @@ struct YardRow: Equatable, Sendable {
     var selected: Bool
     /// The follow's word where it is not up, else nil.
     var word: String?
-    /// `2 waiting` where the yard has open asks and its follow is up.
+    /// `2 to decide` where the yard has open asks and its follow is up.
     var waiting: String? = nil
     /// `not yet sealed` where the yard holds this device's channel
     /// key: no sealed claim stands until the bound library's
@@ -228,7 +228,7 @@ final class InboxModel {
                     name: yard.name, title: yard.title, user: yard.user, device: yard.device,
                     selected: yard.name == kept.selected,
                     word: said,
-                    waiting: said == nil && open > 0 ? "\(open) waiting" : nil,
+                    waiting: said == nil && open > 0 ? "\(open) to decide" : nil,
                     channelNote: yard.channelNote,
                     canPairAgainByQR: yard.sealedHow == "in place" && yard.yardChannelPublic != nil
                 )
