@@ -99,6 +99,28 @@ final class SecrecyTests: XCTestCase {
         }
     }
 
+    // The pairing an approval answers is the call's return alone and the
+    // yard reads it back to no one: nothing of ours prints its code or its
+    // QR, whether it is described, shown for debugging or dumped.
+    func testAnApprovalsPairingIsInNoDescriptionDebugTextOrDump() {
+        let pairing = Pairing(
+            user: "jo", device: "watch", code: "K7QM-2XPD", address: "https://mac.example.net",
+            expires: Date(timeIntervalSince1970: 4_000_000_000), qr: "https://mac.example.net#K7QM-2XPD"
+        )
+        var said = [String(describing: pairing), String(reflecting: pairing), "\(pairing)", "\(Optional(pairing) as Any)"]
+        var dumped = ""
+        dump(pairing, to: &dumped)
+        said.append(dumped)
+        said.append(String(describing: PairingScreen(user: "jo", device: "watch", phase: .showing(pairing))))
+        said.append(String(reflecting: [pairing]))
+        for text in said {
+            XCTAssertFalse(text.contains("K7QM"), "\(text) holds the code")
+            XCTAssertFalse(text.contains("2XPD"), "\(text) holds the code")
+            XCTAssertFalse(text.contains("mac.example.net#"), "\(text) holds the QR")
+        }
+        XCTAssertTrue(String(describing: pairing).contains("jo"), "the screen's own names stay")
+    }
+
     func testTheAppsTransportKeepsNoCacheAndNoCookies() {
         let configuration = URLSessionTransport.configuration()
         XCTAssertNil(configuration.urlCache)

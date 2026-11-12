@@ -24,6 +24,7 @@ enum Canned {
         "Bead": #"{"result": {"id": "yd-links", "title": "Move the links", "body": "The links file declares the new source.", "stage": "new", "topic": "topic:linear-out", "labels": ["topic:linear-out"], "notes": [{"seq": 2, "kind": "note", "author": "yardmaster", "text": "the test passed on a copy", "at": "2026-10-08T09:30:00Z"}], "asks": [{"ask": 3, "to": "jo", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "question": "Move this yard's links to the declared source now?", "context": ["The links file declares the new source; 64 links still point at the old one."], "options": [{"label": "Move them now", "consequence": "all 64 links point at the new source tonight"}, {"label": "After Friday", "consequence": "keep the old source until the release is out"}, {"label": "You decide", "consequence": "leave it to yardmaster"}], "recommend": 1, "why": "the test passed", "about": [{"id": "yd-train", "title": "Release train", "stage": "new"}], "state": "open"}]}}"#,
         "AnswerAsk": "{}",
         "ApproveAsk": "{}",
+        "DevicePairCloseSelf": #"{"result": {"user": "jo", "device": "phone2", "state": "ended", "expires": "2026-10-08T09:30:00Z"}}"#,
         "ApproveSetup": "{}",
         "GiveSecret": #"{"result": {"given": ["INPUT"], "file": "", "login": "claude-ab12"}}"#,
         "DeferAsk": "{}",
@@ -50,6 +51,12 @@ enum Canned {
         "yd-pack": PackCards.starter,
         "yd-pack-whole": PackCards.whole,
         "yd-pack-moved": PackCards.moved,
+        // A user device pair card, as docs/api.md's UserAsks example has
+        // it, with the trust weight the yard gives a new device.
+        "yd-pair": pairCard(bead: "yd-pair", user: "jo", device: "watch"),
+        // The same card for another user's device: an operator's to approve
+        // for a member, whose pairing the operator's phone cannot end.
+        "yd-pair-hal": pairCard(bead: "yd-pair-hal", user: "hal", device: "phone2"),
         "yd-words": #"{"result": {"id": "yd-words", "title": "A words answer", "body": "", "stage": "new", "labels": [], "notes": [], "asks": [{"ask": 12, "to": "jo", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "question": "When can we talk?", "context": ["The asker needs a time."], "options": [], "state": "open"}]}}"#,
         "yd-courier": #"{"result": {"id": "yd-courier", "title": "Set up courier", "body": "", "stage": "new", "labels": [], "notes": [], "asks": [{"ask": 44, "to": "jo", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "question": "Update courier for the yard?", "context": ["A courier account already stands on the yard."], "options": [{"label": "Read", "consequence": "the yard reads the parcels"}, {"label": "Read and write", "consequence": "the yard reads and writes the parcels"}, {"label": "You decide", "consequence": "leave it to yardmaster"}], "recommend": 1, "why": "reading is enough for now", "about": [], "state": "open", "setup": {"pack": "courier", "label": "courier", "given": true, "does": ["keeps the courier account", "grants read of the parcels"]}, "weight": [{"class": "credential", "line": "gives a credential or an address to the yard"}]}]}}"#,
         "yd-token": #"{"result": {"id": "yd-token", "title": "The callback token", "body": "", "stage": "new", "labels": [], "notes": [], "asks": [{"ask": 18, "to": "jo", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "question": "What is the callback token?", "context": ["The hook cannot register without it."], "options": [], "state": "open", "secret": {"source": "crm", "env": ["CRM_UPDATE_TOKEN"], "line": "the token the yard calls back with"}, "weight": [{"class": "credential", "line": "gives a credential or an address to the yard"}]}]}}"#,
@@ -61,6 +68,22 @@ enum Canned {
         "yd-key": #"{"result": {"id": "yd-key", "title": "Claude Code API key", "body": "", "stage": "new", "labels": [], "notes": [], "asks": [{"ask": 22, "to": "jo", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "question": "What is the API key Claude Code runs with?", "context": ["yardmaster is at Claude Code's login screen."], "options": [], "state": "open", "secret": {"source": "", "env": ["ANTHROPIC_API_KEY"], "crew": "yardmaster", "harness": "claude", "line": "a secret: ANTHROPIC_API_KEY, the API key Claude Code runs with, asked for crew member yardmaster; it is read by every Claude Code session that burns the operator's login, from its next start"}, "weight": [{"class": "credential", "line": "ANTHROPIC_API_KEY, the API key Claude Code runs with, asked for crew member yardmaster"}]}]}}"#,
         "yd-own": #"{"result": {"id": "yd-own", "title": "hal's Claude Code sign-in", "body": "", "stage": "new", "labels": [], "notes": [], "asks": [{"ask": 36, "to": "hal", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "question": "Paste what Claude Code's sign-in page gave you", "context": ["Sign in on this page: https://claude.ai/oauth/authorize?code=true&state=Qw9z"], "options": [], "state": "open", "secret": {"source": "", "env": ["INPUT"], "login": "claude-ab13", "as": "hal", "line": "a secret: INPUT, for hal's waiting login claude-ab13"}, "weight": [{"class": "credential", "line": "INPUT, for hal's waiting login claude-ab13"}]}]}}"#,
     ]
+
+    /// A pairing card, ask 65: `user device pair <user> <device>`, at the
+    /// address the new device reaches the yard at.
+    private static func pairCard(bead: String, user: String, device: String) -> String {
+        #"{"result": {"id": "\#(bead)", "title": "Pair \#(user)'s \#(device)", "body": "", "stage": "new", "labels": [], "notes": [], "asks": [{"ask": 65, "to": "jo", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "question": "Pair \#(user)'s \#(device)?", "context": ["\#(user) asked for the \#(device) to be paired."], "options": [], "state": "open", "run": {"argv": ["user", "device", "pair", "\#(user)", "\#(device)", "--url", "https://mac.example.net"], "command": "yardr user device pair \#(user) \#(device) --url https://mac.example.net", "does": ["opens a pairing for the device \#(device) of \#(user), reached at https://mac.example.net.", "\#(user) has 1 device: phone (never used).", "Approval opens the pairing for that device alone: its code is good for ten minutes and for one device, and whoever has the code within those minutes is answered with that device's token.", "Nothing in the yard keeps the code after it is used or runs out.", "The new device then calls as \#(user) until yardr user device rm \#(user) \#(device), and \#(user) will then have 2 devices."], "back": "yardr user device pair --end ends it while it stands; once the code is used, yardr user device rm \#(user) \#(device) removes the device"}, "weight": [{"class": "trust", "line": "widens who the yard listens to: a new device \#(device) of \#(user) speaks as them: whoever holds its token calls as \#(user) until the device is removed"}]}]}}"#
+    }
+
+    /// What approving `yd-pair` answers (docs/api.md's `ApproveAsk`
+    /// example): the pairing it opened, once. `qr` is as the yard's
+    /// `PairingQR` makes it from the other fields.
+    static func pairingApproved(code: String = "K7QM-2XPD", address: String = "https://mac.example.net", expires: String, qr: String, yard: String = "", channelKey: String = "", user: String = "jo", device: String = "watch") -> String {
+        var pairing = #""user": "\#(user)", "device": "\#(device)", "code": "\#(code)", "address": "\#(address)", "expires": "\#(expires)", "qr": "\#(qr)""#
+        if !yard.isEmpty { pairing += #", "yard": "\#(yard)""# }
+        if !channelKey.isEmpty { pairing += #", "channel_key": "\#(channelKey)""# }
+        return #"{"result": {"bead": "yd-pair", "ask": 65, "asker": "yardmaster", "argv": ["user", "device", "pair", "\#(user)", "\#(device)", "--url", "https://mac.example.net"], "does": ["opens a pairing for the device \#(device) of \#(user), reached at https://mac.example.net."], "result": "a pairing was opened for the device \#(device) of \#(user), good until 09:30:00: the code was shown to the approver alone and is kept nowhere", "pairing": {\#(pairing)}}}"#
+    }
 
     /// `yd-shots`: written here and not as a literal of the table, which
     /// `scripts/fake-edge` serves as it stands, with the hashes unresolved.

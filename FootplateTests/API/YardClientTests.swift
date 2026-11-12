@@ -239,10 +239,30 @@ final class YardClientTests: XCTestCase {
             // No run.ask values and no setup account are sent: the
             // approvals carry the pick and weighed alone.
             ("ApproveAsk", #"{"bead":"yd-tidy","ask":9,"actor":"jo","weighed":true}"#, {
-                try await laptop.approveAsk(bead: "yd-tidy", ask: 9, actor: "jo", weighed: true)
+                // No other approval answers a pairing.
+                let pairing = try await laptop.approveAsk(bead: "yd-tidy", ask: 9, actor: "jo", weighed: true)
+                XCTAssertNil(pairing)
             }),
             ("ApproveAsk", #"{"bead":"yd-tidy","ask":9,"actor":"jo"}"#, {
                 try await laptop.approveAsk(bead: "yd-tidy", ask: 9, actor: "jo")
+            }),
+            // A pairing card's approval answers the pairing it opened, once,
+            // as the call's return: the QR string as the yard made it, whole.
+            ("ApproveAsk", #"{"bead":"yd-pair","ask":65,"actor":"jo","weighed":true}"#, {
+                let key = channelPublicString(Data(repeating: 0x2A, count: 32))
+                let qr = "https://my.yardr.dev#K7QM-2XPD#laptop#\(key)"
+                self.fake.nextFor(yard: "laptop", path: "/user/call/ApproveAsk", .json(200, Canned.pairingApproved(
+                    address: "https://my.yardr.dev", expires: "2026-10-08T09:30:00Z", qr: qr, yard: "laptop", channelKey: key
+                )))
+                let pairing = try await laptop.approveAsk(bead: "yd-pair", ask: 65, actor: "jo", weighed: true)
+                XCTAssertEqual(pairing, Pairing(
+                    user: "jo", device: "watch", code: "K7QM-2XPD", address: "https://my.yardr.dev", yard: "laptop",
+                    expires: parseInstant("2026-10-08T09:30:00Z")!, channelKey: key, qr: qr
+                ))
+            }),
+            // End names the user and nothing else: the device's own.
+            ("DevicePairCloseSelf", #"{"user":"jo"}"#, {
+                try await laptop.devicePairCloseSelf(user: "jo")
             }),
             ("ApproveSetup", #"{"bead":"yd-courier","ask":44,"option":1,"actor":"jo","weighed":true}"#, {
                 try await laptop.approveSetup(bead: "yd-courier", ask: 44, option: 1, actor: "jo", weighed: true)
@@ -277,6 +297,35 @@ final class YardClientTests: XCTestCase {
         let older = try await laptop.flows()
         XCTAssertEqual(older.depots.map(\.name), ["yard", "drafts"])
         assertBody(fake.taken(), "{}")
+    }
+
+    // An answer whose pairing cannot be shown (no code, no QR or no time it
+    // ends) is no pairing: the approval stands, since the yard ran it, and
+    // nothing is drawn for a code with no end.
+    func testAnApprovalsPairingThatCannotBeShownIsNone() async throws {
+        let f = try fixtures()
+        for pairing in [
+            #""code": "K7QM-2XPD", "qr": "https://x#K7QM-2XPD", "expires": "soon""#,
+            #""code": "K7QM-2XPD", "expires": "2026-10-08T09:30:00Z""#,
+            #""qr": "https://x#K7QM-2XPD", "expires": "2026-10-08T09:30:00Z""#,
+            #""code": 7, "qr": "https://x", "expires": "2026-10-08T09:30:00Z""#,
+            #""code": "K7QM-2XPD", "address": "https://x", "expires": "2026-10-08T09:30:00Z", "qr": "https://y#K7QM-2XPD""#,
+            #""code": "AAAA-BBBB", "address": "https://x", "expires": "2026-10-08T09:30:00Z", "qr": "https://x#K7QM-2XPD""#,
+            #""code": "K7QM-2XPD", "address": "https://x", "yard": "jo", "expires": "2026-10-08T09:30:00Z", "qr": "https://x#K7QM-2XPD#hal""#,
+            #""code": "K7QM-2XPD", "address": "https://x", "channel_key": "abc", "expires": "2026-10-08T09:30:00Z", "qr": "https://x#K7QM-2XPD""#,
+        ] {
+            fake.nextFor(yard: "laptop", path: "/user/call/ApproveAsk", .json(200, #"{"result": {"pairing": {\#(pairing)}}}"#))
+            let none = try await f.laptop.approveAsk(bead: "yd-pair", ask: 65, actor: "jo", weighed: true)
+            XCTAssertNil(none, pairing)
+        }
+        // Nor does a pairing a yard names with the user or the device left
+        // out stop it being shown: the card names them, and the screen
+        // takes the card's.
+        fake.nextFor(yard: "laptop", path: "/user/call/ApproveAsk", .json(200, #"{"result": {"pairing": {"code": "K7QM-2XPD", "address": "https://x", "qr": "https://x#K7QM-2XPD", "expires": "2026-10-08T09:30:00.250Z"}}}"#))
+        let bare = try await f.laptop.approveAsk(bead: "yd-pair", ask: 65, actor: "jo", weighed: true)
+        XCTAssertEqual(bare?.code, "K7QM-2XPD")
+        XCTAssertEqual(bare?.user, "")
+        XCTAssertEqual(bare?.expires, parseInstant("2026-10-08T09:30:00.250Z"))
     }
 
     func testAYardOfItsOwnCarriesTheDeviceTokenAlone() async throws {

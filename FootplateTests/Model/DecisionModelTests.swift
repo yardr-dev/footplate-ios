@@ -64,12 +64,15 @@ final class DecisionModelTests: XCTestCase {
         try await super.tearDown()
     }
 
-    private func decision() -> DecisionModel {
-        let now = fixedNow
+    private func decision(
+        now: @escaping @Sendable () -> Date? = { nil },
+        sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+    ) -> DecisionModel {
+        let fixed = fixedNow
         return DecisionModel(
             mailroom: mailroom, records: records, nav: nav, conversation: conversation, unlock: unlock,
             notePictures: NotePictures(pictures: Pictures(directory: picturesDir)),
-            now: { now }, zone: { TimeZone(secondsFromGMT: 0)! }
+            now: { now() ?? fixed }, zone: { TimeZone(secondsFromGMT: 0)! }, sleep: sleep
         )
     }
 
@@ -81,9 +84,9 @@ final class DecisionModelTests: XCTestCase {
         )
     }
 
-    private func opened(_ bead: String, _ ask: Int64) async -> DecisionModel {
+    private func opened(_ bead: String, _ ask: Int64, as model: DecisionModel? = nil) async -> DecisionModel {
         nav.openDecision(yard: "laptop", bead: bead, ask: ask)
-        let model = decision()
+        let model = model ?? decision()
         model.open(yard: "laptop", bead: bead, ask: ask)
         _ = await waitFor("the card \(bead)", state: { model.state }) { $0.read }
         return model
@@ -232,6 +235,8 @@ final class DecisionModelTests: XCTestCase {
         XCTAssertNil(state.elsewhere)
         XCTAssertEqual(state.proposes, ["yardr depot tidy --merged", "removes the worktrees of landed beads", "deletes 12 directories under ~/.yardr/worktrees"])
         XCTAssertNil(state.pack, "no other run card opens a text")
+        XCTAssertNil(state.door, "no other run card says a door")
+        XCTAssertNil(state.pairing)
         // A run ask is approved, not picked, and wants nothing chosen.
         await card.pick()
         XCTAssertTrue(calls("AnswerAsk").isEmpty)
@@ -274,6 +279,188 @@ final class DecisionModelTests: XCTestCase {
         XCTAssertEqual(calls("ApproveAsk").map { $0["weighed"] as? Bool }, [true, true, true, nil])
         XCTAssertNil(older.state.error)
         XCTAssertEqual(nav.decidePath, [])
+    }
+
+    // A pairing card (yardr-6maq 3.4) says the door its approval crosses under
+    // its weight, plain here and sealed once the yard's channel is pinned.
+    // Approving it keeps the card on the screen and puts the QR screen of
+    // the pairing the yard opened in its place: the QR as the yard made it,
+    // the code, its end. End ends it with the phone's own user's name and
+    // the screen shows no code after; leaving drops it, and the card comes
+    // back as it was.
+    func testAPairingCardSaysItsDoorAndItsApprovalSeatsTheQRScreenUntilTheCardIsLeft() async throws {
+        let card = await opened("yd-pair", 65)
+        let state = card.state
+        XCTAssertTrue(state.approvable)
+        XCTAssertEqual(state.weighty.count, 1)
+        XCTAssertTrue(state.weighty[0].hasPrefix("WEIGHTY · trust: "), state.weighty[0])
+        // This yard's client has no channel: the token crosses in the clear,
+        // and the card says so. (The sealed door is the client's `sealed`,
+        // held by the screenshot test over a follower that is.)
+        XCTAssertEqual(state.door, pairDoor(sealed: false))
+        XCTAssertNil(state.pairing)
+
+        let qr = "https://mac.example.net#K7QM-2XPD"
+        let ends = parseInstant("2026-10-08T11:40:00Z")!
+        let opens = Pairing(user: "jo", device: "watch", code: "K7QM-2XPD", address: "https://mac.example.net", expires: ends, qr: qr)
+        fake.nextFor(yard: "laptop", path: "/user/call/ApproveAsk", .json(200, Canned.pairingApproved(expires: "2026-10-08T11:40:00Z", qr: qr)))
+        unlock.promptResults = [true]
+        await card.approve()
+        XCTAssertEqual(calls("ApproveAsk").count, 1)
+        XCTAssertEqual(calls("ApproveAsk")[0]["weighed"] as? Bool, true)
+        XCTAssertEqual(nav.decidePath, [DecisionRoute(yard: "laptop", bead: "yd-pair", ask: 65)], "the card stays: its QR screen stands in its place")
+        let seated = try XCTUnwrap(card.state.pairing)
+        XCTAssertEqual(seated.user, "jo")
+        XCTAssertEqual(seated.device, "watch")
+        XCTAssertEqual(seated.phase, .showing(opens))
+        XCTAssertFalse(seated.ending)
+        XCTAssertNil(seated.refusal)
+        // What was opened is approved: a second approval is not sent.
+        await card.approve()
+        XCTAssertEqual(calls("ApproveAsk").count, 1)
+        // Nothing the model prints holds the code or the QR.
+        XCTAssertFalse(String(describing: card.state).contains("K7QM"), "the state printed the code")
+        XCTAssertFalse(String(reflecting: card.state).contains("K7QM"), "the state's debug text printed the code")
+
+        // End is refused in the yard's words, and the pairing stands with the
+        // words beside it, End there to press again.
+        let none = "an open device pairing: not found (one lives in the server's memory, and ends with it)"
+        fake.nextFor(yard: "laptop", path: "/user/call/DevicePairCloseSelf", .refused(none, code: "not-found"))
+        await card.endPairing()
+        let refused = try XCTUnwrap(card.state.pairing)
+        XCTAssertEqual(refused.phase, .showing(opens))
+        XCTAssertEqual(refused.refusal, "Not ended: \(none)")
+        XCTAssertFalse(refused.ending)
+        // End names the phone's own user, as /user/me answered, alone.
+        await card.endPairing()
+        XCTAssertEqual(calls("DevicePairCloseSelf").map { $0["user"] as? String }, ["jo", "jo"])
+        let ended = try XCTUnwrap(card.state.pairing)
+        XCTAssertEqual(ended.phase, .over(.ended), "no code and no QR stand after End")
+        XCTAssertNil(ended.refusal)
+        XCTAssertFalse(fake.hasPairingOpen(yardName: "laptop"))
+        // An ended pairing is ended once.
+        await card.endPairing()
+        XCTAssertEqual(calls("DevicePairCloseSelf").count, 2)
+
+        // Leaving drops it: the card is as the yard has it, and nothing is
+        // held for a screen that comes back.
+        card.leave()
+        XCTAssertNil(card.state.pairing)
+        card.open(yard: "laptop", bead: "yd-pair", ask: 65)
+        XCTAssertNil(card.state.pairing)
+        card.leave()
+
+        // An operator approves a member's pairing: the screen shows it the
+        // same, but End is the user's own (the yard answers a device no
+        // pairing of another's), so there is none to press and nothing is
+        // sent where it is tried.
+        let member = await opened("yd-pair-hal", 65)
+        fake.nextFor(yard: "laptop", path: "/user/call/ApproveAsk", .json(200, Canned.pairingApproved(
+            expires: "2026-10-08T11:40:00Z", qr: qr, user: "hal", device: "phone2"
+        )))
+        await member.approve()
+        let theirs = try XCTUnwrap(member.state.pairing)
+        XCTAssertEqual(theirs.user, "hal")
+        XCTAssertEqual(theirs.device, "phone2")
+        XCTAssertFalse(theirs.canEnd)
+        guard case .showing = theirs.phase else { return XCTFail("not shown: \(theirs)") }
+        let before = calls("DevicePairCloseSelf").count
+        await member.endPairing()
+        XCTAssertEqual(calls("DevicePairCloseSelf").count, before, "End sends nothing for another user's pairing")
+        XCTAssertEqual(member.state.pairing, theirs)
+        member.leave()
+    }
+
+    // The pairing's time: its screen is dropped when the time runs out, by
+    // the model's own wait (not for the screen to be drawn), and a screen
+    // asked after the time never shows a code, even before the wait ended.
+    // Another card opening drops it too, and so does an answer that comes
+    // after the card was left.
+    func testAPairingsScreenIsDroppedAtItsTimeWhenAnotherCardOpensAndWhenTheAnswerComesTooLate() async throws {
+        let qr = "https://mac.example.net#K7QM-2XPD"
+        let approved = Canned.pairingApproved(expires: "2026-10-08T11:40:00Z", qr: qr)
+        // The wait is asked for the time between now and the end, and is
+        // the model's: here it is over at once.
+        let asked = LockedBox<[Duration]>([])
+        let late = decision(sleep: { duration in asked.update { $0.append(duration) } })
+        let card = await opened("yd-pair", 65, as: late)
+        fake.nextFor(yard: "laptop", path: "/user/call/ApproveAsk", .json(200, approved))
+        await card.approve()
+        let over = await waitFor("the pairing's time to run out", state: { card.state.pairing }) { $0?.phase == .over(.ranOut) }
+        XCTAssertEqual(over?.phase, .over(.ranOut))
+        XCTAssertEqual(asked.value, [.seconds(600)])
+        XCTAssertEqual(nav.decidePath, [DecisionRoute(yard: "laptop", bead: "yd-pair", ask: 65)])
+        card.leave()
+
+        // A clock past the end draws the screen over before any wait ends.
+        let clock = LockedBox<Date?>(nil)
+        let held = decision(now: { clock.value })
+        let again = await opened("yd-pair", 65, as: held)
+        fake.nextFor(yard: "laptop", path: "/user/call/ApproveAsk", .json(200, approved))
+        await again.approve()
+        guard case .showing = again.state.pairing?.phase else { return XCTFail("not shown: \(String(describing: again.state.pairing))") }
+        clock.update { $0 = parseInstant("2026-10-08T11:40:00Z")! }
+        XCTAssertEqual(again.state.pairing?.phase, .over(.ranOut))
+        clock.update { $0 = nil }
+        // Another card opening takes the screen with it.
+        again.open(yard: "laptop", bead: "yd-tidy", ask: 9)
+        XCTAssertNil(again.state.pairing)
+        again.open(yard: "laptop", bead: "yd-pair", ask: 65)
+        XCTAssertNil(again.state.pairing)
+        again.leave()
+
+        // The answer comes after the person left: nothing is held for it.
+        fake.delay("/user/call/ApproveAsk", .milliseconds(200))
+        fake.nextFor(yard: "laptop", path: "/user/call/ApproveAsk", .json(200, approved))
+        let slow = await opened("yd-pair", 65)
+        let approving = Task { @MainActor in await slow.approve() }
+        _ = await waitFor("the approval to be sent", state: { self.calls("ApproveAsk").count }) { $0 == 3 }
+        slow.leave()
+        await approving.value
+        XCTAssertNil(slow.state.pairing, "no screen for a pairing nobody is looking at")
+        slow.open(yard: "laptop", bead: "yd-pair", ask: 65)
+        XCTAssertNil(slow.state.pairing)
+        slow.leave()
+    }
+
+    // A pairing card the yard approved with no pairing to show (an answer
+    // of a shape it cannot read) is approved: the screen says so, with no
+    // code, and never that nothing was approved.
+    func testAPairingCardApprovedWithNoPairingToShowSaysSoAndIsNotCalledRefused() async throws {
+        let card = await opened("yd-pair", 65)
+        fake.nextFor(yard: "laptop", path: "/user/call/ApproveAsk", .json(200, #"{"result": {"result": "a pairing was opened"}}"#))
+        await card.approve()
+        XCTAssertEqual(card.state.pairing?.phase, .over(.unshown))
+        XCTAssertEqual(card.state.pairing?.device, "watch")
+        XCTAssertNil(card.state.error)
+        XCTAssertNil(card.state.refusal)
+        XCTAssertEqual(nav.decidePath, [DecisionRoute(yard: "laptop", bead: "yd-pair", ask: 65)])
+        card.leave()
+
+        // A pairing the yard answers is shown whatever the card said, since
+        // its code is answered to this call alone: a run card that does not
+        // name a pairing, approved with a pairing in the answer, gets the
+        // screen, with the names the yard gave, and does not close.
+        let tidy = await opened("yd-tidy", 9)
+        fake.nextFor(yard: "laptop", path: "/user/call/ApproveAsk", .json(200, Canned.pairingApproved(
+            expires: "2026-10-08T11:40:00Z", qr: "https://mac.example.net#K7QM-2XPD"
+        )))
+        await tidy.approve()
+        XCTAssertEqual(tidy.state.pairing?.user, "jo")
+        XCTAssertEqual(tidy.state.pairing?.device, "watch")
+        guard case .showing = tidy.state.pairing?.phase else { return XCTFail("not shown: \(String(describing: tidy.state.pairing))") }
+        XCTAssertEqual(nav.decidePath.last, DecisionRoute(yard: "laptop", bead: "yd-tidy", ask: 9), "the card did not close")
+        tidy.leave()
+
+        // A refused approval is the other ordinary run card's: the yard's
+        // sentence with the command, and no screen.
+        let refused = await opened("yd-pair", 65)
+        fake.nextFor(yard: "laptop", path: "/user/call/ApproveAsk", .refused("a pairing already stands: jo's"))
+        await refused.approve()
+        XCTAssertNil(refused.state.pairing)
+        XCTAssertEqual(refused.state.refusal, "a pairing already stands: jo's")
+        XCTAssertNil(refused.state.door, "a refused card is answered on the yard's machine, and says no door")
+        refused.leave()
     }
 
     // A depot pack too large to read whole (yardr design y6gp 3.3): its

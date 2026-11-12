@@ -26,8 +26,10 @@ Under `Footplate/`:
 
 - `App/`: app entry point and shared scene composition.
 - `API/`: the edge (Kratos sign-in, logout and session identity lookup,
-  pairing), one paired yard's client and events stream, the wire types and
-  the refusal reading, over a transport seam that `URLSession` implements;
+  pairing), one paired yard's client and events stream, the wire types
+  (`Pairing` among them: what the approval of a pairing card answers once,
+  which nothing prints) and the refusal reading, over a transport seam that
+  `URLSession` implements;
   `FootplateTests/FakeYard/` implements the same seam in the tests, and
   `Demo/` serves a made-up yard on it. `Channel.swift` and the bound
   `NoiseChannel.xcframework` beside it are the device's channel to a
@@ -45,7 +47,10 @@ Under `Footplate/`:
 - `Model/`: screen models and navigation (`Nav`, `PairModel`,
   `SignInModel`, `InboxModel`, `ConversationModel`, `DecisionsModel`,
   `DecisionModel`, `LineModel`), the inbox board (`Board`) and the
-  boards' keeping (`Mailroom`). `LineModel` holds the Lines place: the
+  boards' keeping (`Mailroom`). `PairingSitting` holds the types and words
+  of the QR screen of a pairing an approval opened (the door a pairing card
+  says, the minutes left, why none is shown), and `DecisionModel` holds that
+  pairing in memory alone. `LineModel` holds the Lines place: the
   overview, a line's route map and a bead's card with the bead's
   details (the pictures of its notes among them, for the Media grid) and its web view link. The conversation's pictures (`Images` shrinks one for a letter,
   `Pictures` keeps the ones shown, by hash; `NotePictures` asks for the ones a
@@ -59,7 +64,8 @@ Under `Footplate/`:
   the tabs (`YardTabs`, and `DemoTabs` with the demo's banner) and the
   chrome the places share (`YardPlace`, `YardSwitchView`), the shared
   controls (`NoteFiles` among them: a note's pictures and files under its
-  words), `MessageText` (a letter's words drawn by their `Markdown`
+  words), `PairingQR` (the QR screen of an approved pairing, its QR drawn
+  by CoreImage from the yard's string as it stands), `MessageText` (a letter's words drawn by their `Markdown`
   blocks, a code block with its Copy), the scanner, theme and resources
   (catalogue, Plex fonts and licence).
 - `Unlock/`: which picks pass the gate and its reasons as plain

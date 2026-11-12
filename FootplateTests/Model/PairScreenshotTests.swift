@@ -33,6 +33,54 @@ final class PairScreenshotTests: XCTestCase {
         try await render(PairScreen(model: pair), scene: scene, to: dir.appendingPathComponent("pair-own-address.png"))
     }
 
+    // The Pair screen as a phone with a camera shows it: Scan and Type the
+    // code; what a scan of the QR a held phone draws reads as (the camera's
+    // own view cannot run in a simulator, so the scan is handed the text
+    // the camera would read); and a code the yard refuses, in its words,
+    // first a wrong one and then one whose pairing is no more.
+    func testPairScanAndRefusedCodeRender() async throws {
+        let scene = try XCTUnwrap(
+            UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first,
+            "no window scene to render in"
+        )
+        let fake = FakeYard()
+        let records = Records(secret: MemoryShelf(), plain: MemoryShelf(), origin: fake.origin)
+        records.keepSession(account: fake.email, session: fake.session())
+        let nav = Nav()
+        let pair = PairModel(pairer: Pairer(edge: try fake.edge(), records: records), records: records, nav: nav)
+        let dir = ProcessInfo.processInfo.environment["PAIR_SHOTS_DIR"]
+            .map { URL(fileURLWithPath: $0) }
+            ?? FileManager.default.temporaryDirectory.appendingPathComponent("pair-shots")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        try await render(PairScreen(model: pair, scannerAvailable: true), scene: scene, to: dir.appendingPathComponent("pair-scan.png"))
+
+        // What a scan of a held phone's QR reads: the edge's address, the
+        // code and the yard, with the yard's channel key as its fourth field.
+        let key = fake.channelPublic(yardName: "laptop")
+        pair.scanned("\(fake.origin)#M4TR-9KWE#laptop#\(key)")
+        XCTAssertEqual(pair.state.step, .read(PairingCode(code: "M4TR-9KWE", yard: "laptop", channel: key)))
+        try await render(PairScreen(model: pair, scannerAvailable: true), scene: scene, to: dir.appendingPathComponent("pair-scan-read.png"))
+
+        // A wrong code is refused in the yard's words.
+        pair.scanned("\(fake.origin)#AAAA-BBBB#laptop#\(key)")
+        await pair.pair()
+        XCTAssertEqual(pair.state.error, pairingRefused("wrong_code").message)
+        try await render(PairScreen(model: pair, scannerAvailable: true), scene: scene, to: dir.appendingPathComponent("pair-refused.png"))
+
+        // And so is the right one once the pairing is gone: used, ended or
+        // the fifth wrong code.
+        fake.openPairing(yardName: "laptop", code: "M4TR-9KWE")
+        for _ in 1...5 {
+            pair.scanned("\(fake.origin)#AAAA-BBBB#laptop#\(key)")
+            await pair.pair()
+        }
+        pair.scanned("\(fake.origin)#M4TR-9KWE#laptop#\(key)")
+        await pair.pair()
+        XCTAssertEqual(pair.state.error, pairingRefused("no_pairing").message)
+        try await render(PairScreen(model: pair, scannerAvailable: true), scene: scene, to: dir.appendingPathComponent("pair-refused-ended.png"))
+    }
+
     private func render(_ view: some View, scene: UIWindowScene, to file: URL) async throws {
         let hosting = UIHostingController(rootView: AnyView(view))
         let window = UIWindow(windowScene: scene)

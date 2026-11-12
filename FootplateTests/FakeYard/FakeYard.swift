@@ -197,6 +197,9 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
         /// were added: a call that names one it does not take is refused.
         var takes: [String: [String]] = [:]
         var code: String?
+        /// The wrong codes the open pairing has been given: the fifth
+        /// ends it, as the yard's does.
+        var wrong = 0
         var tokens: Set<String> = []
         var blobs: [String: Data] = [:]
         /// The yard's channel key pair, as `yardr user device pair
@@ -281,6 +284,24 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return yards.first { $0.name == yardName }!.channelPublic
+    }
+
+    /// Opens a pairing at the yard named `yardName` with `code`, as an
+    /// approval of a `user device pair` card does, in place of the one
+    /// that stood: no wrong code has been given it yet.
+    func openPairing(yardName: String, code: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        let yard = yards.first { $0.name == yardName }!
+        yard.code = code
+        yard.wrong = 0
+    }
+
+    /// Whether the yard named `yardName` has a pairing open.
+    func hasPairingOpen(yardName: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return yards.first { $0.name == yardName }!.code != nil
     }
 
     /// Pins a device channel key at the yard named `yardName`, as
@@ -858,6 +879,15 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
                     : "argument \"\(stray)\": \(method) has none of that name (it takes \(list))"
                 return FakeResponse.refused(message)
             }
+            // The open pairing of the device's own user ends, as the yard's
+            // DevicePairCloseSelf ends it; none open, or another user's,
+            // is no pairing, in the yard's words.
+            if method == "DevicePairCloseSelf" {
+                guard yard.code != nil, (body["user"] as? String) == yard.user else {
+                    return FakeResponse.refused("an open device pairing: not found (one lives in the server's memory, and ends with it)", code: "not-found")
+                }
+                yard.code = nil
+            }
             let bead = body["bead"] as? String
             let canned = (method == "Bead" ? bead.flatMap { Canned.beads[$0] } : nil)
                 ?? Canned.replies[method]
@@ -1093,7 +1123,7 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
         let normalized = handshake.code.replacingOccurrences(of: "-", with: "").uppercased()
         let expected = open.replacingOccurrences(of: "-", with: "").uppercased()
         guard normalized == expected else {
-            return FakeResponse.wrongCode()
+            return wrongLocked(yard)
         }
         yard.code = nil
         let token = mintTokenLocked(yard)
@@ -1106,6 +1136,17 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
         } catch {
             return FakeResponse(status: 500, text: "Internal Server Error\n")
         }
+    }
+
+    /// One wrong code, as the yard counts it: the answer is `wrong_code`,
+    /// and the fifth ends the pairing, so the next call finds none open.
+    private func wrongLocked(_ yard: YardState) -> FakeResponse {
+        yard.wrong += 1
+        if yard.wrong >= 5 {
+            yard.code = nil
+            yard.wrong = 0
+        }
+        return FakeResponse.wrongCode()
     }
 
     /// A PAKE step as the yard answers it: `{"pake": {...}}` with the
@@ -1149,7 +1190,7 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
                 run.deviceConfirmation = confirm
             } catch let failure as ChannelFailure where failure.unconfirmed {
                 yard.pake = nil
-                return FakeResponse.wrongCode()
+                return wrongLocked(yard)
             } catch {
                 yard.pake = nil
                 return bad
@@ -1191,7 +1232,7 @@ final class FakeYard: HTTPTransport, @unchecked Sendable {
         let normalized = code.replacingOccurrences(of: "-", with: "").uppercased()
         let expected = open.replacingOccurrences(of: "-", with: "").uppercased()
         guard normalized == expected else {
-            return FakeResponse.wrongCode()
+            return wrongLocked(yard)
         }
         yard.code = nil
         let token = mintTokenLocked(yard)

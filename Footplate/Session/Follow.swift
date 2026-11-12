@@ -534,6 +534,8 @@ final class Follower {
 }
 
 extension Follower: Followed {
+    var sealed: Bool { client.sealed }
+
     /// The user every call is made as: what `/user/me` answered.
     private func me() throws -> String {
         guard let user = state.loaded?.me.user else {
@@ -597,8 +599,15 @@ extension Follower: Followed {
         try await client.answerAsk(bead: bead, ask: ask, option: option, words: words, actor: me(), weighed: weighed)
     }
 
-    func approve(bead: String, ask: Int64, weighed: Bool) async throws {
+    func approve(bead: String, ask: Int64, weighed: Bool) async throws -> Pairing? {
         try await client.approveAsk(bead: bead, ask: ask, actor: me(), weighed: weighed)
+    }
+
+    /// The phone's own user, as `/user/me` answered, and never the name
+    /// a pairing's answer carries: a yard that named another could not
+    /// steer the call at their pairing.
+    func endPairing() async throws {
+        try await client.devicePairCloseSelf(user: me())
     }
 
     func approveSetup(bead: String, ask: Int64, option: Int64, weighed: Bool) async throws {

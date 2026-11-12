@@ -935,6 +935,14 @@ final class FakeFollowed: Followed {
     private var pendingFlowRead: CheckedContinuation<Flows, Never>?
     var answers: [(String, Int64, Int64, String, Bool)] = []
     var approvals: [(String, Int64, Bool)] = []
+    /// Whether its calls are sealed inside the yard's channel.
+    var sealed = false
+    /// What a run approval answers: the pairing a `user device pair`
+    /// card opened, nil on any other.
+    var pairingAnswered: Pairing? = nil
+    /// How many times End was sent, and what refuses it.
+    var endings = 0
+    var endRefuse: ApiError? = nil
     var setupApprovals: [(String, Int64, Int64, Bool)] = []
     var gives: [(String, Int64, [String: String], Bool)] = []
     var defers: [(String, Int64)] = []
@@ -1111,9 +1119,15 @@ final class FakeFollowed: Followed {
         answers.append((bead, ask, option, words, weighed))
     }
 
-    func approve(bead: String, ask: Int64, weighed: Bool) async throws {
+    func approve(bead: String, ask: Int64, weighed: Bool) async throws -> Pairing? {
         if let answerRefuse { throw answerRefuse }
         approvals.append((bead, ask, weighed))
+        return pairingAnswered
+    }
+
+    func endPairing() async throws {
+        endings += 1
+        if let endRefuse { throw endRefuse }
     }
 
     func approveSetup(bead: String, ask: Int64, option: Int64, weighed: Bool) async throws {

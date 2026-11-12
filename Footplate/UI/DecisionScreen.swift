@@ -18,7 +18,9 @@ import UIKit
 // them, are links. A depot pack too large to read whole is a summary
 // card: its sentences are the first screen, each file's line a row that
 // opens that file's whole text in a sheet over the card, under its name,
-// its action and its SHA-256s.
+// its action and its SHA-256s. A pairing card says, under its weight,
+// the door its approval crosses; once approved, the QR screen of its
+// pairing stands in the card's place until the person leaves.
 
 /// The decisions list, in the place's own stack.
 struct DecisionsScreen: View {
@@ -131,7 +133,11 @@ struct DecisionScreen: View {
         let state = model.state
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
-                if state.read {
+                if let pairing = state.pairing {
+                    ApprovedPairingView(screen: pairing) {
+                        Task { await model.endPairing() }
+                    }
+                } else if state.read {
                     card(state)
                 }
                 if let error = state.error {
@@ -168,6 +174,12 @@ struct DecisionScreen: View {
             Text(line)
                 .themeType(.label)
                 .foregroundStyle(ThemeColor.textPrimary.color)
+        }
+        if let door = state.door {
+            Text(door)
+                .themeType(.body)
+                .foregroundStyle(ThemeColor.textAccent.color)
+                .accessibilityIdentifier("decision-door")
         }
         linkedText(state.question)
             .themeType(.title)

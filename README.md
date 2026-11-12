@@ -49,6 +49,25 @@ One secret crosses the edge: the one-time code a harness's sign-in page
 gives. Its decision card links the page and takes the code behind the
 unlock; API keys and every other secret are answered on the yard's machine.
 
+A phone already paired can pair another device of its user. A `user device
+pair` decision says under its weight which door its approval crosses: sealed
+to this phone, where the yard's channel was pinned at its pairing, so that the
+edge carries the answer unread; otherwise with the token in the clear, so that
+the code is to be shown to the device and to nobody else, since whoever
+carries the approval could spend it first. Approving it, behind the unlock,
+answers the pairing it opened, once, and the card gives way to its QR screen:
+the QR for the new device to scan, the code beside it for one with no camera,
+the minutes it is good for, and End, which ends the pairing. The QR and the
+code are held in that screen's memory alone, and leaving the screen, the end
+of the ten minutes and End drop them. Nothing writes or logs them, the code
+cannot be copied, and neither is drawn while the app is out of the front, so
+the system's snapshot for the app switcher holds neither. End is the user's
+own: the yard serves it to a device for its own user's pairing alone, so an
+operator's approval of a member's pairing is told where to end it, on the
+yard. The new device scans the QR as it scans any pairing's, pinning the
+yard's channel key from its fourth field and redeeming the code sealed, or
+types the code.
+
 A phone with no yard to pair can look around in a made-up one: the Pair
 screen's Try a demo opens a demo yard with some crew, mail, a few beads and
 one question to answer, under a banner that says it is made up and has Pair

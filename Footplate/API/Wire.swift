@@ -123,6 +123,86 @@ extension Paired: CustomStringConvertible {
     }
 }
 
+/// The pairing an approval of a `user device pair` card opened, as that
+/// approval answers it (`pairing` of docs/api.md's `ApproveAsk`): what a
+/// new device scans or types, and when its code runs out. It is the
+/// call's return and nothing else: the yard answers it once, to the
+/// approver alone, and reads it back to no one, so whoever holds this
+/// value holds the only copy. Nothing prints it: its description, its
+/// debug description and its mirror leave the code and the QR out, as
+/// `Paired` leaves out a token.
+struct Pairing: Equatable, Sendable {
+    var user: String
+    var device: String
+    /// As it is shown, `XXXX-XXXX`.
+    var code: String
+    /// Where the device reaches the yard.
+    var address: String
+    /// The yard's name at the edge, where the address is the edge's.
+    var yard: String = ""
+    /// When the code runs out.
+    var expires: Date
+    /// The yard's channel public key, base64url, where it has one.
+    var channelKey: String = ""
+    /// What the QR holds, drawn as it stands: the address, the code,
+    /// the yard where the address is the edge's, then the channel key.
+    var qr: String
+
+    /// The pairing of an approval's `result`, or nil where it holds none
+    /// that can be shown: no `pairing`, or one with no address, code or
+    /// QR, an unreadable expiry, or a QR that does not carry those same
+    /// address, code, yard and channel key. A code with no end would be
+    /// drawn for longer than it is good; a mismatched QR would pair a
+    /// different code or yard from the one this screen says.
+    init?(result: [String: Any]?) {
+        guard let wire = result?["pairing"] as? [String: Any] else { return nil }
+        func text(_ name: String) -> String {
+            (wire[name] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        }
+        let code = text("code")
+        let address = text("address")
+        let yard = text("yard")
+        let channelKey = text("channel_key")
+        let qr = text("qr")
+        var expectedQR = "\(address)#\(code)"
+        if !yard.isEmpty { expectedQR += "#\(yard)" }
+        if !channelKey.isEmpty { expectedQR += yard.isEmpty ? "##\(channelKey)" : "#\(channelKey)" }
+        guard !code.isEmpty, !address.isEmpty, !qr.isEmpty, qr == expectedQR,
+              let ends = parseInstant(text("expires")) else { return nil }
+        user = text("user")
+        device = text("device")
+        self.code = code
+        self.address = address
+        self.yard = yard
+        expires = ends
+        self.channelKey = channelKey
+        self.qr = qr
+    }
+
+    init(user: String, device: String, code: String, address: String, yard: String = "", expires: Date, channelKey: String = "", qr: String) {
+        self.user = user
+        self.device = device
+        self.code = code
+        self.address = address
+        self.yard = yard
+        self.expires = expires
+        self.channelKey = channelKey
+        self.qr = qr
+    }
+}
+
+extension Pairing: CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
+    var description: String {
+        "Pairing(user=\(user), device=\(device), code=<code>, qr=<qr>)"
+    }
+
+    var debugDescription: String { description }
+
+    var customMirror: Mirror {
+        Mirror(self, children: ["user": user, "device": device])
+    }
+}
+
 /// What signing in at the edge answers: the session token, the account
 /// it signed in as, and the account's handle, which the edge names its
 /// own yard by (empty where the answer holds none).

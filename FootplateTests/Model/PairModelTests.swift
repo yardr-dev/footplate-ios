@@ -294,6 +294,43 @@ final class PairModelTests: XCTestCase {
         XCTAssertTrue(world.records.kept.yards.isEmpty)
         XCTAssertNil(world.nav.signIn)
         XCTAssertFalse(world.nav.pairing)
+
+        // Five wrong codes end the pairing, a scanned QR's sealed redemption
+        // and a typed code's PAKE alike: each is the wrong code's words, and
+        // the right code after the fifth finds none open, in the yard's words
+        // for a pairing that ended, used or ran out, with nothing kept.
+        let key = world.fake.channelPublic(yardName: "laptop")
+        for scanned in [true, false] {
+            world.fake.openPairing(yardName: "laptop", code: "M4TR-9KWE")
+            func offer(_ code: String) async {
+                if scanned {
+                    world.pair.scanned("\(world.fake.origin)#\(code)#laptop#\(key)")
+                } else {
+                    world.pair.typeCode()
+                    world.pair.typed(yard: "laptop", code: code)
+                    world.pair.readTyped()
+                }
+                await world.pair.pair()
+            }
+            for tries in 1...5 {
+                await offer("AAAA-BBBB")
+                XCTAssertEqual(world.pair.state.error, pairingRefusedWords("wrong_code"), "wrong code \(tries), scanned \(scanned)")
+            }
+            await offer("M4TR-9KWE")
+            XCTAssertEqual(world.pair.state.error, pairingRefusedWords("no_pairing"), "the right code after the fifth, scanned \(scanned)")
+            XCTAssertTrue(world.records.kept.yards.isEmpty)
+            XCTAssertFalse(world.fake.hasPairingOpen(yardName: "laptop"))
+        }
+        // Four wrong ones and then the right one still pairs.
+        world.fake.openPairing(yardName: "laptop", code: "M4TR-9KWE")
+        for _ in 1...4 {
+            world.pair.scanned("\(world.fake.origin)#AAAA-BBBB#laptop#\(key)")
+            await world.pair.pair()
+        }
+        world.pair.scanned("\(world.fake.origin)#M4TR-9KWE#laptop#\(key)")
+        await world.pair.pair()
+        XCTAssertNil(world.pair.state.error)
+        XCTAssertEqual(world.records.kept.yards.map(\.name), ["laptop"])
     }
 
     func testARefusedSignInIsSaidAndKeepsNothing() async throws {

@@ -13,6 +13,8 @@ import XCTest
 // a weighty card with its own row shut, a harness login's code card
 // with its sign-in link, an API key's card, and starter's summary card
 // with the text of one of its files.
+// A pairing card says the door its approval crosses, approving it shows the
+// QR screen of the pairing it opened, and End ends it (yardr-6maq 3.4).
 // Hand-run for the bead note; the gate runs it too, and it only
 // asserts that each
 // screen renders non-empty at phone size. PNGs land in
@@ -198,6 +200,144 @@ final class DecisionScreenshotTests: XCTestCase {
         )
         XCTAssertGreaterThan(solid, 0.5, "the second part's lines were not drawn")
         decision.leave()
+    }
+
+    // The pairing card before its approval, with the door its approval
+    // crosses said under its weight (plain, then sealed), the QR screen the
+    // approval opens, and the screen once End ended it. The QR that is
+    // pictured reads back, as a camera would read it, as the string the yard
+    // answered; and the ended screen holds neither the code nor a QR.
+    func testPairingScreensRender() async throws {
+        let scene = try XCTUnwrap(
+            UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first,
+            "no window scene to render in"
+        )
+        let fake = FakeYard()
+        let records = Records(secret: MemoryShelf(), plain: MemoryShelf(), origin: fake.origin)
+        records.keepSession(account: fake.email, session: fake.session())
+        records.keepYard(PairedYard(name: "", yard: "south", user: "jo", device: "phone", token: "yardr-dev-south-1"))
+        let nav = Nav(place: .decide)
+        let home = FakeFollowed()
+        let mailroom = Mailroom()
+        mailroom.setFollowers(["": home])
+        let now = parseInstant("2026-10-08T11:30:00Z")!
+        let key = channelPublicString(Data(repeating: 0x2A, count: 32))
+        let qr = "https://my.yardr.dev#K7QM-2XPD#jo/south#\(key)"
+        home.beads = ["yd-pair": Bead(id: "yd-pair", title: "Pair jo's watch", stage: "new", asks: [
+            BeadAsk(
+                ask: 65, question: "Pair jo's watch?", context: ["jo asked for the watch to be paired."],
+                run: Run(
+                    argv: ["user", "device", "pair", "jo", "watch"], command: "yardr user device pair jo watch",
+                    does: [
+                        "opens a pairing for the device watch of jo, reached at https://my.yardr.dev.",
+                        "jo has 1 device: phone (last used 09:12).",
+                        "Approval opens the pairing for that device alone: its code is good for ten minutes and for one device, and whoever has the code within those minutes is answered with that device's token.",
+                        "Nothing in the yard keeps the code after it is used or runs out.",
+                        "The new device then calls as jo until yardr user device rm jo watch, and jo will then have 2 devices.",
+                    ],
+                    back: "yardr user device pair --end ends it while it stands; once the code is used, yardr user device rm jo watch removes the device"
+                ),
+                weight: [AskWeight(kind: "trust", line: "widens who the yard listens to: a new device watch of jo speaks as them: whoever holds its token calls as jo until the device is removed")]
+            ),
+        ])]
+        // A code with ten minutes and half of one to run, so the minutes read
+        // ten as the shot is taken.
+        let ends = Date().addingTimeInterval(630)
+        home.pairingAnswered = Pairing(
+            user: "jo", device: "watch", code: "K7QM-2XPD", address: "https://my.yardr.dev", yard: "jo/south",
+            expires: ends, channelKey: key, qr: qr
+        )
+        let decision = DecisionModel(
+            mailroom: mailroom, records: records, nav: nav,
+            conversation: ConversationModel(mailroom: mailroom, now: { now }, zone: { TimeZone(secondsFromGMT: 0)! }),
+            unlock: FakeUnlock(), now: { now }, zone: { TimeZone(secondsFromGMT: 0)! }
+        )
+        let dir = ProcessInfo.processInfo.environment["DECISION_SHOTS_DIR"]
+            .map { URL(fileURLWithPath: $0) }
+            ?? FileManager.default.temporaryDirectory.appendingPathComponent("decision-shots")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        home.up(loaded())
+
+        // Before: the door says the code is shown on this screen and to be
+        // shown to nobody else, for a phone whose yard is not sealed.
+        try await render(
+            DecisionScreen(model: decision, yard: "", bead: "yd-pair", ask: 65),
+            scene: scene, to: dir.appendingPathComponent("pair-card.png"), height: 1100
+        )
+        XCTAssertEqual(decision.state.door, pairDoor(sealed: false))
+        XCTAssertNil(decision.state.pairing)
+        // And for one whose client is sealed inside the yard's channel.
+        home.sealed = true
+        XCTAssertEqual(decision.state.door, pairDoor(sealed: true))
+        try await render(
+            DecisionScreen(model: decision, yard: "", bead: "yd-pair", ask: 65),
+            scene: scene, to: dir.appendingPathComponent("pair-card-sealed.png"), height: 1100
+        )
+
+        // Approved: the QR screen stands in the card's place. The windows
+        // above left the card as they closed, and tell the model so a moment
+        // after, so the next one is up, and the card opened again, only once
+        // they have.
+        try await Task.sleep(for: .milliseconds(300))
+        // The app's scene says it is in front; a hosting controller of a test
+        // has none, so it is said here.
+        let (window, hosting) = host(
+            DecisionScreen(model: decision, yard: "", bead: "yd-pair", ask: 65).environment(\.scenePhase, .active),
+            scene: scene, height: 874
+        )
+        try await Task.sleep(for: .milliseconds(300))
+        decision.open(yard: "", bead: "yd-pair", ask: 65)
+        await decision.approve()
+        XCTAssertEqual(home.approvals.count, 1)
+        let screen = try XCTUnwrap(decision.state.pairing)
+        XCTAssertEqual(screen.phase, .showing(try XCTUnwrap(home.pairingAnswered)))
+        try await Task.sleep(for: .milliseconds(700))
+        let drawn = image(of: hosting.view, in: window)
+        try write(drawn, to: dir.appendingPathComponent("pair-qr.png"), height: 874)
+        XCTAssertEqual(readQRPicture(drawn), qr, "the QR on the screen is the string the yard answered")
+
+        // Ended: End ended it, and no code and no QR stand, on the same screen.
+        await decision.endPairing()
+        XCTAssertEqual(home.endings, 1)
+        XCTAssertEqual(decision.state.pairing?.phase, .over(.ended))
+        try await Task.sleep(for: .milliseconds(500))
+        let ended = image(of: hosting.view, in: window)
+        try write(ended, to: dir.appendingPathComponent("pair-ended.png"), height: 874)
+        window.isHidden = true
+        XCTAssertNil(readQRPicture(ended), "an ended pairing draws no QR")
+        decision.leave()
+
+        // The app leaves the front: the system takes a snapshot of the screen
+        // for its app switcher, kept in a file of the app's own, so the screen
+        // draws no QR then. Drawn alone, with the phase the app is in, so that
+        // no screen's leaving drops anything meanwhile.
+        let shown = PairingScreen(user: "jo", device: "watch", phase: .showing(try XCTUnwrap(home.pairingAnswered)))
+        for (phase, reads) in [(ScenePhase.active, true), (.inactive, false), (.background, false)] {
+            let (aside, hosted) = host(
+                ApprovedPairingView(screen: shown, onEnd: {}).padding(20).environment(\.scenePhase, phase),
+                scene: scene, height: 874
+            )
+            try await Task.sleep(for: .milliseconds(400))
+            let picture = image(of: hosted.view, in: aside)
+            if phase == .background { try write(picture, to: dir.appendingPathComponent("pair-hidden.png"), height: 874) }
+            aside.isHidden = true
+            XCTAssertEqual(readQRPicture(picture) == qr, reads, "scene phase \(phase)")
+        }
+
+        // An operator's approval of a member's pairing: End is the member's
+        // own, so the screen says where it ends instead.
+        var theirs = shown
+        theirs.user = "hal"
+        theirs.canEnd = false
+        let (memberWindow, memberHosted) = host(
+            ApprovedPairingView(screen: theirs, onEnd: {}).padding(20).environment(\.scenePhase, .active),
+            scene: scene, height: 874
+        )
+        try await Task.sleep(for: .milliseconds(400))
+        let memberPicture = image(of: memberHosted.view, in: memberWindow)
+        try write(memberPicture, to: dir.appendingPathComponent("pair-qr-member.png"), height: 874)
+        memberWindow.isHidden = true
+        XCTAssertEqual(readQRPicture(memberPicture), qr)
     }
 
     /// A summary card whose one file is a change with a diff and a new

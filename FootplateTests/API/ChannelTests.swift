@@ -49,6 +49,11 @@ final class ChannelTests: XCTestCase {
         let client = try fake.edge().yard(device: yard.token, session: records.kept.account!.session, name: yard.name, channel: yard.channel)
         let loaded = try await client.load()
         XCTAssertEqual("jo", loaded.me.user)
+        // The client says it is sealed, which is what a pairing card says of
+        // the door an approval crosses; the same yard with no channel is not.
+        XCTAssertTrue(client.sealed)
+        let plain = try fake.edge().yard(device: yard.token, session: records.kept.account!.session, name: yard.name)
+        XCTAssertFalse(plain.sealed)
     }
 }
 

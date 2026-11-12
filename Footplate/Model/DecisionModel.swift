@@ -32,6 +32,14 @@ private func refusalWords(_ error: ApiError) -> String { words(error) }
 // and each file's line opens that file's whole text over the card, read
 // from the ask the yard already sent. Approving it is the run card's,
 // and a strong one is refused from a device by the yard, not here.
+// A `user device pair` card says the door its approval crosses under its
+// weight, sealed or plain, before the approval is sent; approving it
+// answers the pairing it opened, once, and the card gives way to its QR
+// screen (yardr-6maq 3.4): the QR for the new device to scan, the code
+// for one with no camera, the minutes left and End. The pairing is held
+// in this model's memory alone, never in `state` past the sitting: it is
+// dropped when the card leaves the screen or another opens, when its
+// time runs out and when End ends it, and nothing writes or prints it.
 
 /// One option of a card, numbered from 1, `you decide` last.
 struct Choice: Equatable, Sendable {
@@ -149,6 +157,12 @@ struct DecisionState: Equatable, Sendable {
     var ask: Int64 = 0
     /// The `WEIGHTY` lines, first on the card.
     var weighty: [String] = []
+    /// What a pairing card says of the door its approval crosses, under
+    /// its weight; nil on every other card, and once it is approved.
+    var door: String? = nil
+    /// The QR screen of an approved pairing, in place of the card while
+    /// it stands.
+    var pairing: PairingScreen? = nil
     var question: String = ""
     var context: [String] = []
     /// One details row for the card's own bead, first, then one for each
@@ -244,6 +258,17 @@ final class DecisionModel {
     private var refused: Bool = false
     private var refusal: String? = nil
     private var errorText: String? = nil
+    /// The pairing an approval of this card opened, for the QR screen:
+    /// the one place the code and the QR are held. Dropped by `leave`,
+    /// by another card opening, at the time the code runs out and by End.
+    private var sitting: Sitting? = nil
+    /// Drops the pairing at its time. Holds the instant and no code.
+    private var expiry: Task<Void, Never>? = nil
+
+    private struct Sitting {
+        var target: ScreenRef
+        var screen: PairingScreen
+    }
 
     private let mailroom: Mailroom
     private let records: Records
@@ -255,6 +280,9 @@ final class DecisionModel {
     private let notePictures: NotePictures
     private let now: @Sendable () -> Date
     private let zone: @Sendable () -> TimeZone
+    /// How the pairing waits for its time to run out: the app sleeps, and
+    /// the tests drive it.
+    private let sleep: @Sendable (Duration) async throws -> Void
     private var boardsObserver: UUID? = nil
     private var readTask: Task<Void, Never>? = nil
     private var lastReadKey: String? = nil
@@ -271,7 +299,8 @@ final class DecisionModel {
         unlock: any UnlockPrompt,
         notePictures: NotePictures? = nil,
         now: @escaping @Sendable () -> Date = { Date() },
-        zone: @escaping @Sendable () -> TimeZone = { .current }
+        zone: @escaping @Sendable () -> TimeZone = { .current },
+        sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
         self.mailroom = mailroom
         self.records = records
@@ -281,6 +310,7 @@ final class DecisionModel {
         self.notePictures = notePictures ?? NotePictures()
         self.now = now
         self.zone = zone
+        self.sleep = sleep
         boardsObserver = mailroom.observeBoards { [weak self] in
             self?.boardChanged()
         }
@@ -306,10 +336,13 @@ final class DecisionModel {
             ? ask.run != nil || chosen > 0
             : givesCode || (chosen > 0 && needsGate(weight: weight, identity: ask.identity, options: ask.options, option: chosen))
         let details = detailRows(of: ask, bead: bead)
+        let pairs = ask.run.map(isDevicePairRun) ?? false
         return DecisionState(
             read: true,
             ask: openedAsk,
             weighty: weight.map(weightLine),
+            door: pairs && approvable && done == nil ? pairDoor(sealed: isSealed(yard)) : nil,
+            pairing: pairingScreen(),
             question: ask.question,
             context: ask.context,
             details: details,
@@ -347,6 +380,7 @@ final class DecisionModel {
         activation += 1
         readTask?.cancel()
         if !same {
+            dropSitting()
             openedYard = yard
             openedBead = bead
             openedAsk = ask
@@ -385,6 +419,7 @@ final class DecisionModel {
         readTask = nil
         unlocking = nil
         shownText = nil
+        dropSitting()
         // A read finishing off-screen is discarded. Shut its empty row
         // so reopening the card offers a fresh tap instead of a blank one.
         for id in detailReads.keys where detailBodies[id] == nil {
@@ -531,7 +566,9 @@ final class DecisionModel {
     /// the unlock, as a pick's.
     func approve() async {
         guard let screen = screen(), let ask = readAsk else { return }
-        if sending || unlocking != nil || !approvable(ask) { return }
+        // A pairing's QR screen stands where the card was: what it opened
+        // is approved already, and a second approval would be refused.
+        if sending || unlocking != nil || sitting != nil || !approvable(ask) { return }
         if ask.setup != nil, chosen == 0 { return }
         await passingTheGate(screen, ask: ask, reason: approveReason(what: approvalOf(ask), yard: title(screen.yard))) {
             await sendApproval(target: screen, ask: ask)
@@ -582,6 +619,35 @@ final class DecisionModel {
         }
         await call(target: screen, failed: "Not declined") { followed in
             try await followed.decline(bead: screen.bead, ask: screen.ask, words: why)
+        }
+    }
+
+    /// End: the person takes the pairing whose code is on the screen back.
+    /// The name sent is the phone's own user's (`Followed.endPairing`),
+    /// never one the answer carried. What the yard ends leaves the screen
+    /// with no code and no QR; what it refuses is its words on the screen,
+    /// and the pairing stands with End to press again.
+    func endPairing() async {
+        guard let current = sitting, case .showing = current.screen.phase,
+              current.screen.canEnd, !current.screen.ending, current.target == screen(),
+              let followed = mailroom.followed(current.target.yard)
+        else { return }
+        let target = current.target
+        let activation = self.activation
+        sitting?.screen.ending = true
+        sitting?.screen.refusal = nil
+        do {
+            try await followed.endPairing()
+            guard self.activation == activation, sitting?.target == target else { return }
+            ended(.ended)
+        } catch let error as ApiError {
+            guard self.activation == activation, sitting?.target == target else { return }
+            sitting?.screen.ending = false
+            sitting?.screen.refusal = "Not ended: \(refusalWords(error))"
+        } catch {
+            guard self.activation == activation, sitting?.target == target else { return }
+            sitting?.screen.ending = false
+            sitting?.screen.refusal = "Not ended: \(refusalWords(ApiError.down(why: "an unexpected error")))"
         }
     }
 
@@ -654,8 +720,10 @@ final class DecisionModel {
     }
 
     private func sendApproval(target: ScreenRef, ask: BeadAsk) async {
-        if ask.run != nil {
-            await answerCall(target: target, failed: "Not approved", isApproval: true) { followed in
+        if let run = ask.run {
+            // A pairing card's approval answers the pairing it opened, and
+            // the card gives way to its QR screen; any other leaves.
+            await answerCall(target: target, failed: "Not approved", isApproval: true, approving: run) { followed in
                 try await followed.approve(bead: target.bead, ask: target.ask, weighed: true)
             }
         } else {
@@ -680,6 +748,20 @@ final class DecisionModel {
     /// it instead, and is not made again; any other failure says why
     /// and keeps what was chosen.
     private func answerCall(target: ScreenRef, failed: String, isApproval: Bool = false, _ body: @escaping @MainActor (any Followed) async throws -> Void) async {
+        await answerCall(target: target, failed: failed, isApproval: isApproval, approving: nil) { followed in
+            try await body(followed)
+            return nil
+        }
+    }
+
+    /// `answerCall` for the approval of a run, which may answer a pairing:
+    /// where the card is a pairing card, or the yard answered a pairing of
+    /// any card (its code is shown to this call alone, so a screen that
+    /// dropped it would lose it), what it answers, or the lack of it,
+    /// takes the card's place as its QR screen and the card stays; any
+    /// other answered card leaves. An answer that arrives after the card
+    /// left the screen is dropped with it.
+    private func answerCall(target: ScreenRef, failed: String, isApproval: Bool = false, approving run: Run?, _ body: @escaping @MainActor (any Followed) async throws -> Pairing?) async {
         guard let followed = mailroom.followed(target.yard) else { return }
         let activation = self.activation
         sending = true
@@ -687,9 +769,13 @@ final class DecisionModel {
         if isApproval { refusal = nil }
         defer { sending = false }
         do {
-            try await body(followed)
+            let opened = try await body(followed)
             guard active, self.activation == activation, screen() == target else { return }
-            nav.closeDecision(yard: target.yard, bead: target.bead, ask: target.ask)
+            if let run, opened != nil || isDevicePairRun(run) {
+                seat(opened, of: run, target: target)
+            } else {
+                nav.closeDecision(yard: target.yard, bead: target.bead, ask: target.ask)
+            }
         } catch let error as ApiError {
             guard active, self.activation == activation, screen() == target else { return }
             if case .refused = error,
@@ -728,6 +814,80 @@ final class DecisionModel {
             guard active, self.activation == activation, screen() == target else { return }
             errorText = "\(failed): \(refusalWords(ApiError.down(why: "an unexpected error")))"
         }
+    }
+
+    /// Seats the pairing an approval opened as the card's QR screen, held
+    /// here and nowhere else, with the time it runs out set to drop it. A
+    /// pairing card approved with nothing to show seats the screen that
+    /// says so: the approval stands, and a "Not approved" would be false.
+    private func seat(_ pairing: Pairing?, of run: Run, target: ScreenRef) {
+        expiry?.cancel()
+        expiry = nil
+        // The card names whose pairing it is and for which device; a pairing
+        // answered to a card that does not say takes the yard's names.
+        let (user, device) = isDevicePairRun(run) ? (run.argv[3], run.argv[4]) : (pairing?.user ?? "", pairing?.device ?? "")
+        // End is the user's own: the yard answers no pairing of another's
+        // to a device (`DevicePairCloseSelf`), so an operator who approved a
+        // member's has none to press, and the screen says where it ends.
+        let mine = mailroom.followed(target.yard)?.state.loaded?.me.user
+        let who = PairingScreen(user: user, device: device, phase: .over(.unshown), canEnd: user == mine)
+        guard let pairing else {
+            sitting = Sitting(target: target, screen: who)
+            return
+        }
+        var screen = who
+        screen.phase = .showing(pairing)
+        sitting = Sitting(target: target, screen: screen)
+        // The timer holds the instant and this model, never the code.
+        let ends = pairing.expires
+        let wait = ends.timeIntervalSince(now())
+        let sleep = self.sleep
+        expiry = Task { @MainActor [weak self] in
+            try? await sleep(.seconds(max(wait, 0)))
+            guard !Task.isCancelled else { return }
+            self?.ended(.ranOut, at: ends)
+        }
+    }
+
+    /// The pairing shown has ended for `over`: no code and no QR stand
+    /// any more. A pairing already over stays as it ended first.
+    private func ended(_ over: PairingOver, at ends: Date? = nil) {
+        guard var current = sitting, case .showing(let pairing) = current.screen.phase else { return }
+        if let ends, pairing.expires != ends { return }
+        current.screen.phase = .over(over)
+        current.screen.ending = false
+        current.screen.refusal = nil
+        sitting = current
+        expiry?.cancel()
+        expiry = nil
+    }
+
+    private func dropSitting() {
+        expiry?.cancel()
+        expiry = nil
+        sitting = nil
+    }
+
+    /// The QR screen of the open card, as it reads now: a pairing whose
+    /// time has passed is drawn as ended even before its timer has
+    /// dropped it, so no screen shows a code past its end.
+    private func pairingScreen() -> PairingScreen? {
+        guard let sitting, sitting.target == screen() else { return nil }
+        var shown = sitting.screen
+        if case .showing(let pairing) = shown.phase, pairing.expires <= now() {
+            shown.phase = .over(.ranOut)
+            shown.ending = false
+            shown.refusal = nil
+        }
+        return shown
+    }
+
+    /// Whether the yard's calls go sealed inside its channel: the client
+    /// that will send the approval says, so the card's sentence is the
+    /// door it crosses. A yard with no follower is told plain, the
+    /// sentence that asks the more of the person.
+    private func isSealed(_ yard: String) -> Bool {
+        mailroom.followed(yard)?.sealed ?? false
     }
 
     private func boardChanged() {

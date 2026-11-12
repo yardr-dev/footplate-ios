@@ -62,6 +62,11 @@ final class YardClient: Sendable {
         self.channel = channel
     }
 
+    /// Whether every call of this client is sealed inside the yard's
+    /// channel, the device token crossing on none: the door an approval
+    /// goes through, which a pairing card says before it is sent.
+    var sealed: Bool { channel != nil }
+
     /// Who the token is: the user every call is made as, the device and
     /// the yard. Asked at every start.
     func me() async throws -> Me {
@@ -304,11 +309,26 @@ final class YardClient: Sendable {
     /// Approves a run ask: the yard runs the command the ask holds, as
     /// its operator. No `run.ask` values are sent; a card that asks
     /// for any is refused by the yard, which a later bead shows the
-    /// yard command for. `weighed` as in `answerAsk`.
-    func approveAsk(bead: String, ask: Int64, actor: String, weighed: Bool = false) async throws {
+    /// yard command for. `weighed` as in `answerAsk`. A `user device
+    /// pair` card's approval answers the pairing it opened, once and to
+    /// this call alone, and that is the value returned: the yard reads
+    /// it back to no one, nothing here keeps or prints it, and every
+    /// other approval returns nil. A pairing the answer holds in a
+    /// shape that cannot be shown is nil too, and the approval stands.
+    @discardableResult
+    func approveAsk(bead: String, ask: Int64, actor: String, weighed: Bool = false) async throws -> Pairing? {
         var args: [String: Any] = ["bead": bead, "ask": ask, "actor": actor]
         if weighed { args["weighed"] = true }
-        _ = try await call(method: "ApproveAsk", args: args)
+        let reply = try await call(method: "ApproveAsk", args: args)
+        return Pairing(result: reply.whole["result"] as? [String: Any])
+    }
+
+    /// Ends the open pairing of `user`, who is this device's own: the
+    /// yard holds the name to the device's user on its listener and
+    /// answers no pairing of another's. How a person takes back a
+    /// pairing an approval opened from the screen that showed its code.
+    func devicePairCloseSelf(user: String) async throws {
+        _ = try await call(method: "DevicePairCloseSelf", args: ["user": user])
     }
 
     /// Approves a setup ask with the preset pick `option`, keeping the

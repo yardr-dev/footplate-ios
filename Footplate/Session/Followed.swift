@@ -9,6 +9,10 @@ import Foundation
 protocol Followed: AnyObject {
     var state: YardState { get }
 
+    /// Whether its calls are sealed inside the yard's channel: the door an
+    /// approval crosses.
+    var sealed: Bool { get }
+
     func observe(_ observer: @escaping @MainActor (YardState) -> Void) -> UUID
     func removeObserver(_ id: UUID)
 
@@ -54,8 +58,16 @@ protocol Followed: AnyObject {
     /// passed gate on a weighty pick.
     func answer(bead: String, ask: Int64, option: Int64, words: String, weighed: Bool) async throws
 
-    /// Approves a run ask, with `weighed` after a passed gate.
-    func approve(bead: String, ask: Int64, weighed: Bool) async throws
+    /// Approves a run ask, with `weighed` after a passed gate. Where the
+    /// ask was a `user device pair` card, answers the pairing it opened:
+    /// the approval's one answer, which the yard reads back to no one, so
+    /// the caller holds it in a screen's memory and nowhere else.
+    @discardableResult
+    func approve(bead: String, ask: Int64, weighed: Bool) async throws -> Pairing?
+
+    /// Ends the open pairing of the user this device is, as the screen
+    /// that shows an approved pairing's code ends it.
+    func endPairing() async throws
 
     /// Approves a setup ask with the preset pick `option`, with
     /// `weighed` after a passed gate.

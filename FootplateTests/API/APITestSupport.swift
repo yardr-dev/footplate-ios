@@ -65,3 +65,26 @@ func raisedApiError(
 ) async -> ApiError {
     await raised(ApiError.self, file: file, line: line, operation)
 }
+
+/// A value a test shares with a task that runs while it reads: held under
+/// a lock, since the other side is not the test's.
+final class LockedBox<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var held: Value
+
+    init(_ value: Value) {
+        held = value
+    }
+
+    var value: Value {
+        lock.lock()
+        defer { lock.unlock() }
+        return held
+    }
+
+    func update(_ change: (inout Value) -> Void) {
+        lock.lock()
+        defer { lock.unlock() }
+        change(&held)
+    }
+}
