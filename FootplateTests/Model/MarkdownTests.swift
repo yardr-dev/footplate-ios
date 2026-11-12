@@ -42,6 +42,14 @@ final class MarkdownTests: XCTestCase {
         Drawn(kind: .heading(level), text: words)
     }
 
+    private func quote(_ words: String) -> Drawn {
+        Drawn(kind: .quote, text: words)
+    }
+
+    private func rule() -> Drawn {
+        Drawn(kind: .rule, text: "")
+    }
+
     /// A stretch of the one block of a text: the words, and how they are drawn.
     private struct Run: Equatable {
         var words: String
@@ -69,7 +77,44 @@ final class MarkdownTests: XCTestCase {
         XCTAssertEqual(block.kind, .text, text, file: file, line: line)
         XCTAssertEqual(block.text, text, file: file, line: line)
         XCTAssertTrue(block.marks.isEmpty, "\(text): \(block.marks)", file: file, line: line)
+        XCTAssertTrue(block.links.isEmpty, "\(text): \(block.links)", file: file, line: line)
         XCTAssertFalse(block.apart, text, file: file, line: line)
+    }
+
+    /// One named link of the one block of a text: the words, where a tap
+    /// opens, and the host shown beside them.
+    private struct Linked: Equatable {
+        var words: String
+        var url: String
+        var host: String
+    }
+
+    /// The one block of `text`: what is drawn, the stretches that are not
+    /// plain, and the named links it carries.
+    private func named(_ text: String, file: StaticString = #filePath, line: UInt = #line) -> (text: String, runs: [Run], links: [Linked]) {
+        let all = messageBlocks(text)
+        XCTAssertEqual(all.count, 1, text, file: file, line: line)
+        guard let block = all.first else { return ("", [], []) }
+        let scalars = Array(block.text.unicodeScalars)
+        let runs = block.marks.map { stretch in
+            Run(words: String(String.UnicodeScalarView(scalars[stretch.range])), marks: stretch.marks)
+        }
+        let links = block.links.map { link in
+            Linked(words: String(String.UnicodeScalarView(scalars[link.range])), url: link.url.absoluteString, host: link.host)
+        }
+        return (block.text, runs, links)
+    }
+
+    /// The one table of `text`: its head, its rows and its alignments.
+    private func table(_ text: String, file: StaticString = #filePath, line: UInt = #line) -> (head: [TableCell], rows: [[TableCell]], align: [ColumnAlign])? {
+        let all = messageBlocks(text)
+        XCTAssertEqual(all.count, 1, text, file: file, line: line)
+        guard let block = all.first else { return nil }
+        guard case .table(let head, let rows, let align) = block.kind else {
+            XCTFail("\(text): no table read", file: file, line: line)
+            return nil
+        }
+        return (head, rows, align)
     }
 
     func testATextWithoutAMarkIsOneBlockAsItWasWritten() {
@@ -100,12 +145,10 @@ final class MarkdownTests: XCTestCase {
         // No list without a space after the marker, or with nothing in it.
         untouched("-dash and 1.5 and 3.14")
         untouched("- ")
-        untouched("---")
+        untouched("--")
         untouched("2026. That was the year.")
-        // Not on the list: a table, an image, HTML, a footnote, a quote.
-        untouched("| a | b |\n|---|---|\n| 1 | 2 |")
+        // Not on the list: an image, HTML, a footnote.
         untouched("![fence](fence.png) and <b>bold</b>[^1]")
-        untouched("> quoted")
         untouched("a \\*star\\*")
     }
 
@@ -231,6 +274,184 @@ final class MarkdownTests: XCTestCase {
         XCTAssertEqual(head.marks, [Stretch(range: 4..<7, marks: code)])
     }
 
+    func testTablesAreAHeadRowsAndAlignments() throws {
+        let found = try XCTUnwrap(table("| Yard | Waiting |\n| :--- | ------: |\n| home | none |\n| airy | 2 |"))
+        XCTAssertEqual(found.head.map(\.text), ["Yard", "Waiting"])
+        XCTAssertEqual(found.rows.map { $0.map(\.text) }, [["home", "none"], ["airy", "2"]])
+        XCTAssertEqual(found.align, [.left, .right])
+        XCTAssertTrue(found.head.allSatisfy { $0.marks.isEmpty && $0.links.isEmpty })
+        // Bold, code and a named link stand in cells.
+        let marked = try XCTUnwrap(table("| **bold** | `code` | [words](https://example.org/a) |\n|---|---|---|\n| x | y | z |"))
+        XCTAssertEqual(marked.head.map(\.text), ["bold", "code", "words"])
+        XCTAssertEqual(marked.head[0].marks, [Stretch(range: 0..<4, marks: bold)])
+        XCTAssertEqual(marked.head[1].marks, [Stretch(range: 0..<4, marks: code)])
+        XCTAssertEqual(marked.head[2].links.map(\.host), ["example.org"])
+        XCTAssertEqual(marked.head[2].links.map { $0.url.absoluteString }, ["https://example.org/a"])
+        XCTAssertEqual(marked.rows.map { $0.map(\.text) }, [["x", "y", "z"]])
+        // A pipe in code and an escaped pipe are the cell's own.
+        let pipes = try XCTUnwrap(table("| `a|b` | c\\|d |\n|---|---|\n| 1 | 2 |"))
+        XCTAssertEqual(pipes.head.map(\.text), ["a|b", "c|d"])
+        XCTAssertEqual(pipes.head[0].marks, [Stretch(range: 0..<3, marks: code)])
+        XCTAssertTrue(pipes.head[1].marks.isEmpty)
+        // A short row is filled, a long one cut.
+        let ragged = try XCTUnwrap(table("| a | b |\n|---|---|\n| 1 |\n| 2 | 3 | 4 |"))
+        XCTAssertEqual(ragged.rows.map { $0.map(\.text) }, [["1", ""], ["2", "3"]])
+        // A header and a delimiter with no body is a table with no rows.
+        let bare = try XCTUnwrap(table("| a | b |\n|---|---|"))
+        XCTAssertEqual(bare.head.map(\.text), ["a", "b"])
+        XCTAssertTrue(bare.rows.isEmpty)
+        XCTAssertEqual(bare.align, [.left, .left])
+    }
+
+    func testWhatIsNoTableStaysText() {
+        // No delimiter under the header.
+        untouched("| a | b |\n| 1 | 2 |")
+        // A delimiter of another cell count is no delimiter.
+        untouched("| a | b |\n|---|---|---|")
+        // A body line with no `|` ends the table; what follows is text.
+        let all = messageBlocks("| a | b |\n|---|---|\n| 1 | 2 |\nno pipes\n| 3 | 4 |")
+        XCTAssertEqual(all.count, 2)
+        guard case .table(_, let rows, _) = all[0].kind else { return XCTFail("no table read") }
+        XCTAssertEqual(rows.map { $0.map(\.text) }, [["1", "2"]])
+        XCTAssertEqual(all[1].kind, .text)
+        XCTAssertEqual(all[1].text, "no pipes\n| 3 | 4 |")
+    }
+
+    func testQuotesAreTheirLinesWithoutTheirMarkers() {
+        XCTAssertEqual(drawn("> Hold the timetable.\n> It is printed."), [
+            quote("Hold the timetable.\nIt is printed."),
+        ])
+        // Bold, code and a named link stand inside.
+        let all = messageBlocks("> **bold** and `code` and [words](https://example.org/a)")
+        XCTAssertEqual(all.count, 1)
+        XCTAssertEqual(all.first?.kind, .quote)
+        XCTAssertEqual(all.first?.text, "bold and code and words")
+        XCTAssertEqual(all.first?.marks.map(\.marks), [Marks(bold: true), Marks(code: true)])
+        XCTAssertEqual(all.first?.links.map(\.host), ["example.org"])
+        // A quoted blank line is a blank line inside.
+        XCTAssertEqual(drawn("> one\n>\n> two"), [quote("one\n\ntwo")])
+        // One level is stripped: the second `>` is the words'.
+        XCTAssertEqual(drawn(">> nested"), [quote("> nested")])
+        // No lazy continuation: the unmarked line stands outside.
+        XCTAssertEqual(drawn("> Held.\nStanding outside."), [quote("Held."), text("Standing outside.")])
+    }
+
+    func testAMarkerRunGoverningNoWordsIsNoQuote() {
+        untouched(">")
+        untouched("> \n>")
+    }
+
+    func testAQuotesApartIsTheBlankLineBeforeIt() {
+        XCTAssertEqual(messageBlocks("# Head\n> quoted").map(\.apart), [false, false])
+        XCTAssertEqual(messageBlocks("# Head\n\n> quoted").map(\.apart), [false, true])
+        XCTAssertEqual(messageBlocks("> quoted").map(\.apart), [false])
+    }
+
+    func testRulesStandAloneAcrossTheColumn() {
+        for line in ["---", "***", "___", "- - -"] {
+            XCTAssertEqual(drawn(line), [rule()], line)
+        }
+        // Two is not three, and an item's words are the item's.
+        untouched("--")
+        XCTAssertEqual(drawn("- -"), [bullet(0, "-")])
+        // A rule under text makes no heading of it.
+        XCTAssertEqual(drawn("Title\n---"), [text("Title"), rule()])
+        // A rule between paragraphs takes the wide room, above and below.
+        let all = messageBlocks("one\n\n---\n\ntwo")
+        XCTAssertEqual(all.map(\.kind), [.text, .rule, .text])
+        XCTAssertEqual(all.map(\.apart), [false, true, true])
+    }
+
+    func testANamedLinkKeepsItsWordsAndCarriesItsAddress() {
+        let link = named("See the [release page](https://yardr.dev/releases) first.")
+        XCTAssertEqual(link.text, "See the release page first.")
+        XCTAssertTrue(link.runs.isEmpty)
+        XCTAssertEqual(link.links, [Linked(words: "release page", url: "https://yardr.dev/releases", host: "yardr.dev")])
+        // A port, a query and a fragment are a link, opened whole.
+        let ported = named("[yard](https://example.org:8443/a?b=c#d)")
+        XCTAssertEqual(ported.text, "yard")
+        XCTAssertEqual(ported.links, [Linked(words: "yard", url: "https://example.org:8443/a?b=c#d", host: "example.org")])
+        // Bold and code stand inside the words.
+        let marked = named("[a **bold** and `code`](https://example.org/a)")
+        XCTAssertEqual(marked.text, "a bold and code")
+        XCTAssertEqual(marked.runs, [Run(words: "bold", marks: bold), Run(words: "code", marks: code)])
+        XCTAssertEqual(marked.links, [Linked(words: "a bold and code", url: "https://example.org/a", host: "example.org")])
+        // Emphasis around a link bolds its words and keeps it a link.
+        let held = named("**[held](https://example.org)**")
+        XCTAssertEqual(held.text, "held")
+        XCTAssertEqual(held.runs, [Run(words: "held", marks: bold)])
+        XCTAssertEqual(held.links, [Linked(words: "held", url: "https://example.org", host: "example.org")])
+    }
+
+    func testWhatIsNoNamedLinkStaysWritten() {
+        untouched("[mail](mailto:a@example.org)")
+        untouched("[page](/releases)")
+        untouched("[broken](https://example.org")
+        untouched("[empty]()")
+        untouched("![alt](https://example.org/x.png)")
+        // The authority's host is evil.example; a user name with a
+        // password; a host that is not ASCII.
+        untouched("[yardr](https://yardr.dev@evil.example/login)")
+        untouched("[yardr](https://user:pass@yardr.dev/login)")
+        untouched("[yardr](https://münchen.example/login)")
+        // A malformed port is no link; an empty port and an IPv6
+        // authority are, as the bare addresses read.
+        untouched("[yardr](https://yardr.dev:abc/)")
+        let empty = named("[yardr](https://yardr.dev:/x)")
+        XCTAssertEqual(empty.links, [Linked(words: "yardr", url: "https://yardr.dev:/x", host: "yardr.dev")])
+        let six = named("[yardr](https://[::1]/x)")
+        XCTAssertEqual(six.links, [Linked(words: "yardr", url: "https://[::1]/x", host: "[::1]")])
+        // A well-formed address whose host the words do not describe is
+        // still a link: the check reads the address, not the words.
+        let evil = named("[release page](https://evil.example/login)")
+        XCTAssertEqual(evil.links, [Linked(words: "release page", url: "https://evil.example/login", host: "evil.example")])
+    }
+
+    func testANamedLinkStandsBesideABareAddressAndInsideAQuoteAndACell() throws {
+        let both = named("See [named](https://a.example/x) and https://b.example/y.")
+        XCTAssertEqual(both.text, "See named and https://b.example/y.")
+        XCTAssertEqual(both.links, [Linked(words: "named", url: "https://a.example/x", host: "a.example")])
+        let quoted = messageBlocks("> see [named](https://a.example/x)")
+        XCTAssertEqual(quoted.first?.links.map(\.host), ["a.example"])
+        let celled = try XCTUnwrap(table("| [named](https://a.example/x) | b |\n|---|---|\n| 1 | 2 |"))
+        XCTAssertEqual(celled.head[0].text, "named")
+        XCTAssertEqual(celled.head[0].links.map(\.host), ["a.example"])
+    }
+
+    func testANamedShapeInCodeIsCodeWhileItsAddressStillOpens() {
+        // In a fence the brackets are the code's own, and no link is carried.
+        let fenced = messageBlocks("```\n[release page](https://yardr.dev/releases) and https://yardr.dev/releases\n```")
+        XCTAssertEqual(fenced.count, 1)
+        XCTAssertEqual(fenced.first?.kind, .code)
+        XCTAssertEqual(fenced.first?.text, "[release page](https://yardr.dev/releases) and https://yardr.dev/releases")
+        XCTAssertTrue(fenced.first?.links.isEmpty ?? false)
+        // In a span the shape is written characters, and no link is carried.
+        let spanned = named("`[release page](https://yardr.dev/releases)`")
+        XCTAssertEqual(spanned.text, "[release page](https://yardr.dev/releases)")
+        XCTAssertEqual(spanned.runs, [Run(words: "[release page](https://yardr.dev/releases)", marks: code)])
+        XCTAssertTrue(spanned.links.isEmpty)
+        // That the two bare addresses still open is drawn, and asserted
+        // where links are cut, in MessageTextTests.
+    }
+
+    func testTheFourFormsTogetherAreATextATableAQuoteATextAndARule() {
+        let all = messageBlocks(MarkdownFixture.forms)
+        XCTAssertEqual(all.count, 5)
+        XCTAssertEqual(all[0].kind, .text)
+        XCTAssertEqual(all[0].text, "Two yards answer tonight:")
+        guard case .table(let head, let rows, let align) = all[1].kind else { return XCTFail("no table read") }
+        XCTAssertEqual(head.map(\.text), ["Yard", "Waiting", "Working"])
+        XCTAssertEqual(rows.map { $0.map(\.text) }, [["home", "none", "3"], ["airy", "2", "none"]])
+        XCTAssertEqual(align, [.left, .right, .right])
+        XCTAssertEqual(all[2].kind, .quote)
+        XCTAssertEqual(all[2].text, "Hold the autumn timetable until the folded\ncarriers are printed.")
+        XCTAssertEqual(all[3].kind, .text)
+        XCTAssertEqual(all[3].text, "See the release page before you start.")
+        XCTAssertEqual(all[3].links.map(\.host), ["yardr.dev"])
+        XCTAssertEqual(all[4].kind, .rule)
+        XCTAssertEqual(all.map(\.apart), [false, true, true, true, true])
+    }
+
     func testBlankLinesBetweenBlocksAreSpaceAndNoLines() {
         let all = messageBlocks("# Head\n\nwords\n\n\n- item\n- next\n\n```\ncode\n```\n\n")
         XCTAssertEqual(all.map(\.text), ["Head", "words", "item", "next", "code"])
@@ -253,6 +474,7 @@ final class MarkdownTests: XCTestCase {
     func testAnyTextReadsIntoBlocksWhoseMarksStandInsideTheirWords() {
         let pieces = [
             "`", "``", "```", "````", "*", "**", "***", "_", "__", "#", "##", "###", "####", "- ", "* ", "1. ", "10) ",
+            "|", "> ", ">", "[", "]", "](https://x.org/a)", "---", ":", "@", "\\",
             "\n", "\n", "\n\n", "  ", " ", "a", "word", "https://x.org/a_b", "http://", ".", ")", "(", "é", "👍🏽", "\r\n", "\t",
         ]
         // A fixed seed, so a failure is the same failure next time.
@@ -264,16 +486,44 @@ final class MarkdownTests: XCTestCase {
         for _ in 0..<3000 {
             let text = (0..<next(30)).map { _ in pieces[next(pieces.count)] }.joined()
             for block in messageBlocks(text) {
+                // The marks and the named links stand inside the words, in
+                // order, and a table's cells hold the same of their own.
                 let count = block.text.unicodeScalars.count
                 var end = 0
                 for stretch in block.marks {
                     XCTAssertTrue(end <= stretch.range.lowerBound && stretch.range.lowerBound < stretch.range.upperBound && stretch.range.upperBound <= count, "\(text.debugDescription): \(block.marks)")
                     end = stretch.range.upperBound
                 }
+                var addressed = 0
+                for link in block.links {
+                    XCTAssertTrue(addressed <= link.range.lowerBound && link.range.lowerBound < link.range.upperBound && link.range.upperBound <= count, "\(text.debugDescription): \(block.links)")
+                    addressed = link.range.upperBound
+                }
                 switch block.kind {
                 case .code: XCTAssertTrue(block.marks.isEmpty, text.debugDescription)
                 case .heading(let level): XCTAssertTrue((1...3).contains(level), text.debugDescription)
                 case .item(_, let depth): XCTAssertTrue((0...1).contains(depth), text.debugDescription)
+                case .table(let head, let rows, let align):
+                    XCTAssertGreaterThanOrEqual(head.count, 2, text.debugDescription)
+                    XCTAssertEqual(align.count, head.count, text.debugDescription)
+                    for row in rows {
+                        XCTAssertEqual(row.count, head.count, text.debugDescription)
+                    }
+                    for cell in head + rows.flatMap({ $0 }) {
+                        let cells = cell.text.unicodeScalars.count
+                        var cellEnd = 0
+                        for stretch in cell.marks {
+                            XCTAssertTrue(cellEnd <= stretch.range.lowerBound && stretch.range.lowerBound < stretch.range.upperBound && stretch.range.upperBound <= cells, "\(text.debugDescription): \(cell.marks)")
+                            cellEnd = stretch.range.upperBound
+                        }
+                        var cellAddressed = 0
+                        for link in cell.links {
+                            XCTAssertTrue(cellAddressed <= link.range.lowerBound && link.range.lowerBound < link.range.upperBound && link.range.upperBound <= cells, "\(text.debugDescription): \(cell.links)")
+                            cellAddressed = link.range.upperBound
+                        }
+                    }
+                case .quote: break
+                case .rule: XCTAssertEqual(block.text, "", text.debugDescription)
                 case .text: break
                 }
                 XCTAssertEqual(block.copyText != nil, block.kind == .code, text.debugDescription)
@@ -319,6 +569,24 @@ final class MarkdownTests: XCTestCase {
 
 /// Messages the tests and the shots draw.
 enum MarkdownFixture {
+    /// The four forms together, the design's section 3 example verbatim:
+    /// a text, a table, a quote, a text with a named link, and a rule.
+    static let forms = """
+    Two yards answer tonight:
+
+    | Yard | Waiting | Working |
+    | :--- | ------: | ------: |
+    | home | none | 3 |
+    | airy | 2 | none |
+
+    > Hold the autumn timetable until the folded
+    > carriers are printed.
+
+    See the [release page](https://yardr.dev/releases) before you start.
+
+    ---
+    """
+
     /// The message in mckean's screenshot (yardmaster's mail 141176),
     /// verbatim. The key in it is a public key.
     static let snowflake = """

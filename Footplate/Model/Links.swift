@@ -22,10 +22,12 @@ import Foundation
 /// app knowing it or the yard having confirmed it. `code` says where the
 /// code stands where the caller has read it already, as a letter's blocks
 /// are with their backticks left out; without it the fences and spans in
-/// `text` are the code.
-func linked(_ text: String, beads: Set<String> = [], code: [Range<String.Index>]? = nil) -> AttributedString {
-    let links = linkRanges(text)
-    let tokens = beads.isEmpty ? [] : chipTokens(text, links: links, code: code ?? codeRanges(text), beads: beads)
+/// `text` are the code. `named` says where a named link's words stand, as
+/// the blocks read them: no bare link and no chip is cut inside them, the
+/// words opening the named address instead.
+func linked(_ text: String, beads: Set<String> = [], code: [Range<String.Index>]? = nil, named: [Range<String.Index>] = []) -> AttributedString {
+    let links = linkRanges(text).filter { link in !named.contains(where: { overlaps($0, link.range) }) }
+    let tokens = beads.isEmpty ? [] : chipTokens(text, links: links, code: code ?? codeRanges(text), beads: beads, named: named)
     let cuts = (links.map { Cut(range: $0.range, url: $0.url) } + tokens.map { Cut(range: $0.range, url: $0.url) })
         .sorted { $0.range.lowerBound < $1.range.lowerBound }
     var out = AttributedString()
@@ -88,20 +90,22 @@ private struct ChipToken {
     var url: URL
 }
 
-/// The ids of `beads` the tokens of `text` name outside its `links` and
-/// its `code`, each where it stands. The links and the tokens never meet,
-/// so the cuts stand in one order.
+/// The ids of `beads` the tokens of `text` name outside its `links`,
+/// its `code` and its `named` words, each where it stands. The links and
+/// the tokens never meet, so the cuts stand in one order.
 private func chipTokens(
     _ text: String,
     links: [FoundLink],
     code: [Range<String.Index>],
-    beads: Set<String>
+    beads: Set<String>,
+    named: [Range<String.Index>]
 ) -> [ChipToken] {
     var out: [ChipToken] = []
     for token in beadTokens(text) {
         guard beads.contains(token.id) else { continue }
         if links.contains(where: { overlaps($0.range, token.range) }) { continue }
         if code.contains(where: { overlaps($0, token.range) }) { continue }
+        if named.contains(where: { overlaps($0, token.range) }) { continue }
         guard let url = beadURL(token.id) else { continue }
         out.append(ChipToken(id: token.id, range: token.range, url: url))
     }
@@ -253,11 +257,29 @@ private func withoutPunctuation(_ address: Substring) -> Substring {
 }
 
 /// The address as a URL where it is one the person may be sent to.
-private func web(_ address: String) -> URL? {
+func web(_ address: String) -> URL? {
+    checked(address)?.url
+}
+
+/// A named link's address: the URL a tap opens and the host shown beside
+/// its words, the checked host as written and lower-cased, without port,
+/// path or scheme. The one check `web` is, beside which no weaker one may
+/// stand: it keeps a malformed address and a user name's disguise out,
+/// and says nothing about whether the words describe the host.
+func namedLink(_ address: String) -> (url: URL, host: String)? {
+    guard let parts = checked(address), let url = parts.url, let host = parts.host else { return nil }
+    return (url, host.lowercased())
+}
+
+/// The address's parts where they name a page the person may be sent to:
+/// an `http` or `https` scheme, letter case aside, an authority with no
+/// `@` in it and so no user name or password, and a host that is not
+/// empty and is written in ASCII characters.
+private func checked(_ address: String) -> URLComponents? {
     guard let parts = URLComponents(string: address),
           let scheme = parts.scheme?.lowercased(), scheme == "http" || scheme == "https",
           let host = parts.host, !host.isEmpty, host.allSatisfy(\.isASCII),
           parts.user == nil, parts.password == nil
     else { return nil }
-    return parts.url
+    return parts
 }

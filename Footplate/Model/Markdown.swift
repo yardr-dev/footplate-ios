@@ -2,11 +2,11 @@ import Foundation
 
 // The small part of Markdown a letter is drawn with, the part an agent's
 // mail uses: fenced code and inline code, bullets and numbered lists one
-// level deep, headings down to the third, bold and italic. Everything else
-// is text as it was written. As the desktop footplate's markdown.rs has
-// it, rule for rule and over Unicode scalars as its chars are, not a
-// general Markdown library's reading: a table, an image, HTML, a quote
-// or a link's brackets stay the words they were.
+// level deep, headings down to the third, bold and italic, tables, quotes,
+// rules and named links. Everything else is text as it was written. As
+// the desktop footplate's markdown.rs has it, rule for rule and over
+// Unicode scalars as its chars are, not a general Markdown library's
+// reading: an image, HTML or a footnote stays the words they were.
 //
 // A text becomes blocks, one under the other. A block is drawn without
 // its marks.
@@ -23,6 +23,37 @@ enum BlockKind: Equatable, Sendable {
     /// and the number as it was written. `depth` is 0, or 1 for an item
     /// under another.
     case item(marker: String, depth: Int)
+    /// A table: its head row and its body rows, one alignment per column
+    /// from the delimiter. A cell holds inline words alone, never a block.
+    case table(head: [TableCell], rows: [[TableCell]], align: [ColumnAlign])
+    /// Quoted lines, their markers left out, line breaks kept.
+    case quote
+    /// A rule: no drawn words, no marks, no links.
+    case rule
+}
+
+/// How a table's column sets its head and its cells' words.
+enum ColumnAlign: Equatable, Sendable {
+    case left, center, right
+}
+
+/// One cell of a table: its drawn words, their marks and their named
+/// links, in the cell's own coordinates.
+struct TableCell: Equatable, Sendable {
+    var text: String
+    var marks: [Stretch]
+    var links: [NamedLink]
+}
+
+/// A named link: where its words stand, in Unicode scalars of the block's
+/// or the cell's text, the URL a tap opens, and the host shown beside the
+/// words.
+struct NamedLink: Equatable, Sendable {
+    var range: Range<Int>
+    var url: URL
+    /// The checked address's host as written, lower-cased, without port,
+    /// path or scheme.
+    var host: String
 }
 
 /// How a stretch of a block is drawn apart from the rest of it.
@@ -41,10 +72,13 @@ struct Stretch: Equatable, Sendable {
 
 struct MessageBlock: Equatable, Sendable {
     var kind: BlockKind
-    /// What is drawn: the source without its marks.
+    /// What is drawn: the source without its marks. A table's words stand
+    /// in its cells, and a rule draws none, so both keep none here.
     var text: String
     /// The stretches of `text` that are not plain, in order.
     var marks: [Stretch]
+    /// The named links of `text`, in order. A table's stand in its cells.
+    var links: [NamedLink] = []
     /// A blank line stood between this block and the one before it.
     var apart: Bool
 
@@ -127,6 +161,13 @@ func messageBlocks(_ text: String) -> [MessageBlock] {
             i += 1
             continue
         }
+        if rule(t, line) {
+            flush(more: true)
+            blocks.append(MessageBlock(kind: .rule, text: "", marks: [], apart: apart))
+            apart = false
+            i += 1
+            continue
+        }
         if let found = item(t, line) {
             flush(more: true)
             var under = false
@@ -154,6 +195,59 @@ func messageBlocks(_ text: String) -> [MessageBlock] {
             i = last + 1
             continue
         }
+        if quoteLine(t, line) != nil {
+            var last = i
+            while last + 1 < lines.count, quoteLine(t, lines[last + 1]) != nil { last += 1 }
+            // A run that governs no words is no quote: its lines stay text.
+            let carries = (i...last).contains { at in
+                let words = quoteLine(t, lines[at])!
+                return (words.lowerBound..<words.upperBound).contains { !isSpace(t[$0]) }
+            }
+            if carries {
+                flush(more: true)
+                var out = Out()
+                for at in i...last {
+                    if at > i { out.pushLineBreak() }
+                    inline(&out, t, quoteLine(t, lines[at])!, Marks())
+                }
+                blocks.append(out.block(.quote, apart: apart))
+                apart = false
+            } else {
+                for at in i...last {
+                    plain = plain.map { $0.lowerBound..<(at + 1) } ?? at..<(at + 1)
+                }
+            }
+            i = last + 1
+            continue
+        }
+        if i + 1 < lines.count, cells(t, line).count >= 2 {
+            let head = cells(t, line)
+            if let align = delimiter(t, lines[i + 1], cells: head.count) {
+                flush(more: true)
+                let cellsOf = head.map { cell(t, $0) }
+                var rows: [[TableCell]] = []
+                var last = i + 1
+                while last + 1 < lines.count {
+                    let next = lines[last + 1]
+                    let claimed = fence(t, next) != nil || heading(t, next) != nil || rule(t, next)
+                        || item(t, next) != nil || quoteLine(t, next) != nil
+                    guard !blank(last + 1),
+                          (next.lowerBound..<next.upperBound).contains(where: { t[$0] == "|" }),
+                          !claimed
+                    else { break }
+                    var parts = cells(t, next).map { cell(t, $0) }
+                    while parts.count < cellsOf.count {
+                        parts.append(TableCell(text: "", marks: [], links: []))
+                    }
+                    rows.append(Array(parts.prefix(cellsOf.count)))
+                    last += 1
+                }
+                blocks.append(MessageBlock(kind: .table(head: cellsOf, rows: rows, align: align), text: "", marks: [], apart: apart))
+                apart = false
+                i = last + 1
+                continue
+            }
+        }
         plain = plain.map { $0.lowerBound..<(i + 1) } ?? i..<(i + 1)
         i += 1
     }
@@ -166,6 +260,7 @@ private struct Out {
     var text = String.UnicodeScalarView()
     var count = 0
     var marks: [Stretch] = []
+    var links: [NamedLink] = []
 
     /// `scalars` are drawn next, as `how` says.
     mutating func push<S: Collection>(_ scalars: S, _ how: Marks) where S.Element == Unicode.Scalar {
@@ -188,7 +283,7 @@ private struct Out {
     }
 
     func block(_ kind: BlockKind, apart: Bool) -> MessageBlock {
-        MessageBlock(kind: kind, text: String(text), marks: marks, apart: apart)
+        MessageBlock(kind: kind, text: String(text), marks: marks, links: links, apart: apart)
     }
 }
 
@@ -280,9 +375,10 @@ private func codeEnd(_ t: [Unicode.Scalar], _ n: Int, _ from: Int, _ end: Int) -
 }
 
 /// One line, or what stands inside emphasis: inline code, bold and italic
-/// lose their marks, and a mark that opens or closes nothing stays as it
-/// was written.
-private func inline(_ out: inout Out, _ t: [Unicode.Scalar], _ line: Range<Int>, _ marks: Marks) {
+/// lose their marks, a named link keeps its words and carries its address,
+/// and a mark that opens or closes nothing stays as it was written. No
+/// link is read inside a link's own words.
+private func inline(_ out: inout Out, _ t: [Unicode.Scalar], _ line: Range<Int>, _ marks: Marks, allowLinks: Bool = true) {
     let end = line.upperBound
     // What was read and not yet put out: text without a mark in it.
     var from = line.lowerBound
@@ -323,7 +419,7 @@ private func inline(_ out: inout Out, _ t: [Unicode.Scalar], _ line: Range<Int>,
                 var inner = marks
                 inner.bold = marks.bold || n >= 2
                 inner.italic = marks.italic || n != 2
-                inline(&out, t, (i + n)..<close, inner)
+                inline(&out, t, (i + n)..<close, inner, allowLinks: allowLinks)
                 i = close + n
                 from = i
             } else {
@@ -331,9 +427,78 @@ private func inline(_ out: inout Out, _ t: [Unicode.Scalar], _ line: Range<Int>,
             }
             continue
         }
+        if c == "[", allowLinks, i == line.lowerBound || t[i - 1] != "!" {
+            if let shape = namedShape(t, i, end), let found = namedLink(shape.address) {
+                out.push(t[from..<i], marks)
+                let start = out.count
+                var words: [Unicode.Scalar] = []
+                words.reserveCapacity(shape.words.count)
+                var at = shape.words.lowerBound
+                while at < shape.words.upperBound {
+                    if t[at] == "\\", at + 1 < shape.words.upperBound, t[at + 1] == "]" {
+                        words.append("]")
+                        at += 2
+                        continue
+                    }
+                    words.append(t[at])
+                    at += 1
+                }
+                inline(&out, words, 0..<words.count, marks, allowLinks: false)
+                out.links.append(NamedLink(range: start..<out.count, url: found.url, host: found.host))
+                i = shape.after
+                from = i
+                continue
+            }
+        }
         i += 1
     }
     out.push(t[from..<end], marks)
+}
+
+/// The named link `[words](address)` opening at `open`, if one stands
+/// there: where the words end, the address with its brackets unescaped,
+/// and where the shape ends. The words run to the first unescaped `]`; a
+/// `!` before the `[` is an image's, and no part of any link here. The
+/// address runs to the `)` balancing the opening one, with no space and
+/// no control character in it, so a title after it is no link.
+private func namedShape(_ t: [Unicode.Scalar], _ open: Int, _ end: Int) -> (words: Range<Int>, address: String, after: Int)? {
+    var words = open + 1
+    var shut: Int? = nil
+    while words < end {
+        if t[words] == "\\", words + 1 < end, t[words + 1] == "]" {
+            words += 2
+            continue
+        }
+        if t[words] == "]" {
+            shut = words
+            break
+        }
+        words += 1
+    }
+    guard let close = shut, close > open + 1, close + 1 < end, t[close + 1] == "(" else { return nil }
+    var address = String.UnicodeScalarView()
+    var depth = 1
+    var at = close + 2
+    while at < end {
+        if t[at] == "\\", at + 1 < end, t[at + 1] == "(" || t[at + 1] == ")" {
+            address.append(t[at + 1])
+            at += 2
+            continue
+        }
+        if t[at] == "(" {
+            depth += 1
+        } else if t[at] == ")" {
+            depth -= 1
+            if depth == 0 {
+                return address.isEmpty ? nil : (words: (open + 1)..<close, address: String(address), after: at + 1)
+            }
+        } else if isSpace(t[at]) || t[at].properties.generalCategory == .control {
+            return nil
+        }
+        address.append(t[at])
+        at += 1
+    }
+    return nil
 }
 
 // MARK: - Reading the lines of a text
@@ -389,4 +554,137 @@ private func item(_ t: [Unicode.Scalar], _ line: Range<Int>) -> (indent: Int, ma
     var words = marker
     while words < line.upperBound, t[words] == " " { words += 1 }
     return words < line.upperBound ? (indent, start..<marker, words) : nil
+}
+
+/// Whether `line` is a rule: three or more of one of `-*_`, with a single
+/// space allowed between any two, after up to three leading spaces and
+/// with nothing else on the line. Tried before the item reading, so
+/// `- - -` is a rule and `- item` an item; a line under text makes no
+/// heading of it.
+private func rule(_ t: [Unicode.Scalar], _ line: Range<Int>) -> Bool {
+    guard runOf(t, " ", line.lowerBound, line.upperBound) <= 3 else { return false }
+    let end = trimmedEnd(t, line)
+    var at = line.lowerBound
+    while at < end, t[at] == " " { at += 1 }
+    guard at < end, isOneOf(t[at], "-*_") else { return false }
+    let mark = t[at]
+    var count = 0
+    while at < end {
+        guard t[at] == mark else { return false }
+        count += 1
+        at += 1
+        if at < end {
+            if t[at] == " " {
+                at += 1
+                guard at < end, t[at] == mark else { return false }
+            } else {
+                guard t[at] == mark else { return false }
+            }
+        }
+    }
+    return count >= 3
+}
+
+/// Where the quote's words stand on `line`, if it is a quoted line: `>`
+/// after no more than three leading spaces. One `>` and at most one space
+/// after it are the marker and are not drawn; a second `>` is the words'.
+private func quoteLine(_ t: [Unicode.Scalar], _ line: Range<Int>) -> Range<Int>? {
+    let indent = runOf(t, " ", line.lowerBound, line.upperBound)
+    guard indent <= 3 else { return nil }
+    let start = line.lowerBound + indent
+    guard start < line.upperBound, t[start] == ">" else { return nil }
+    var words = start + 1
+    if words < line.upperBound, t[words] == " " { words += 1 }
+    return words..<line.upperBound
+}
+
+/// The cells `line` cuts into on its `|`s. One that is escaped (`\|`,
+/// drawn as `|`) or inside an inline code span cuts nothing; a `|` at the
+/// line's start or end, the spaces at the line's ends left off, frames the
+/// row and makes no cell.
+private func cells(_ t: [Unicode.Scalar], _ line: Range<Int>) -> [Range<Int>] {
+    let end = line.upperBound
+    var cuts: [Int] = []
+    var at = line.lowerBound
+    while at < end {
+        if t[at] == "\\", at + 1 < end, t[at + 1] == "|" {
+            at += 2
+            continue
+        }
+        if t[at] == "`" {
+            let n = runOf(t, "`", at, end)
+            if let close = codeEnd(t, n, at + n, end) {
+                at = close + n
+                continue
+            }
+            at += n
+            continue
+        }
+        if t[at] == "|" { cuts.append(at) }
+        at += 1
+    }
+    guard !cuts.isEmpty else { return [line] }
+    var parts: [Range<Int>] = []
+    var from = line.lowerBound
+    for cut in cuts {
+        parts.append(from..<cut)
+        from = cut + 1
+    }
+    parts.append(from..<end)
+    if parts.count > 1, trimmedEnd(t, parts[0]) == parts[0].lowerBound { parts.removeFirst() }
+    if parts.count > 1, trimmedEnd(t, parts[parts.count - 1]) == parts[parts.count - 1].lowerBound { parts.removeLast() }
+    return parts
+}
+
+/// The alignments of a table of `cells` columns where `line` delimits one:
+/// the same number of cells, each an optional `:`, at least three `-` and
+/// an optional `:`. A trailing colon alone sets words at the right, both
+/// in the centre, anything else at the left.
+private func delimiter(_ t: [Unicode.Scalar], _ line: Range<Int>, cells count: Int) -> [ColumnAlign]? {
+    let parts = cells(t, line)
+    guard parts.count == count else { return nil }
+    var align: [ColumnAlign] = []
+    for part in parts {
+        var start = part.lowerBound
+        var end = part.upperBound
+        while start < end, isSpace(t[start]) { start += 1 }
+        while end > start, isSpace(t[end - 1]) { end -= 1 }
+        var left = false
+        var right = false
+        if start < end, t[start] == ":" {
+            left = true
+            start += 1
+        }
+        if end > start, t[end - 1] == ":" {
+            right = true
+            end -= 1
+        }
+        guard end - start >= 3, t[start..<end].allSatisfy({ $0 == "-" }) else { return nil }
+        align.append(right ? (left ? .center : .right) : .left)
+    }
+    return align
+}
+
+/// One cell's words: trimmed of the spaces at their ends, its `\|`s drawn
+/// as `|`, and read as a line's are.
+private func cell(_ t: [Unicode.Scalar], _ range: Range<Int>) -> TableCell {
+    var start = range.lowerBound
+    var end = range.upperBound
+    while start < end, isSpace(t[start]) { start += 1 }
+    while end > start, isSpace(t[end - 1]) { end -= 1 }
+    var words: [Unicode.Scalar] = []
+    words.reserveCapacity(end - start)
+    var at = start
+    while at < end {
+        if t[at] == "\\", at + 1 < end, t[at + 1] == "|" {
+            words.append("|")
+            at += 2
+            continue
+        }
+        words.append(t[at])
+        at += 1
+    }
+    var out = Out()
+    inline(&out, words, 0..<words.count, Marks())
+    return TableCell(text: String(out.text), marks: out.marks, links: out.links)
 }

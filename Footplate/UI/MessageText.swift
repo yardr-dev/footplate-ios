@@ -3,11 +3,14 @@ import UIKit
 
 // A letter's words, drawn as the desktop footplate draws them, by the
 // blocks of `messageBlocks`: paragraphs, headings and list items in Plex
-// Sans with bold, italic and code where they were marked, and a fenced
-// block in Plex Mono on the sunken surface. A code block does not wrap: it
-// scrolls sideways, and its Copy puts the code alone, without its fences,
-// on the pasteboard. Web addresses and known bead ids stay links and chips
-// as `linked` has them, except in code, where a bead id is plain code.
+// Sans with bold, italic and code where they were marked, a quote behind
+// its hairline bar, a rule as a hairline, a table as ruled rows, and a
+// fenced block in Plex Mono on the sunken surface. A code block does not
+// wrap: it scrolls sideways, and its Copy puts the code alone, without its
+// fences, on the pasteboard; a wide table scrolls sideways whole the same
+// way. Web addresses and known bead ids stay links and chips as `linked`
+// has them, except in code, where a bead id is plain code, and a named
+// link's words stay a link with its host beside them.
 
 /// The room above a block a blank line stood before, and above a heading;
 /// and above a code block or the block under one. The desktop's 0.6 and 0.3
@@ -38,6 +41,9 @@ struct MessageText: View, Equatable {
     private func room(above block: MessageBlock, under before: MessageBlock) -> CGFloat {
         if block.apart { return apartGap }
         if case .heading = block.kind { return apartGap }
+        if case .table = block.kind { return apartGap }
+        if case .rule = block.kind { return apartGap }
+        if case .rule = before.kind { return apartGap }
         if block.kind == .code || before.kind == .code { return nearGap }
         return 0
     }
@@ -51,7 +57,7 @@ private extension BlockKind {
         switch self {
         case .heading(1): .title
         case .heading: .section
-        case .text, .item, .code: .body
+        case .text, .item, .code, .table, .quote, .rule: .body
         }
     }
 }
@@ -93,6 +99,19 @@ private struct BlockView: View {
             .padding(.leading, CGFloat(depth) * (markerWidth + markerGap))
         case .code:
             CodeBlock(block: block)
+        case .quote:
+            HStack(alignment: .top, spacing: 12) {
+                Rectangle()
+                    .fill(ThemeColor.borderStrong.color)
+                    .frame(width: 3)
+                words
+            }
+        case .rule:
+            Rectangle()
+                .fill(ThemeColor.borderSubtle.color)
+                .frame(height: 1)
+        case .table(let head, let rows, let align):
+            TableView(head: head, rows: rows, align: align, beads: beads)
         }
     }
 
@@ -157,6 +176,86 @@ private struct CodeBlock: View {
     }
 }
 
+/// A table: its head set apart, its rows divided by hairlines, no box
+/// and no ground. The columns stand at their words' own width; where they
+/// run past the screen the whole table scrolls sideways as one piece, as
+/// a code block does, never shrunk and never restacked.
+private struct TableView: View {
+    let head: [TableCell]
+    let rows: [[TableCell]]
+    let align: [ColumnAlign]
+    let beads: Set<String>
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            Grid(alignment: .topLeading, horizontalSpacing: 0, verticalSpacing: 0) {
+                GridRow {
+                    ForEach(Array(head.enumerated()), id: \.offset) { at, cell in
+                        cellWords(cell, role: .section, column: at)
+                            .accessibilityAddTraits(.isHeader)
+                    }
+                }
+                hairline
+                ForEach(Array(rows.enumerated()), id: \.offset) { row, cells in
+                    GridRow {
+                        ForEach(Array(cells.enumerated()), id: \.offset) { at, cell in
+                            cellWords(cell, role: .body, column: at)
+                        }
+                    }
+                    if row + 1 < rows.count { hairline }
+                }
+            }
+        }
+    }
+
+    private func cellWords(_ cell: TableCell, role: ThemeType, column: Int) -> some View {
+        let column = align[column]
+        return Text(styledRuns(text: cell.text, marks: cell.marks, links: cell.links, code: false, role: role, size: role.size, beads: beads))
+            .themeType(role)
+            .foregroundStyle(ThemeColor.textPrimary.color)
+            .multilineTextAlignment(column.text)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: column.frame)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .gridColumnAlignment(column.grid)
+    }
+
+    private var hairline: some View {
+        GridRow {
+            Rectangle()
+                .fill(ThemeColor.borderSubtle.color)
+                .frame(height: 1)
+                .gridCellColumns(head.count)
+        }
+    }
+}
+
+private extension ColumnAlign {
+    var grid: HorizontalAlignment {
+        switch self {
+        case .left: .leading
+        case .center: .center
+        case .right: .trailing
+        }
+    }
+
+    var frame: Alignment {
+        switch self {
+        case .left: .topLeading
+        case .center: .top
+        case .right: .topTrailing
+        }
+    }
+
+    var text: TextAlignment {
+        switch self {
+        case .left: .leading
+        case .center: .center
+        case .right: .trailing
+        }
+    }
+}
+
 /// The whole text a long-press on prose drawn through `MessageText`
 /// offers to copy, or nil where it has none. The copy is the words
 /// entire, as they were written, never one link of them; a code block's
@@ -170,15 +269,24 @@ func copyableProse(_ text: String) -> String? {
 /// known bead ids of `beads` links and chips, but no chip in code, and the
 /// bold, italic and code stretches in their faces.
 func styledWords(_ block: MessageBlock, role: ThemeType, size: CGFloat, beads: Set<String>) -> AttributedString {
-    let text = block.text
+    styledRuns(text: block.text, marks: block.marks, links: block.links, code: block.kind == .code, role: role, size: size, beads: beads)
+}
+
+/// Words with their marks and their links as a Text draws them: the bare
+/// addresses links to themselves and the known bead ids chips, but no
+/// chip in code and neither inside a named link's words; the marks in
+/// their faces; and each named link's words underlined in the text accent
+/// with its host after them in the secondary colour, opening its address.
+func styledRuns(text: String, marks: [Stretch], links: [NamedLink], code: Bool, role: ThemeType, size: CGFloat, beads: Set<String>) -> AttributedString {
     let scalars = text.unicodeScalars
     let place = { (offset: Int) in scalars.index(scalars.startIndex, offsetBy: offset) }
-    let code = block.kind == .code
+    let codeRanges = code
         ? [text.startIndex..<text.endIndex]
-        : block.marks.filter(\.marks.code).map { place($0.range.lowerBound)..<place($0.range.upperBound) }
-    var words = linked(text, beads: beads, code: code)
+        : marks.filter(\.marks.code).map { place($0.range.lowerBound)..<place($0.range.upperBound) }
+    let named = links.map { place($0.range.lowerBound)..<place($0.range.upperBound) }
+    var words = linked(text, beads: beads, code: codeRanges, named: named)
     let drawn = words.unicodeScalars
-    let stretches = block.marks.map { stretch in
+    let stretches = marks.map { stretch in
         (
             drawn.index(drawn.startIndex, offsetBy: stretch.range.lowerBound)..<drawn.index(drawn.startIndex, offsetBy: stretch.range.upperBound),
             stretch.marks
@@ -191,6 +299,19 @@ func styledWords(_ block: MessageBlock, role: ThemeType, size: CGFloat, beads: S
         }
     }
     styleLinks(&words)
+    // Last words first: each host stands after its words, so what stands
+    // already placed moves nothing still to place.
+    for link in links.sorted(by: { $0.range.lowerBound > $1.range.lowerBound }) {
+        let drawn = words.unicodeScalars
+        let start = drawn.index(drawn.startIndex, offsetBy: link.range.lowerBound)
+        let end = drawn.index(drawn.startIndex, offsetBy: link.range.upperBound)
+        words[start..<end].link = link.url
+        words[start..<end].swiftUI.underlineStyle = .single
+        words[start..<end].swiftUI.foregroundColor = ThemeColor.textAccent.color
+        var host = AttributedString(" · \(link.host)")
+        host.swiftUI.foregroundColor = ThemeColor.textSecondary.color
+        words.insert(host, at: end)
+    }
     return words
 }
 

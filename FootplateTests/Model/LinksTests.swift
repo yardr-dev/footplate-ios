@@ -83,6 +83,8 @@ final class LinksTests: XCTestCase {
             "https://claude.ai:secret@evil.example/login",
             // Cyrillic а, a host that reads as another than it shows.
             "https://\u{0430}pple.example/login",
+            // A malformed port is no address at all.
+            "https://yardr.dev:abc/",
         ]
         for text in notLinks {
             XCTAssertTrue(links(text).isEmpty, text)
@@ -90,6 +92,10 @@ final class LinksTests: XCTestCase {
         }
         // One that is not beside one that is.
         XCTAssertEqual(links("https://claude.ai@evil.example/x and https://claude.ai/x").map { $0.words }, ["https://claude.ai/x"])
+        // An empty port and an IPv6 authority are links, as the named
+        // addresses read.
+        XCTAssertEqual(links("open https://yardr.dev:/x now").map { $0.words }, ["https://yardr.dev:/x"])
+        XCTAssertEqual(links("open https://[::1]/x now").map { $0.words }, ["https://[::1]/x"])
     }
 
     func testAKnownFullIdChipsAndOpensItsBead() {
@@ -138,6 +144,21 @@ final class LinksTests: XCTestCase {
         XCTAssertEqual(qualified.map { $0.bead }, ["yd-crm"])
         XCTAssertEqual(beadIds("ask 18 on yd-crm"), ["yd-crm"])
         XCTAssertEqual(beadIds("ask 6926"), [])
+    }
+
+    func testNoLinkOrChipIsCutInsideANamedLinksWords() throws {
+        let beads: Set<String> = ["yd-gate"]
+        let text = "read yd-gate at https://x.example/a today"
+        // Where the blocks read a chip's words as a named link's, no chip.
+        let words = try XCTUnwrap(text.range(of: "yd-gate"))
+        let unchipped = linked(text, beads: beads, named: [words])
+        XCTAssertEqual(unchipped.runs.compactMap(\.link).map(\.absoluteString), ["https://x.example/a"])
+        // Where they read a bare address as a named link's, no bare link.
+        let address = try XCTUnwrap(text.range(of: "https://x.example/a"))
+        let unlinked = linked(text, beads: beads, named: [address])
+        XCTAssertEqual(unlinked.runs.compactMap { $0.link.flatMap(chippedBead) }, ["yd-gate"])
+        XCTAssertEqual(String(unchipped.characters), text)
+        XCTAssertEqual(String(unlinked.characters), text)
     }
 
     func testALinkAndAChipStandSideBySideUnchanged() {
