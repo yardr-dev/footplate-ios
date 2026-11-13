@@ -98,6 +98,21 @@ gomobile bind -target ios,iossimulator -o /tmp/NoiseChannel.xcframework .
 cp -R /tmp/NoiseChannel.xcframework/. ../Footplate/API/NoiseChannel.xcframework/
 ```
 
+The bound library is static, and stays link-only: each slice's
+`NoiseChannel` binary is an archive of object files, with no UUID,
+so no dSYM step follows the copy. `dsymutil` refuses a static
+archive ("not recognized as a valid object file"), and a rebuild
+cannot change that: `gomobile bind` emits a static framework, with
+no flag for a dynamic one. The app and the notification service
+link the framework and never embed it. Embedding one makes the
+archive carry a stub dylib Xcode compiles from nothing, with a
+fresh UUID each build ("Injecting stub binary into codeless
+framework"), whose missing dSYM the export then warns of
+("Upload Symbols Failed"), and no checked-in dSYM can ever match
+it. The Go objects carry DWARF, which the link folds into the
+app's and the extension's own dSYMs: a crash inside the channel
+symbolicates there.
+
 The `tool` directive in `go.mod` keeps `gobind` in the module, as
 current `gomobile` asks. A change to the pinned flynn/noise or
 spake2-go version is a design change, not a tidy: it reopens the

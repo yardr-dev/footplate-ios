@@ -173,7 +173,7 @@
 		00000000000000000000000B /* app */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 000000000000000000000011;
-			buildPhases = (00000000000000000000001D, 00000000000000000000001E, 00000000000000000000001F, D0000000000000000000000A, D00000000000000000000043);
+			buildPhases = (00000000000000000000001D, 00000000000000000000001E, 00000000000000000000001F, D0000000000000000000000A);
 			buildRules = ();
 			dependencies = (D0000000000000000000000C);
 			fileSystemSynchronizedGroups = (000000000000000000000004);
@@ -193,15 +193,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (D00000000000000000000041);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		D00000000000000000000043 /* embedframeworks */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "";
-			dstSubfolderSpec = 10;
-			files = (D00000000000000000000042);
-			name = "Embed Frameworks";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		00000000000000000000001F /* appresources */ = {
@@ -260,7 +251,6 @@
 		D0000000000000000000003F = { isa = PBXBuildFile; fileRef = D0000000000000000000001F; };
 		D00000000000000000000040 = { isa = PBXBuildFile; fileRef = D00000000000000000000020; };
 		D00000000000000000000041 = { isa = PBXBuildFile; fileRef = D00000000000000000000020; };
-		D00000000000000000000042 = { isa = PBXBuildFile; fileRef = D00000000000000000000020; settings = { ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		D00000000000000000000005 /* notifyserviceframeworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
