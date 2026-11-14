@@ -505,7 +505,9 @@ final class ConversationModel {
     /// every picture it set out with: one taken back, one that will not
     /// shrink or a screen left meanwhile stops it, the draft and row as they were.
     /// Only the pictures sent leave the row: one picked after the send
-    /// began is for the next letter.
+    /// began is for the next letter. What the letter carried is cleared
+    /// even when the screen was left while it went, where the same
+    /// conversation's draft and row still stand.
     func send() async {
         guard active, let yard = openedYard, let with = openedWith, with != yardRow else { return }
         let key = ConversationKey(yard: yard, with: with)
@@ -536,7 +538,11 @@ final class ConversationModel {
             for (picture, file) in zip(attached, files) {
                 await pictures.keep(hash: file.hash, bytes: picture.bytes)
             }
-            guard active, openedYard == yard, openedWith == with else { return }
+            // The letter went: what it carried is cleared wherever the same
+            // conversation's kept state still stands, the screen left or not.
+            // A conversation opened meanwhile already cleared through open(),
+            // so its new draft and row are untouched.
+            guard openedYard == yard, openedWith == with else { return }
             if draftRevision == revision {
                 draftText = ""
                 draftRevision &+= 1

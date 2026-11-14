@@ -1143,6 +1143,72 @@ final class InboxModelTests: XCTestCase {
         conversation.leave()
     }
 
+    func testSendWhileAwayClearsWhatTheLetterCarried() async {
+        let photo = testJPEG(1)
+        home.up(loaded())
+        let conversation = conversation()
+        conversation.open(yard: "", with: "yardmaster")
+        conversation.draft("Land it.")
+        conversation.attach(bytes: photo, name: "photo 1", yard: "", with: "yardmaster")
+        _ = await waitFor("the picture picked", state: { conversation.state }) { $0.attached.count == 1 }
+        home.holdNextMail = true
+        let sending = Task { await conversation.send() }
+        _ = await waitFor("the mail held", state: { self.home.mailCalls }) { $0 == 1 }
+        conversation.leave()
+        home.releaseMail()
+        await sending.value
+        XCTAssertEqual(home.sent.map { "\($0.0)|\($0.1)" }, ["yardmaster|Land it."])
+        XCTAssertTrue(conversation.state.draft.isEmpty, "a letter that went while away clears its draft, not on the return")
+        XCTAssertTrue(conversation.state.attached.isEmpty, "a letter that went while away clears its pictures, not on the return")
+        conversation.open(yard: "", with: "yardmaster")
+        XCTAssertTrue(conversation.state.draft.isEmpty, "no standing draft waits to send the letter a second time")
+        XCTAssertTrue(conversation.state.attached.isEmpty, "no standing pictures wait to send the letter a second time")
+        XCTAssertFalse(conversation.state.sending)
+        XCTAssertNil(conversation.state.error)
+        conversation.leave()
+    }
+
+    func testReturnWithNoSendKeepsTheDraftAndPictures() async {
+        let photo = testJPEG(2)
+        home.up(loaded())
+        let conversation = conversation()
+        conversation.open(yard: "", with: "yardmaster")
+        conversation.draft("Not yet.")
+        conversation.attach(bytes: photo, name: "photo 2", yard: "", with: "yardmaster")
+        _ = await waitFor("the picture picked", state: { conversation.state }) { $0.attached.count == 1 }
+        conversation.leave()
+        conversation.open(yard: "", with: "yardmaster")
+        XCTAssertEqual(conversation.state.draft, "Not yet.")
+        XCTAssertEqual(conversation.state.attached.map(\.bytes), [photo])
+        conversation.leave()
+    }
+
+    func testSendMeanwhileInAnotherConversationKeepsTheNewState() async {
+        let photo = testJPEG(3)
+        home.up(loaded())
+        let conversation = conversation()
+        conversation.open(yard: "", with: "yardmaster")
+        conversation.draft("Land it.")
+        conversation.attach(bytes: photo, name: "photo 3", yard: "", with: "yardmaster")
+        _ = await waitFor("the picture picked", state: { conversation.state }) { $0.attached.count == 1 }
+        home.holdNextMail = true
+        let sending = Task { await conversation.send() }
+        _ = await waitFor("the mail held", state: { self.home.mailCalls }) { $0 == 1 }
+        conversation.leave()
+        conversation.open(yard: "", with: "signalman")
+        conversation.draft("Half a mo.")
+        conversation.attach(bytes: photo, name: "photo 4", yard: "", with: "signalman")
+        _ = await waitFor("the other picture picked", state: { conversation.state }) { $0.attached.count == 1 }
+        home.releaseMail()
+        await sending.value
+        XCTAssertEqual(home.sent.map { "\($0.0)|\($0.1)" }, ["yardmaster|Land it."])
+        XCTAssertEqual(conversation.state.draft, "Half a mo.", "a send in another conversation leaves this draft alone")
+        XCTAssertEqual(conversation.state.attached.map(\.name), ["photo 4.jpg"], "a send in another conversation leaves this row alone")
+        XCTAssertFalse(conversation.state.sending)
+        XCTAssertNil(conversation.state.error)
+        conversation.leave()
+    }
+
     /// Whether the picture cache holds a file for `bytes` on disk.
     private func kept(_ bytes: Data) -> Bool {
         FileManager.default.fileExists(atPath: picturesDir.appendingPathComponent(sha256Hex(bytes)).path)
