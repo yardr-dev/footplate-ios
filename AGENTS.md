@@ -55,7 +55,8 @@ Under `Footplate/`:
   details (the pictures of its notes among them, for the Media grid) and its web view link. The conversation's pictures (`Images` shrinks one for a letter,
   `Pictures` keeps the ones shown, by hash; `NotePictures` asks for the ones a
   bead's notes carry, for the bead card and a decision's details) and `Links` (the web
-  addresses in a card's words) stand beside them, and so does `Markdown`,
+  addresses in a card's words, and the asks a letter names, of which
+  `ConversationModel` puts each open one under the letter as a preview) stand beside them, and so does `Markdown`,
   which reads a letter's words into the blocks they are drawn as, as the
   desktop's `markdown.rs` does and over Unicode scalars as it does.
 - `UI/`: SwiftUI screens (Pair, Sign in, Crew, Decide, Decision,

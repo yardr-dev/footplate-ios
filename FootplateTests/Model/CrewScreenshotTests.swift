@@ -7,7 +7,8 @@ import XCTest
 // state (design 3.5, the bead's screenshots): the inbox with unread
 // rows, one conversation and its composer (one box) empty, with a
 // picture picked, with three and with words, a conversation naming bead ids, a chip's
-// bead as a sheet over the chat, a conversation with a party of a
+// bead as a sheet over the chat, letters naming open asks, each with its
+// preview and its Open card, a conversation with a party of a
 // linked yard, and the yard switch with two yards,
 // one away, at the default text size and at two
 // large ones, with a yard of its own beside the edge's, and with a yard
@@ -345,6 +346,41 @@ final class CrewScreenshotTests: XCTestCase {
         conversation.leave()
     }
 
+    /// An open ask a letter names stands under it (footplate-ios-rsgt): the
+    /// crew's letter naming two, one by its bead and one a secret ask; the
+    /// person's own naming one, inside its bubble; and a letter that names
+    /// none, with none.
+    func testALetterNamingAnOpenAskStandsWithItsPreview() async throws {
+        let scene = try XCTUnwrap(
+            UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first,
+            "no window scene to render in"
+        )
+        let secret = OpenAsk(
+            bead: "yd-gate", ask: 9,
+            question: "yardmaster needs the GitHub token to open the pull request\nIt is kept in the yard's secret store.",
+            asker: "yardmaster", since: "2026-10-08T09:41:00Z",
+            secret: Secret(source: "github", env: ["GITHUB_TOKEN"], line: "The GitHub token the pull request is opened with")
+        )
+        let (conversation, line) = try await openConversation([
+            Letter(seq: 13, at: "2026-10-08T09:30:00Z", from: "yardmaster", to: "jo", text: "The shed is painted. Shall I land it?"),
+            Letter(seq: 14, at: "2026-10-08T09:31:00Z", from: "yardmaster", to: "jo", text: "I put the link move to you as a card (ask 3 on yd-links), and the token for the pull request is ask 9."),
+            Letter(seq: 15, at: "2026-10-08T09:32:00Z", from: "jo", to: "yardmaster", text: "Is ask 3 still open?"),
+        ], moreAsks: [secret])
+        XCTAssertEqual(conversation.state.letters.map { $0.asks.map(\.id) }, [[], ["yd-links 3", "yd-gate 9"], ["yd-links 3"]])
+        XCTAssertEqual(
+            conversation.state.letters[1].asks.map(\.head),
+            ["Waiting on you · ask 3 · asked 7m", "Waiting on you · secret ask 9 · asked 2h"]
+        )
+        let dir = try shotsDirectory()
+        let window = try await renderWindow(
+            ConversationScreen(model: conversation, line: line, yard: "", with: "yardmaster"),
+            scene: scene, to: dir.appendingPathComponent("conversation-ask-previews.png")
+        )
+        defer { window.isHidden = true }
+        try await shootAppearances(of: window, named: "conversation-ask-previews", in: dir)
+        conversation.leave()
+    }
+
     /// The crew's letter is the width of the conversation on no surface,
     /// and the person's own is a bubble at the right, short of the left
     /// edge (footplate-ios-qzxm); each is drawn by its Markdown, and a
@@ -398,8 +434,9 @@ final class CrewScreenshotTests: XCTestCase {
         conversation.leave()
     }
 
-    /// A conversation with the yardmaster holding `letters`, open and read.
-    private func openConversation(_ letters: [Letter]) async throws -> (ConversationModel, LineModel) {
+    /// A conversation with the yardmaster holding `letters`, open and read,
+    /// on a board that holds `moreAsks` open beside the fixture's own.
+    private func openConversation(_ letters: [Letter], moreAsks: [OpenAsk] = []) async throws -> (ConversationModel, LineModel) {
         let fake = FakeYard()
         let records = Records(secret: MemoryShelf(), plain: MemoryShelf(), origin: fake.origin)
         records.keepSession(account: fake.email, session: fake.session())
@@ -413,6 +450,7 @@ final class CrewScreenshotTests: XCTestCase {
         // page's where their seqs meet.
         var quiet = loaded()
         quiet.inbox = Inbox()
+        quiet.asks.open += moreAsks
         home.up(quiet)
         home.pages["yardmaster|0"] = Page(letters: letters, more: false)
         // The yard knows no bead by the id-shaped words of a message
@@ -858,8 +896,8 @@ final class CrewScreenshotTests: XCTestCase {
                 Notification(seq: 11, at: "2026-10-08T09:31:00Z", kind: "noted", bead: "yd-shed", text: "yd-shed noted (all) by yardmaster note=1", read: false),
             ], unread: 1, last: 11),
             asks: Asks(open: [
-                OpenAsk(bead: "yd-links", ask: 3, question: "Move the links?", asker: "yardmaster"),
-                OpenAsk(bead: "yd-map", ask: 7, question: "Who is U024BE7LH?", asker: "yardmaster"),
+                OpenAsk(bead: "yd-links", ask: 3, question: "Move the links?", asker: "yardmaster", since: "2026-10-08T11:53:00Z"),
+                OpenAsk(bead: "yd-map", ask: 7, question: "Who is U024BE7LH?", asker: "yardmaster", since: "2026-10-08T11:53:00Z"),
             ], decided: [])
         )
     }

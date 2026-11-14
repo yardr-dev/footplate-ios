@@ -127,6 +127,16 @@ final class Nav {
         decidePath.append(route)
     }
 
+    /// Opens the decision's card from wherever the person stands: the tab
+    /// switches to Decide's list, then the card is pushed there. A
+    /// conversation left this way keeps its place on Crew's stack, for the
+    /// way back to the tab.
+    func showDecision(yard: String, bead: String, ask: Int64) {
+        place = .decide
+        decidePath = []
+        openDecision(yard: yard, bead: bead, ask: ask)
+    }
+
     /// Pushes the line's route map, unless it is the one pushed already.
     func openLine(yard: String, depot: String, flow: String) {
         let route = LinesRoute.line(LineRoute(yard: yard, depot: depot, flow: flow))

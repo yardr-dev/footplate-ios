@@ -48,7 +48,10 @@ struct ConversationScrollTracking: Equatable {
 // Scrolling to the oldest letter reads the page before it. The
 // yard's notices are drawn the same way, with no field. A chip
 // tapped opens its bead as a sheet over the conversation, with an
-// Open on the line under the card.
+// Open on the line under the card. An open ask a letter names stands
+// under its files as a preview, the head faint, the question's first
+// line and one Open card, which opens the card in Decide: nothing is
+// answered here.
 struct ConversationScreen: View {
     @Bindable var model: ConversationModel
     @Bindable var line: LineModel
@@ -56,6 +59,9 @@ struct ConversationScreen: View {
     var with: String
     /// A chip tapped: its bead opens in a sheet over the conversation.
     var openBead: (String) -> Void = { _ in }
+    /// A preview's Open card: the bead's ask opens as a card in Decide,
+    /// with the bead and the ask's number.
+    var openAsk: (String, Int64) -> Void = { _, _ in }
     /// The sheet's Open on the line: the bead's card opens on the
     /// Lines place, as a chip's tap did before the sheet.
     var openOnLine: (BeadRoute) -> Void = { _ in }
@@ -436,6 +442,9 @@ struct ConversationScreen: View {
                         .themeType(.meta)
                         .foregroundStyle(ThemeColor.textSecondary.color)
                 }
+                ForEach(letter.asks) { ask in
+                    askPreview(ask)
+                }
             }
             .frame(maxWidth: letter.mine ? nil : .infinity, alignment: .leading)
             .padding(.horizontal, letter.mine ? 12 : 0)
@@ -451,6 +460,42 @@ struct ConversationScreen: View {
         }
         .padding(.leading, letter.mine ? 60 : 0)
         .frame(maxWidth: .infinity, alignment: letter.mine ? .trailing : .leading)
+    }
+
+    /// An open ask the letter names, as the desktop draws it under a mail:
+    /// what it asks, how long it has waited, the question's first line and
+    /// the one button, which opens the card in Decide. No ground and no
+    /// border of its own: the cards are Decide's alone.
+    private func askPreview(_ ask: AskPreview) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(ask.head)
+                .themeType(.meta)
+                .foregroundStyle(ThemeColor.textSecondary.color)
+            if !ask.question.isEmpty {
+                Text(ask.question)
+                    .themeType(.body)
+                    .foregroundStyle(ThemeColor.textPrimary.color)
+            }
+            Button {
+                openAsk(ask.bead, ask.ask)
+            } label: {
+                // A bordered button of 32 points in a target of 48, as the
+                // code block's Copy is, standing on the text's own edge.
+                Text("Open card")
+                    .themeType(.label)
+                    .foregroundStyle(ThemeColor.textAccent.color)
+                    .padding(.horizontal, 12)
+                    .frame(minWidth: 48, minHeight: 32)
+                    .overlay { RoundedRectangle(cornerRadius: 6).strokeBorder(ThemeColor.borderStrong.color, lineWidth: 1) }
+                    .frame(minHeight: 48)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open card for ask \(ask.ask)")
+            .accessibilityIdentifier("open-card-\(ask.bead)-\(ask.ask)")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, 8)
     }
 
     /// One image of a letter under its text, at the

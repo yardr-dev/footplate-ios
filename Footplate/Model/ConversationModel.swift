@@ -8,7 +8,9 @@ import Foundation
 // the Mailroom. The yard's row opens the same screen over its
 // notices. A letter's images are drawn under its text; its other
 // files are said by count (`1 file, open it in footplate`). A chip
-// tapped opens its bead as a sheet over the conversation.
+// tapped opens its bead as a sheet over the conversation. A letter that
+// names an open ask (`ask 3`, `ask 3 on yd-x`) has a preview of it under
+// it, with a button to its card in Decide; nothing is answered here.
 
 /// One letter as the conversation shows it.
 struct Shown: Equatable, Sendable {
@@ -23,6 +25,9 @@ struct Shown: Equatable, Sendable {
     var files: String? = nil
     /// The letter's images, drawn under its text.
     var images: [ShownImage] = []
+    /// The open asks the letter names, one preview each in the order its
+    /// words name them, drawn under it with a button to the card.
+    var asks: [AskPreview] = []
 }
 
 /// The whole text a long-press on the letter offers to copy, or nil
@@ -41,6 +46,32 @@ struct ShownImage: Equatable, Sendable {
     var bytes: Data? = nil
     /// Asked and missed: drawn as a placeholder with `name`.
     var missed: Bool = false
+}
+
+/// An open ask a letter names, as the preview under the letter shows it
+/// (footplate's `AskPreview`): that it waits on the person, which ask and
+/// how long, and the question's first line. The card stays in Decide: the
+/// preview answers nothing and draws no option.
+struct AskPreview: Equatable, Sendable, Identifiable {
+    var bead: String
+    var ask: Int64
+    /// What the head calls it: `ask`, `run ask` or `secret ask`.
+    var kind: String
+    /// The question's first line, in plain words.
+    var question: String
+    /// How long it has waited: `now`, `5m`, `2h`, `3d`; empty where the
+    /// yard's time cannot be read.
+    var waits: String
+
+    var id: String { "\(bead) \(ask)" }
+
+    /// What the preview says over the question, in the desktop's words:
+    /// `Waiting on you · ask 3 · asked 7m`, a part without a word left out.
+    var head: String {
+        ["Waiting on you", "\(kind) \(ask)", waits.isEmpty ? "" : "asked \(waits)"]
+            .filter { !$0.isEmpty }
+            .joined(separator: " · ")
+    }
 }
 
 /// A picture picked for the letter: the shrunk JPEG and the name it
@@ -166,6 +197,55 @@ func knownBeads(board: Board?, yard: String?, looked: [AskedBead: Bool]) -> Set<
     return known
 }
 
+/// The open asks `text` names, one preview each in the order its words name
+/// them, as footplate's `entry_refs` has it for a mail: `ask 3` names the
+/// one ask of that number the yard lists, open or decided, and previews it
+/// where it is open; a number two asks share, a decided ask and one the
+/// yard does not list name none, and their words stay plain. `ask 3 on
+/// yd-x` names that bead's ask alone. An ask named twice stands once. The
+/// board is read each time, so the next one, with the ask decided in it,
+/// takes its preview away.
+func askPreviews(in text: String, board: Board, now: Date) -> [AskPreview] {
+    guard !board.open.isEmpty else { return [] }
+    var previews: [AskPreview] = []
+    for named in askRefs(text) {
+        guard let ask = namedOpenAsk(named, in: board),
+              !previews.contains(where: { $0.bead == ask.bead && $0.ask == ask.ask }) else { continue }
+        previews.append(AskPreview(
+            bead: ask.bead,
+            ask: ask.ask,
+            kind: ask.run != nil ? "run ask" : ask.secret != nil ? "secret ask" : "ask",
+            question: questionLine(ask.question),
+            waits: waits(ask.since, now: now)
+        ))
+    }
+    return previews
+}
+
+/// The open ask `named` names, where it names one.
+private func namedOpenAsk(_ named: AskRef, in board: Board) -> OpenAsk? {
+    if let bead = named.bead {
+        return board.open.first { $0.bead == bead && $0.ask == named.ask }
+    }
+    let open = board.open.filter { $0.ask == named.ask }
+    return open.count == 1 && board.decided.allSatisfy { $0.ask != named.ask } ? open[0] : nil
+}
+
+/// A question's first line that says something, as footplate's `row_head`
+/// has it: lines end at a line feed, a carriage return, a vertical tab, a
+/// form feed, a next line and the Unicode line and paragraph separators,
+/// and each is read as plain words with its edges trimmed. The preview
+/// shows the first, whole; the card has the rest.
+func questionLine(_ question: String) -> String {
+    for line in question.unicodeScalars.split(whereSeparator: { lineBreaks.contains($0) }) {
+        let said = plain(String(line)).trimmingCharacters(in: .whitespacesAndNewlines)
+        if !said.isEmpty { return said }
+    }
+    return ""
+}
+
+private let lineBreaks: Set<Unicode.Scalar> = ["\n", "\r", "\u{0B}", "\u{0C}", "\u{85}", "\u{2028}", "\u{2029}"]
+
 @MainActor
 @Observable
 final class ConversationModel {
@@ -262,7 +342,8 @@ final class ConversationModel {
                     case .missed: return ShownImage(hash: file.hash, name: file.name, missed: true)
                     case nil: return ShownImage(hash: file.hash, name: file.name)
                     }
-                }
+                },
+                asks: board.map { askPreviews(in: letter.text, board: $0, now: now) } ?? []
             )
         }
         return ConversationState(

@@ -58,6 +58,159 @@ func beadIds(_ text: String) -> [String] {
     return seen
 }
 
+/// One ask a letter's words name: its number, and the bead they put it on
+/// where they say one (`ask 18 on yd-crm`).
+struct AskRef: Equatable, Sendable {
+    var ask: Int64
+    var bead: String? = nil
+}
+
+/// The asks `text` names, in the order they stand, as footplate's
+/// `entry_refs` reads a mail: Markdown is drawn first, then `ask_at` reads
+/// each block. A reference in a link or code span names none. An ask named
+/// twice is listed twice: resolving them is the conversation's to make.
+func askRefs(_ text: String) -> [AskRef] {
+    guard containsAsk(text) else { return [] }
+    var out: [AskRef] = []
+    for block in messageBlocks(text) {
+        switch block.kind {
+        case .code, .rule:
+            continue
+        case .table(let head, let rows, _):
+            for row in [head] + rows {
+                for cell in row {
+                    out += askRefs(in: cell.text, links: cell.links, marks: cell.marks)
+                }
+            }
+        default:
+            out += askRefs(in: block.text, links: block.links, marks: block.marks)
+        }
+    }
+    return out
+}
+
+/// Whether `text` has an `ask` substring worth reading as Markdown. This
+/// cheap scan avoids building blocks for the many letters with no ask.
+private func containsAsk(_ text: String) -> Bool {
+    let scalars = text.unicodeScalars
+    var at = scalars.startIndex
+    while at < scalars.endIndex {
+        if word("ask", in: scalars, at: at) != nil { return true }
+        at = scalars.index(after: at)
+    }
+    return false
+}
+
+/// Ask references in one displayed block or table cell, omitting links
+/// and code. If only the qualified bead is code, the remaining `ask N`
+/// is still a bare reference, as though the code words were not there.
+private func askRefs(in text: String, links: [NamedLink], marks: [Stretch]) -> [AskRef] {
+    let linked = linkRanges(text).map(\.range) + links.map { stringRange($0.range, in: text) }
+    let code = marks.filter { $0.marks.code }.map { stringRange($0.range, in: text) }
+    let scalars = text.unicodeScalars
+    var out: [AskRef] = []
+    var at = scalars.startIndex
+    while at < scalars.endIndex {
+        guard let token = askToken(text, at: at) else {
+            at = scalars.index(after: at)
+            continue
+        }
+        if linked.contains(where: { overlaps($0, token.range) }) {
+            at = scalars.index(after: at)
+        } else if code.contains(where: { overlaps($0, token.coreRange) }) {
+            at = scalars.index(after: at)
+        } else if code.contains(where: { overlaps($0, token.range) }) {
+            out.append(AskRef(ask: token.ref.ask))
+            at = token.range.upperBound
+        } else {
+            out.append(token.ref)
+            at = token.range.upperBound
+        }
+    }
+    return out
+}
+
+/// A Markdown parser's scalar range, as a `String` range for the scanner.
+private func stringRange(_ range: Range<Int>, in text: String) -> Range<String.Index> {
+    let scalars = text.unicodeScalars
+    let lower = scalars.index(scalars.startIndex, offsetBy: range.lowerBound)
+    let upper = scalars.index(scalars.startIndex, offsetBy: range.upperBound)
+    return lower..<upper
+}
+
+/// One ask reference found: what it names and where it stands.
+private struct AskToken {
+    var ref: AskRef
+    /// `ask N` itself, excluding a bead introduced by `on`.
+    var coreRange: Range<String.Index>
+    var range: Range<String.Index>
+}
+
+/// An ask reference at `start`, over Unicode scalars as footplate's
+/// `ask_at` is over bytes: none where none starts here.
+private func askToken(_ text: String, at start: String.Index) -> AskToken? {
+    let scalars = text.unicodeScalars
+    guard let afterAsk = word("ask", in: scalars, at: start) else { return nil }
+    if start > scalars.startIndex, isWordScalar(scalars[scalars.index(before: start)]) { return nil }
+    let number = skipping(scalars, from: afterAsk, while: isAsciiSpace)
+    guard number > afterAsk else { return nil }
+    let end = skipping(scalars, from: number, while: isAsciiDigit)
+    guard end > number else { return nil }
+    if end < scalars.endIndex, isAsciiAlphanumeric(scalars[end]) || scalars[end] == "_" { return nil }
+    // A number past `Int64` names no ask the yard has, and no reference.
+    guard let ask = Int64(String(scalars[number..<end])) else { return nil }
+    var token = AskToken(ref: AskRef(ask: ask), coreRange: start..<end, range: start..<end)
+    // `on` with a bead id where one follows; else the number alone.
+    let on = skipping(scalars, from: end, while: isAsciiSpace)
+    if let afterOn = word("on", in: scalars, at: on), afterOn < scalars.endIndex, isAsciiSpace(scalars[afterOn]),
+       let bead = beadToken(text, at: skipping(scalars, from: afterOn, while: isAsciiSpace)) {
+        token = AskToken(
+            ref: AskRef(ask: ask, bead: bead.id),
+            coreRange: start..<end,
+            range: start..<bead.range.upperBound
+        )
+    }
+    return token
+}
+
+/// Where `word` ends where it stands at `at`, ASCII letter case aside;
+/// nil where something else stands there. `word` is lower case letters.
+private func word(_ word: String, in scalars: String.UnicodeScalarView, at: String.Index) -> String.Index? {
+    var index = at
+    for letter in word.unicodeScalars {
+        // The case bit alone tells `A` from `a` in the ASCII letters.
+        guard index < scalars.endIndex, scalars[index].value | 0x20 == letter.value else { return nil }
+        index = scalars.index(after: index)
+    }
+    return index
+}
+
+/// The first index from `index` where `test` fails.
+private func skipping(_ scalars: String.UnicodeScalarView, from index: String.Index, while test: (Unicode.Scalar) -> Bool) -> String.Index {
+    var at = index
+    while at < scalars.endIndex, test(scalars[at]) { at = scalars.index(after: at) }
+    return at
+}
+
+/// Whether the scalar may stand inside a word an ask reference abuts:
+/// the `ask` in `re-ask 5` is none, and neither is one in `asked 5`.
+private func isWordScalar(_ scalar: Unicode.Scalar) -> Bool {
+    isAsciiAlphanumeric(scalar) || scalar == "_" || scalar == "-"
+}
+
+private func isAsciiAlphanumeric(_ scalar: Unicode.Scalar) -> Bool {
+    isAsciiDigit(scalar) || ("a"..."z").contains(scalar) || ("A"..."Z").contains(scalar)
+}
+
+private func isAsciiDigit(_ scalar: Unicode.Scalar) -> Bool {
+    ("0"..."9").contains(scalar)
+}
+
+/// Rust's `is_ascii_whitespace`: no vertical tab.
+private func isAsciiSpace(_ scalar: Unicode.Scalar) -> Bool {
+    scalar == " " || scalar == "\t" || scalar == "\n" || scalar == "\u{0C}" || scalar == "\r"
+}
+
 /// One accepted link: where it stands and where it goes.
 private struct FoundLink {
     var range: Range<String.Index>

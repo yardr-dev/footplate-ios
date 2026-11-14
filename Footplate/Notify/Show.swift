@@ -46,8 +46,7 @@ func applyNotifyTap(yard: String, target: Target, records: Records, nav: Nav) {
         nav.place = .crew
         nav.openConversation(yard: yard, with: with)
     case .decision(let bead, let ask):
-        nav.place = .decide
-        nav.openDecision(yard: yard, bead: bead, ask: ask)
+        nav.showDecision(yard: yard, bead: bead, ask: ask)
     }
 }
 

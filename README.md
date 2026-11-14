@@ -92,6 +92,15 @@ card: its summary is the first screen, and each file's line opens that file's
 whole text over the card, under its name, its action and its old and new
 SHA-256.
 
+A letter that names an open ask, as `ask 3` or `ask 3 on yd-links`, has a
+preview of it under its words. The preview says that the ask waits on you and
+for how long, shows the first line of the question, and has one Open card
+button. The button opens the ask's card in Decide. Back from the card goes to
+the Decide list, and the conversation waits in Crew. A secret ask is marked as
+one and shows no value. As on the desktop, a number two beads share, an ask
+already decided and one the yard does not list stay plain words. Nothing is
+answered in the conversation.
+
 Tracked in the yard as the `footplate-ios` depot. `.yardr/` holds its flow,
 roles and merge gate. Every change is reviewed twice before it lands:
 against its bead, then for security alone.

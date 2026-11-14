@@ -9,7 +9,10 @@ import XCTest
 // refusing it leaves it plain, and answering nothing for want of a
 // link asks again when mail next comes into view. A chip's tap
 // presents the bead as a sheet over the conversation, leaving the
-// tab alone.
+// tab alone. An open ask a letter names stands under it as a preview,
+// by footplate's rules: a number alone where one bead carries it, the
+// bead's own with `on`, once each, in the order named, and gone with
+// the board that decides it.
 @MainActor
 final class ConversationModelTests: XCTestCase {
     private var home: FakeFollowed!
@@ -113,13 +116,14 @@ final class ConversationModelTests: XCTestCase {
     func testTheYardsNoticesNameBeadsToo() async throws {
         home.up(loaded(
             open: [OpenAsk(bead: "yd-links", ask: 3, question: "Move the links?", asker: "yardmaster")],
-            notices: [Notification(seq: 11, at: "2026-10-08T09:31:00Z", kind: "noted", bead: "yd-shed", text: "yd-shed noted; see yd-links")]
+            notices: [Notification(seq: 11, at: "2026-10-08T09:31:00Z", kind: "noted", bead: "yd-shed", text: "yd-shed noted; see yd-links (ask 3)")]
         ))
         try await waitFor("the board") { [mailroom] in mailroom?.boards[""] != nil }
         model.open(yard: "", with: yardRow)
         try await waitFor("the notices") { [model] in model?.state.letters.count == 1 }
         try await waitFor("the confirmation") { [model] in model?.state.knownBeads == ["yd-links", "yd-shed"] }
         XCTAssertEqual(home.beadAsked, ["yd-shed"])
+        XCTAssertEqual(model.state.letters.map(\.asks), [[]], "a notice names an ask, and no preview stands under it: mail alone has them, as the desktop's")
     }
 
     /// Reading the state of a long conversation stays cheap
@@ -136,7 +140,7 @@ final class ConversationModelTests: XCTestCase {
             all.append(Letter(
                 seq: Int64(seq), at: "2026-10-08T09:30:00Z",
                 from: mine ? "jo" : "yardmaster", to: mine ? "yardmaster" : "jo",
-                text: "All quiet through the night watch.", read: true
+                text: seq % 10 == 0 ? "Is ask 3 on yd-links yours?" : "All quiet through the night watch.", read: true
             ))
         }
         home.up(Loaded(
@@ -148,7 +152,9 @@ final class ConversationModelTests: XCTestCase {
             users: [User(name: "jo")],
             inbox: Inbox(mail: all, unread: 0, last: 0, from: []),
             notifications: Notifications(),
-            asks: Asks()
+            // An open ask the letters name: each reading finds and
+            // previews it in thirty of them.
+            asks: Asks(open: [OpenAsk(bead: "yd-links", ask: 3, question: "Move the links?", asker: "yardmaster", since: "2026-10-08T09:00:00Z")])
         ))
         func page(before: Int64) -> Page {
             let older = before > 0 ? all.filter { $0.seq < before } : all
@@ -170,6 +176,7 @@ final class ConversationModelTests: XCTestCase {
             await model.older()
         }
         XCTAssertEqual(model.state.letters.count, 300)
+        XCTAssertEqual(model.state.letters.filter { !$0.asks.isEmpty }.count, 30)
         // One reading to warm the formatters, then fifty against the clock.
         _ = model.state
         let start = ContinuousClock.now
@@ -196,6 +203,132 @@ final class ConversationModelTests: XCTestCase {
         XCTAssertNil(model.state.sheet, "the sheet never follows to another conversation")
     }
 
+    // MARK: - The asks a letter names
+
+    /// An open ask of the queue from the yardmaster, 7 minutes old at the
+    /// model's 10:11.
+    private func openAsk(_ bead: String, _ ask: Int64, _ question: String = "Move the links?") -> OpenAsk {
+        OpenAsk(bead: bead, ask: ask, question: question, asker: "yardmaster", since: "2026-10-08T10:04:00Z")
+    }
+
+    private func decidedAsk(_ bead: String, _ ask: Int64) -> DecidedAsk {
+        DecidedAsk(bead: bead, ask: ask, question: "Move the links?", asker: "yardmaster", state: "answered")
+    }
+
+    private func mail(_ seq: Int64, _ text: String, mine: Bool = false) -> Letter {
+        Letter(seq: seq, at: "2026-10-08T09:3\(seq):00Z", from: mine ? "jo" : "yardmaster", to: mine ? "yardmaster" : "jo", text: text)
+    }
+
+    /// Opens the conversation with the yardmaster over `letters` and a
+    /// board holding `open` and `decided`.
+    private func openConversation(_ letters: [Letter], open: [OpenAsk] = [], decided: [DecidedAsk] = []) async throws {
+        home.up(loaded(open: open, decided: decided))
+        home.pages["yardmaster|0"] = Page(letters: letters, more: false)
+        try await waitFor("the board") { [mailroom] in mailroom?.boards[""] != nil }
+        model.open(yard: "", with: "yardmaster")
+        try await waitFor("the letters") { [model] in model?.state.letters.count == letters.count }
+    }
+
+    /// An open ask a letter names, the person's own or another's, stands
+    /// under it as the desktop shows it: its kind and number, how long it
+    /// waits and the question's first line. A re-ask and a letter that
+    /// names none have none.
+    func testAnOpenAskALetterNamesStandsUnderIt() async throws {
+        try await openConversation([
+            mail(1, "I put the grant to you as a card (ask 3)."),
+            mail(2, "The turn (yd-zulu) waits, and re-ask 4 stands plain."),
+            mail(3, "First.\n\n- See ask 3 again.", mine: true),
+        ], open: [openAsk("yardr-n8ta", 3, "Grant yardmaster replace on google-docs?\nIt reads the documents.")])
+        let preview = AskPreview(bead: "yardr-n8ta", ask: 3, kind: "ask", question: "Grant yardmaster replace on google-docs?", waits: "7m")
+        XCTAssertEqual(model.state.letters.map(\.asks), [[preview], [], [preview]])
+        XCTAssertEqual(preview.head, "Waiting on you · ask 3 · asked 7m")
+    }
+
+    /// Several asks a letter names stand in the order its words name them,
+    /// not the queue's, and one named twice stands once, however it is named.
+    func testSeveralAsksStandInTheOrderNamedEachOnce() async throws {
+        try await openConversation([
+            mail(1, "ask 5 first, ask 3 on yd-b, ask 5 again, ask 3 and ask 2."),
+            mail(2, "ask 3, then ask 5 on yd-a."),
+        ], open: [openAsk("yd-a", 5), openAsk("yd-b", 3)], decided: [decidedAsk("yd-c", 2)])
+        XCTAssertEqual(model.state.letters.map { $0.asks.map(\.id) }, [["yd-a 5", "yd-b 3"], ["yd-b 3", "yd-a 5"]])
+    }
+
+    /// A number two beads share, a decided ask and one the yard does not
+    /// list stay plain words; with its bead a shared number is one ask
+    /// again, and an ask on a bead that does not carry it is none.
+    func testASharedDecidedOrUnknownAskStaysPlain() async throws {
+        try await openConversation([
+            mail(1, "ask 3, ask 99 and ask 2."),
+            mail(2, "ask 3 on yardr-n8ta is yours."),
+            mail(3, "ask 4 is open on one bead and decided on another."),
+            mail(4, "ask 3 on yardr-9zzz and ask 2 on yardr-n8ta."),
+        ], open: [openAsk("yardr-n8ta", 3), openAsk("yardr-3msx", 3), openAsk("yardr-4aaa", 4)],
+        decided: [decidedAsk("yardr-n8ta", 2), decidedAsk("yardr-4bbb", 4)])
+        XCTAssertEqual(model.state.letters.map { $0.asks.map(\.id) }, [[], ["yardr-n8ta 3"], [], []])
+    }
+
+    /// A secret ask shows the first line of its question with its kind in
+    /// the head, and no value: the queue holds none. A run ask says its
+    /// kind. The first line is the first that says something, in plain words.
+    func testASecretAndARunAskKeepTheirKindAndTheirFirstLine() async throws {
+        let secret = OpenAsk(
+            bead: "yd-s", ask: 9, question: "\n  Give yardmaster the GitHub token\r\nand where it goes\u{2028}and more",
+            asker: "yardmaster", since: "2026-10-08T10:11:00Z", secret: Secret(source: "github", env: ["TOKEN"], line: "The GitHub token")
+        )
+        let run = OpenAsk(
+            bead: "yd-r", ask: 10, question: "Ring\u{7} the\tbell?",
+            asker: "yardmaster", since: "2026-10-06T10:11:00Z", run: Run(command: "yardr doctor")
+        )
+        try await openConversation([mail(1, "ask 9 and ask 10")], open: [secret, run])
+        let asks = model.state.letters[0].asks
+        XCTAssertEqual(asks, [
+            AskPreview(bead: "yd-s", ask: 9, kind: "secret ask", question: "Give yardmaster the GitHub token", waits: "now"),
+            AskPreview(bead: "yd-r", ask: 10, kind: "run ask", question: "Ring the\tbell?", waits: "2d"),
+        ])
+        XCTAssertEqual(asks.map(\.head), ["Waiting on you · secret ask 9 · asked now", "Waiting on you · run ask 10 · asked 2d"])
+        // A part the yard gave no word for leaves the head.
+        XCTAssertEqual(AskPreview(bead: "yd-s", ask: 25527, kind: "ask", question: "", waits: "").head, "Waiting on you · ask 25527")
+    }
+
+    /// The next board takes the preview of an ask it decides, with nothing
+    /// told to the conversation, and gives it back where the ask is open.
+    func testThePreviewGoesWithTheNextBoardThatDecidesTheAsk() async throws {
+        try await openConversation([mail(1, "Shall I land it (ask 3 on yd-links)?")], open: [openAsk("yd-links", 3)])
+        XCTAssertEqual(model.state.letters[0].asks.map(\.id), ["yd-links 3"])
+        home.up(loaded(open: [], decided: [decidedAsk("yd-links", 3)]))
+        XCTAssertEqual(model.state.letters[0].asks, [])
+        home.up(loaded(open: [openAsk("yd-links", 3)]))
+        XCTAssertEqual(model.state.letters[0].asks.map(\.id), ["yd-links 3"])
+    }
+
+    /// How long an ask waits, as the desktop's `waits` says it: whole
+    /// minutes under an hour, hours under a day, then days; none for a time
+    /// that is none, and `now` for one still to come.
+    func testHowLongAnAskWaitsIsSaidAsTheDesktopSaysIt() {
+        let now = parseInstant("2026-10-08T10:11:00Z")!
+        let rows: [(since: String, said: String)] = [
+            ("2026-10-08T10:11:00Z", "now"),
+            ("2026-10-08T10:10:01Z", "now"),
+            ("2026-10-08T10:10:00Z", "1m"),
+            ("2026-10-08T10:04:00Z", "7m"),
+            // The yard's instants carry fractions; the desktop counts whole seconds.
+            ("2026-10-08T10:04:00.9Z", "7m"),
+            ("2026-10-08T09:12:00Z", "59m"),
+            ("2026-10-08T09:11:00Z", "1h"),
+            ("2026-10-08T08:11:00Z", "2h"),
+            ("2026-10-07T10:12:00Z", "23h"),
+            ("2026-10-07T10:11:00Z", "1d"),
+            ("2026-10-05T10:11:00Z", "3d"),
+            ("2026-10-08T10:12:30Z", "now"),
+            ("", ""),
+            ("yesterday", ""),
+        ]
+        for (since, said) in rows {
+            XCTAssertEqual(waits(since, now: now), said, since)
+        }
+    }
+
     // MARK: - Helpers
 
     private func waitFor(_ what: String, _ match: @escaping @MainActor () -> Bool) async throws {
@@ -209,7 +342,7 @@ final class ConversationModelTests: XCTestCase {
         }
     }
 
-    private func loaded(open: [OpenAsk] = [], notices: [Footplate.Notification] = []) -> Loaded {
+    private func loaded(open: [OpenAsk] = [], decided: [DecidedAsk] = [], notices: [Footplate.Notification] = []) -> Loaded {
         Loaded(
             me: Me(user: "jo", saidBy: "phone", yard: "south"),
             head: 10,
@@ -219,7 +352,7 @@ final class ConversationModelTests: XCTestCase {
             users: [],
             inbox: Inbox(),
             notifications: Notifications(notifications: notices),
-            asks: Asks(open: open, decided: [])
+            asks: Asks(open: open, decided: decided)
         )
     }
 }

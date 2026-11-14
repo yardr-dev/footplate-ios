@@ -113,6 +113,22 @@ func waited(_ since: String, now: Date) -> String? {
     }
 }
 
+/// How long an ask has waited as the preview under a letter says it, in
+/// the desktop's words (`waits`): `now`, `5m`, `2h`, `3d`. A time the yard
+/// wrote that cannot be read says nothing. The cards keep `waited`'s.
+func waits(_ since: String, now: Date) -> String {
+    guard let then = parseInstant(since) else { return "" }
+    // In whole seconds each, as the desktop's timestamps are.
+    let seconds = Int(now.timeIntervalSince1970.rounded(.down)) - Int(then.timeIntervalSince1970.rounded(.down))
+    let minutes = seconds / 60
+    switch minutes {
+    case ..<1: return "now"
+    case ..<60: return "\(minutes)m"
+    case ..<(24 * 60): return "\(minutes / 60)h"
+    default: return "\(minutes / (24 * 60))d"
+    }
+}
+
 /// What became of an ask open no more, in one line.
 func became(_ ask: DecidedAsk, now: Date, zone: TimeZone) -> String {
     switch ask.state {

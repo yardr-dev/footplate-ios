@@ -32,6 +32,10 @@ struct CrewScreen: View {
                     line.open(yard: route.yard)
                     line.peekBead(id)
                     conversation.openBead(id)
+                }, openAsk: { bead, ask in
+                    // A preview's Open card: the card is Decide's, opened
+                    // as a notification's tap opens it.
+                    nav.showDecision(yard: route.yard, bead: bead, ask: ask)
                 }, openOnLine: { bead in
                     // The sheet's Open on the line: what a chip's tap
                     // did before the sheet.

@@ -198,4 +198,56 @@ final class LinksTests: XCTestCase {
         XCTAssertEqual(found.map { $0.words }, ["yd-crm@peer"])
         XCTAssertEqual(found.map { $0.bead }, ["yd-crm@peer"])
     }
+
+    /// The asks a letter names, by footplate's `ask_at`: its tests'
+    /// letters are the first rows (`an_ask_number_and_a_bead_id_chip...`),
+    /// the rest are the rule's edges. Each ask is listed as often as it
+    /// stands; resolving them is the conversation's.
+    func testAsksAreNamedAsFootplateReadsThem() {
+        func ask(_ number: Int64, on bead: String? = nil) -> AskRef { AskRef(ask: number, bead: bead) }
+        let rows: [(String, [AskRef])] = [
+            // The desktop's letters: found, and a re-ask is plain.
+            ("I put the grant to you as a card (ask 3).", [ask(3)]),
+            ("The turn (yd-zulu) waits, and re-ask 4 stands plain.", []),
+            ("First.\n\n- See ask 3 again.", [ask(3)]),
+            ("ask 3, ask 99 and ask 2.", [ask(3), ask(99), ask(2)]),
+            ("ask 3 and ask 3", [ask(3), ask(3)]),
+            // Any case, any whitespace between, the number whole.
+            ("Ask 7 and ASK 8 and aSk 9", [ask(7), ask(8), ask(9)]),
+            ("ask\t5 ask\n6 ask\r\n7 ask  8", [ask(5), ask(6), ask(7), ask(8)]),
+            ("ask 007", [ask(7)]),
+            ("ask 5. ask 6, (ask 7) \"ask 8\" ask 9-1", [ask(5), ask(6), ask(7), ask(8), ask(9)]),
+            ("ask 5x ask 6_ ask 7\u{e9}", [ask(7)]),
+            ("ask5 ask ask x ask\u{0B}9", []),
+            ("ask 99999999999999999999", []),
+            // No word before it: `asked`, `task`, `re-ask` and `3ask`
+            // are none; emphasis is read without its Markdown marks.
+            ("asked 5 task 5 re-ask 5 3ask 5", []),
+            ("_ask 5_", [ask(5)]),
+            ("\u{e9}ask 5", [ask(5)]),
+            // On its bead, with the bead's own characters; else the
+            // number alone.
+            ("ask 18 on yd-crm", [ask(18, on: "yd-crm")]),
+            ("ASK 18 ON yd-crm.", [ask(18, on: "yd-crm")]),
+            ("ask 18  on \n yd-crm and ask 19", [ask(18, on: "yd-crm"), ask(19)]),
+            ("ask 18 on yd-crm@peer", [ask(18, on: "yd-crm@peer")]),
+            ("ask 18 only ask 19 on ask 20 on nothing ask 21 on-yd", [ask(18), ask(19), ask(20), ask(21)]),
+            ("ask 18 on", [ask(18)]),
+            ("ask 18 on `yd-crm`", [ask(18)]),
+            // Not in the words of a link or a code span, as a bead id is
+            // not; an unclosed backtick opens none.
+            ("see https://x.example/ask 5", []),
+            ("see https://x.example/ask 5, then ask 6", [ask(6)]),
+            ("see [ask 5](https://x.example/a), then ask 6", [ask(6)]),
+            ("🚂 [ask 5](https://x.example/a) ask 6", [ask(6)]),
+            ("First | Second\n--- | ---\n[ask 5](https://x.example/a) | ask 6", [ask(6)]),
+            ("`ask 3` and ask 4", [ask(4)]),
+            ("```\nask 3\n``` fenced", []),
+            ("an `unclosed span names ask 3", [ask(3)]),
+            ("", []),
+        ]
+        for (text, refs) in rows {
+            XCTAssertEqual(askRefs(text), refs, text)
+        }
+    }
 }

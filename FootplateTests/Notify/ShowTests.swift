@@ -134,6 +134,28 @@ final class ShowTests: XCTestCase {
         XCTAssertEqual([DecisionRoute(yard: "yard.example.net", bead: "footplate-1", ask: 2)], movedNav.decidePath)
     }
 
+    /// A preview's Open card in a conversation (footplate-ios-rsgt) goes
+    /// where a decision's notification does: the tab switches and the card
+    /// is pushed on Decide's stack, while the conversation stays on the
+    /// crew's, where the way back to the tab finds it.
+    func testAConversationOpensADecisionAndKeepsItsPlace() {
+        let nav = Nav()
+        nav.openConversation(yard: "laptop", with: "yardmaster")
+        // A tab keeps its own stack when another tab is selected. The
+        // preview opens from the Decide list even if an older card was left
+        // on that stack.
+        nav.decidePath = [DecisionRoute(yard: "laptop", bead: "footplate-0", ask: 1)]
+        nav.showDecision(yard: "laptop", bead: "footplate-1", ask: 2)
+        XCTAssertEqual(.decide, nav.place)
+        XCTAssertEqual([DecisionRoute(yard: "laptop", bead: "footplate-1", ask: 2)], nav.decidePath)
+        XCTAssertEqual([ConversationRoute(yard: "laptop", with: "yardmaster")], nav.crewPath)
+        // The same card again is pushed once.
+        nav.place = .crew
+        nav.showDecision(yard: "laptop", bead: "footplate-1", ask: 2)
+        XCTAssertEqual(.decide, nav.place)
+        XCTAssertEqual(1, nav.decidePath.count)
+    }
+
     func testTheMigrationSelectsOnlyEmptyYardNotificationIDsForRemoval() {
         let staleMail = notificationRequest(Telling(title: "yardmaster", body: "The shed is painted.", yard: "", target: .conversation(with: "yardmaster")))
         let staleAsk = notificationRequest(Telling(title: "A decision waits", body: "Shall I land it?", yard: "", target: .decision(bead: "footplate-1", ask: 2)))
