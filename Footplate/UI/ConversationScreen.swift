@@ -434,8 +434,9 @@ struct ConversationScreen: View {
                             }
                         }
                 }
-                ForEach(letter.images, id: \.hash) { image in
-                    pictureRow(image, textAbove: !letter.text.isEmpty)
+                // By place, not by hash: a letter may carry one file twice.
+                ForEach(placedImages(letter)) { placed in
+                    pictureRow(placed.image, textAbove: !letter.text.isEmpty)
                 }
                 if let files = letter.files {
                     Text(files)

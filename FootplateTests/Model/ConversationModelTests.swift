@@ -12,7 +12,8 @@ import XCTest
 // tab alone. An open ask a letter names stands under it as a preview,
 // by footplate's rules: a number alone where one bead carries it, the
 // bead's own with `on`, once each, in the order named, and gone with
-// the board that decides it.
+// the board that decides it. A letter's pictures stand in rows keyed by
+// their place, so one picture carried twice is two rows under two keys.
 @MainActor
 final class ConversationModelTests: XCTestCase {
     private var home: FakeFollowed!
@@ -48,6 +49,25 @@ final class ConversationModelTests: XCTestCase {
             let mine = Shown(seq: 2, mine: true, text: text, time: "09:31")
             XCTAssertEqual(copyableMessage(mine), copy, "own: \(text)")
         }
+    }
+
+    /// The same bytes picked twice reach the conversation as two files of
+    /// one hash. Their rows are keyed by place, in the order drawn: keyed by
+    /// the hash they would share one id, which SwiftUI warns of, and may
+    /// reuse one row's view for both.
+    func testALetterCarryingOnePictureTwiceKeysItsRowsByPlace() {
+        let first = ShownImage(hash: "aa", name: "photo 1.jpg", bytes: Data([1]))
+        let again = ShownImage(hash: "aa", name: "photo 2.jpg", bytes: Data([1]))
+        let other = ShownImage(hash: "bb", name: "photo 3.jpg", missed: true)
+        XCTAssertEqual(first.hash, again.hash)
+        let letter = Shown(seq: 1, mine: true, text: "", time: "09:30", images: [first, again, other])
+        XCTAssertEqual(placedImages(letter), [
+            PlacedImage(id: 0, image: first),
+            PlacedImage(id: 1, image: again),
+            PlacedImage(id: 2, image: other),
+        ])
+        // A letter of words alone has no row.
+        XCTAssertEqual(placedImages(Shown(seq: 2, mine: false, text: "Hello.", time: "09:31")), [])
     }
 
     /// A known full id chips, and a closed bead chips once the yard

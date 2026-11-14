@@ -48,6 +48,20 @@ struct ShownImage: Equatable, Sendable {
     var missed: Bool = false
 }
 
+/// One image of a letter with its place in the letter, which keys the row
+/// it is drawn in. The hash is no key: a letter may carry one file twice
+/// (the same bytes picked twice), and two rows under one id draw a
+/// warning from SwiftUI, which may reuse one row's view for both.
+struct PlacedImage: Equatable, Sendable, Identifiable {
+    var id: Int
+    var image: ShownImage
+}
+
+/// The letter's images in the order they are drawn, each with its place.
+func placedImages(_ letter: Shown) -> [PlacedImage] {
+    letter.images.enumerated().map { PlacedImage(id: $0.offset, image: $0.element) }
+}
+
 /// An open ask a letter names, as the preview under the letter shows it
 /// (footplate's `AskPreview`): that it waits on the person, which ask and
 /// how long, and the question's first line. The card stays in Decide: the
