@@ -174,16 +174,21 @@ final class DemoTests: XCTestCase {
         demo.conversation.open(yard: "demo", with: "yardmaster")
         defer { demo.conversation.leave() }
         try await until("the conversation is read") { demo.conversation.state.letters.count == 30 }
-        let png = UIGraphicsImageRenderer(size: CGSize(width: 8, height: 8)).pngData { context in
-            UIColor.red.setFill()
-            context.fill(CGRect(x: 0, y: 0, width: 8, height: 8))
+        func png(_ color: UIColor) -> Data {
+            UIGraphicsImageRenderer(size: CGSize(width: 8, height: 8)).pngData { context in
+                color.setFill()
+                context.fill(CGRect(x: 0, y: 0, width: 8, height: 8))
+            }
         }
-        demo.conversation.attach(bytes: png, name: "shed.png", yard: "demo", with: "yardmaster")
-        try await until("the picture is shrunk") { demo.conversation.state.attached != nil }
+        // Two pictures, one letter: the call carries both files through the
+        // client and the demo's transport.
+        demo.conversation.attach(bytes: png(.red), name: "shed.png", yard: "demo", with: "yardmaster")
+        demo.conversation.attach(bytes: png(.blue), name: "photo 2", yard: "demo", with: "yardmaster")
+        try await until("the pictures are shrunk") { demo.conversation.state.attached.count == 2 }
         await demo.conversation.send()
-        try await until("the picture's letter comes back") { demo.conversation.state.letters.count == 31 }
+        try await until("the pictures' letter comes back") { demo.conversation.state.letters.count == 31 }
         XCTAssertEqual(demo.conversation.state.letters.last?.mine, true)
-        XCTAssertEqual(demo.conversation.state.letters.last?.images.count, 1)
+        XCTAssertEqual(demo.conversation.state.letters.last?.images.map(\.name), ["shed.jpg", "photo 2.jpg"])
         XCTAssertTrue(FileManager.default.fileExists(atPath: demo.folder.path))
         demo.close()
         XCTAssertFalse(FileManager.default.fileExists(atPath: demo.folder.path))

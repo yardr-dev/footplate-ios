@@ -42,8 +42,9 @@ struct ConversationScrollTracking: Equatable {
 // screen on no surface and the person's own in a bubble at the right,
 // each drawn by its Markdown (`MessageText`); its images under its
 // text, opened full on tap; the composer, one box, holding the field
-// with the picture picked for the letter above it and, under them, the
-// plus (a menu: Camera, Photos) and the round arrow that sends.
+// with the pictures picked for the letter above it, a row of thumbnails
+// each with its own cross, and, under them, the plus (a menu: Camera,
+// Photos) and the round arrow that sends.
 // Scrolling to the oldest letter reads the page before it. The
 // yard's notices are drawn the same way, with no field. A chip
 // tapped opens its bead as a sheet over the conversation, with an
@@ -64,8 +65,9 @@ struct ConversationScreen: View {
     @State private var field: String = ""
     @State private var scrollTracking = ConversationScrollTracking()
     @State private var showGallery = false
-    @State private var pickerItem: PhotosPickerItem? = nil
+    @State private var pickerItems: [PhotosPickerItem] = []
     @State private var showCamera = false
+    @State private var cameraVisit: Int? = nil
 
     private var canPhoto: Bool {
         UIImagePickerController.isSourceTypeAvailable(.camera)
@@ -162,10 +164,10 @@ struct ConversationScreen: View {
                 }
                 if state.writable {
                     Divider().overlay(ThemeColor.borderSubtle.color)
-                    // While the picked picture shrinks, the word for it;
-                    // the picture itself stands inside the composer's box.
-                    if state.attaching {
-                        Text("Shrinking the picture…")
+                    // While picked pictures are prepared, the word for them; the
+                    // pictures themselves stand inside the composer's box.
+                    if let preparing = attachingWords(state.attaching) {
+                        Text(preparing)
                             .themeType(.meta)
                             .foregroundStyle(ThemeColor.textSecondary.color)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -203,19 +205,28 @@ struct ConversationScreen: View {
             field = model.draftText
         }
         .onDisappear { model.leave() }
-        .photosPicker(isPresented: $showGallery, selection: $pickerItem, matching: .images)
-        .onChange(of: pickerItem) { _, item in
-            guard let item else { return }
-            pickerItem = nil
-            Task {
-                if let data = try? await item.loadTransferable(type: Data.self) {
-                    model.attach(bytes: data, name: "photo", yard: yard, with: with)
-                }
+        .photosPicker(isPresented: $showGallery, selection: $pickerItems, maxSelectionCount: maxAttached, selectionBehavior: .ordered, matching: .images)
+        .onChange(of: pickerItems) { _, items in
+            guard !items.isEmpty else { return }
+            pickerItems = []
+            guard let visit = model.attachmentVisit(yard: yard, with: with) else { return }
+            // In the order the picker numbered them, so that the row keeps
+            // that order. Reserve all their places before
+            // their asynchronous reads begin; Send joins those reads, and a
+            // late read after navigation is rejected by its visit. A pick is
+            // named by its number so a failure says which it was.
+            for (number, item) in items.enumerated() {
+                model.attach(
+                    load: { try? await item.loadTransferable(type: Data.self) },
+                    name: "photo \(number + 1)", yard: yard, with: with, visit: visit
+                )
             }
         }
         .sheet(isPresented: $showCamera) {
             CameraPicker { data in
-                if let data { model.attach(bytes: data, name: "photo.jpg", yard: yard, with: with) }
+                if let data, let cameraVisit {
+                    model.attach(bytes: data, name: "photo.jpg", yard: yard, with: with, visit: cameraVisit)
+                }
             }
             .ignoresSafeArea()
         }
@@ -261,17 +272,17 @@ struct ConversationScreen: View {
 
     /// The composer (footplate-ios-xb4g, as Android's since
     /// footplate-android-vhzg): one rounded box holding the picked
-    /// picture's row, the field with no border of its own and, under them,
+    /// pictures' row, the field with no border of its own and, under them,
     /// the icon row: the plus at the left, a menu that adds a picture, and
     /// the round arrow at the right that sends. The box wears the field's
     /// old surface and hairline. The arrow is dim by the rule the Send
     /// button it replaces was disabled by.
     private func composer(_ state: ConversationState) -> some View {
-        let nothingToSend = (field.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && state.attached == nil) || state.sending || state.attaching
+        let nothingToSend = (field.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && state.attached.isEmpty) || state.sending || state.attaching > 0
         let box = RoundedRectangle(cornerRadius: 8)
         return VStack(alignment: .leading, spacing: 0) {
-            if let attached = state.attached {
-                attachedRow(attached)
+            if !state.attached.isEmpty {
+                attachedRow(state.attached)
             }
             TextField("Write back", text: $field, axis: .vertical)
                 .lineLimit(1...5)
@@ -288,7 +299,10 @@ struct ConversationScreen: View {
             HStack(spacing: 0) {
                 Menu {
                     if canPhoto {
-                        Button("Camera") { showCamera = true }
+                        Button("Camera") {
+                            cameraVisit = model.attachmentVisit(yard: yard, with: with)
+                            showCamera = cameraVisit != nil
+                        }
                     }
                     Button("Photos") { showGallery = true }
                 } label: {
@@ -333,10 +347,29 @@ struct ConversationScreen: View {
         .accessibilityHidden(true)
     }
 
-    /// The picture picked for the letter: its thumbnail, its
-    /// name, and the cross that takes it back.
-    private func attachedRow(_ attached: Attached) -> some View {
-        HStack(spacing: 12) {
+    /// The pictures picked for the letter, in the order they were picked:
+    /// a row of thumbnails that scrolls sideways, each with its own cross.
+    private func attachedRow(_ attached: [Attached]) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(attached, id: \.id) { picture in
+                    attachedThumb(picture)
+                }
+            }
+            // Inside the composer's box: the first thumbnail stands on the
+            // field's own inset.
+            .padding(.horizontal, 16)
+        }
+        .padding(.top, 12)
+    }
+
+    /// One picked picture's thumbnail with the cross that takes it back,
+    /// over its corner. The cross is drawn small, on a solid dot of the
+    /// app's ground that the thumbnail holds whole (so it shows on any
+    /// picture, light or dark), while its button keeps the 48 point target;
+    /// the thumbnail takes no tap of its own.
+    private func attachedThumb(_ attached: Attached) -> some View {
+        ZStack(alignment: .topTrailing) {
             if let decoded = attached.bytes.isEmpty ? nil : UIImage(data: attached.bytes) {
                 Image(uiImage: decoded)
                     .resizable()
@@ -356,27 +389,22 @@ struct ConversationScreen: View {
                             .padding(4)
                     }
             }
-            Text(attached.name)
-                .themeType(.body)
-                .foregroundStyle(ThemeColor.textPrimary.color)
-                .lineLimit(1)
-            Spacer()
             Button {
-                model.removeAttach()
+                model.removeAttach(id: attached.id)
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(ThemeColor.textPrimary.color)
-                    .frame(width: 48, height: 48)
+                    .frame(width: 24, height: 24)
+                    .background(ThemeColor.surfaceApp.color, in: Circle())
+                    .padding(4)
+                    .frame(width: 48, height: 48, alignment: .topTrailing)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Remove the picture")
+            .accessibilityLabel("Remove \(attached.name)")
         }
-        // Inside the composer's box: the thumbnail stands on the field's
-        // own inset, and the cross over the arrow's.
-        .padding(.leading, 16)
-        .padding(.trailing, 4)
-        .padding(.top, 12)
+        .frame(width: 64, height: 64)
     }
 
     /// The person's own letter is a bubble on the right, kept 60 points

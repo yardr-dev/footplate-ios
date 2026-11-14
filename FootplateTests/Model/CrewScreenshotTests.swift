@@ -6,7 +6,7 @@ import XCTest
 // The crew screens rendered in the simulator against fake-followed
 // state (design 3.5, the bead's screenshots): the inbox with unread
 // rows, one conversation and its composer (one box) empty, with a
-// picture picked and with words, a conversation naming bead ids, a chip's
+// picture picked, with three and with words, a conversation naming bead ids, a chip's
 // bead as a sheet over the chat, a conversation with a party of a
 // linked yard, and the yard switch with two yards,
 // one away, at the default text size and at two
@@ -112,16 +112,35 @@ final class CrewScreenshotTests: XCTestCase {
         try await shootAppearances(of: empty, named: "composer-empty", in: dir)
         conversation.attach(bytes: shedPNG, name: "shed.png", yard: "", with: "yardmaster")
         let pickDeadline = ContinuousClock.now + .seconds(10)
-        while conversation.state.attached == nil, ContinuousClock.now <= pickDeadline {
+        while conversation.state.attached.count < 1, ContinuousClock.now <= pickDeadline {
             try await Task.sleep(for: .milliseconds(10))
         }
-        XCTAssertEqual(conversation.state.attached?.name, "shed.jpg")
+        XCTAssertEqual(conversation.state.attached.map(\.name), ["shed.jpg"])
         // Draw the updated window before changing appearance so the
         // attached-state image records the settled composer.
         try snapshot(empty, to: dir.appendingPathComponent("composer-attached.png"))
         try await shootAppearances(of: empty, named: "composer-attached", in: dir)
+        // Three pictures picked at once (footplate-ios-377n): three
+        // thumbnails in the order picked, each with its own cross.
+        func wall(_ red: CGFloat, _ green: CGFloat, _ blue: CGFloat) -> Data {
+            UIGraphicsImageRenderer(size: CGSize(width: 480, height: 320), format: shedFormat).pngData { context in
+                UIColor(red: red, green: green, blue: blue, alpha: 1).setFill()
+                context.fill(CGRect(x: 0, y: 0, width: 480, height: 320))
+                UIColor(red: 0.92, green: 0.85, blue: 0.75, alpha: 1).setFill()
+                context.fill(CGRect(x: 140, y: 60, width: 200, height: 200))
+            }
+        }
+        conversation.attach(bytes: wall(0.18, 0.42, 0.36), name: "photo 2", yard: "", with: "yardmaster")
+        conversation.attach(bytes: wall(0.20, 0.28, 0.50), name: "photo 3", yard: "", with: "yardmaster")
+        while conversation.state.attached.count < 3, ContinuousClock.now <= pickDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(conversation.state.attached.map(\.name), ["shed.jpg", "photo 2.jpg", "photo 3.jpg"])
+        try snapshot(empty, to: dir.appendingPathComponent("composer-attached-three.png"))
+        try await shootAppearances(of: empty, named: "composer-attached-three", in: dir)
         empty.isHidden = true
-        conversation.removeAttach()
+        for picture in conversation.state.attached { conversation.removeAttach(id: picture.id) }
+        XCTAssertTrue(conversation.state.attached.isEmpty)
         conversation.draft("Land it tonight.")
         let words = try await renderWindow(
             ConversationScreen(model: conversation, line: line, yard: "", with: "yardmaster"),

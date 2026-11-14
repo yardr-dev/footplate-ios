@@ -67,7 +67,7 @@ final class InboxModelTests: XCTestCase {
         )
     }
 
-    private func conversation(shrink: @escaping @Sendable (Data) -> Data? = { $0 }) -> ConversationModel {
+    private func conversation(shrink: @escaping @Sendable (Data) async -> Data? = { $0 }) -> ConversationModel {
         let now = fixedNow
         return ConversationModel(
             mailroom: mailroom, pictures: Pictures(directory: picturesDir), shrink: shrink,
@@ -748,99 +748,404 @@ final class InboxModelTests: XCTestCase {
         conversation.leave()
     }
 
-    func testPickedPictureIsSentWithTheLetterAndDrawnAtOnce() async {
-        let jpeg = Data([0xFF, 0xD8, 0xFF, 0xE0, 1, 2, 3])
-        let png = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3])
+    func testPickedPicturesAreSentWithTheLetterInOneMailAndDrawnAtOnce() async {
+        let (shed, yard, signal) = (testJPEG(1), testJPEG(2), testJPEG(3))
         home.up(loaded())
         home.pages["yardmaster|0"] = Page(letters: [letter(13, "yardmaster", "jo", "Thirteen.")], more: false)
-        let conversation = conversation(shrink: { _ in jpeg })
+        // The shrink answers each pick's own JPEG, told by its last byte.
+        let conversation = conversation(shrink: { testJPEG($0.last ?? 0) })
         conversation.open(yard: "", with: "yardmaster")
         _ = await waitFor("the page", state: { conversation.state }) { !$0.letters.isEmpty }
-        conversation.attach(bytes: png, name: "yard.png", yard: "", with: "yardmaster")
-        let attached = await waitFor("the picture picked", state: { conversation.state }) { $0.attached != nil }
-        // Shrunk, and renamed for the JPEG it became.
-        XCTAssertEqual(attached.attached?.bytes, jpeg)
-        XCTAssertEqual(attached.attached?.name, "yard.jpg")
+        for number in 1...3 {
+            conversation.attach(bytes: testPNG(UInt8(number)), name: "photo \(number)", yard: "", with: "yardmaster")
+        }
+        let picked = await waitFor("three pictures picked", state: { conversation.state }) { $0.attached.count == 3 }
+        // Shrunk, renamed for the JPEG each became, and in the order picked.
+        XCTAssertEqual(picked.attached.map(\.bytes), [shed, yard, signal])
+        XCTAssertEqual(picked.attached.map(\.name), ["photo 1.jpg", "photo 2.jpg", "photo 3.jpg"])
+        // Each is taken back by itself: the middle one goes, the others stay.
+        conversation.removeAttach(id: picked.attached[1].id)
+        XCTAssertEqual(conversation.state.attached.map(\.bytes), [shed, signal])
         conversation.draft("The yard, painted.")
         await conversation.send()
-        // The blob put first, then the mail naming its hash.
-        XCTAssertEqual(home.put, [jpeg])
+        // One blob a picture put first, in the row's order, then one mail
+        // naming both hashes.
+        XCTAssertEqual(home.put, [shed, signal])
         XCTAssertEqual(home.sent.map { "\($0.0)|\($0.1)" }, ["yardmaster|The yard, painted."])
-        XCTAssertEqual(home.sentFiles, [[MailFile(hash: sha256Hex(jpeg), name: "yard.jpg")]])
+        XCTAssertEqual(home.sentFiles, [[
+            MailFile(hash: sha256Hex(shed), name: "photo 1.jpg"),
+            MailFile(hash: sha256Hex(signal), name: "photo 3.jpg"),
+        ]])
         _ = await waitFor("the field emptied", state: { conversation.state }) {
-            $0.attached == nil && $0.draft.isEmpty && !$0.sending
+            $0.attached.isEmpty && $0.draft.isEmpty && !$0.sending
         }
-        // The letter arrives with the file: drawn at once, from
-        // the kept bytes, with nothing asked of the yard.
+        // The letter arrives with its files: drawn at once, from the kept
+        // bytes, with nothing asked of the yard.
         home.pages["yardmaster|0"] = Page(letters: [
-            letter(170, "jo", "yardmaster", "The yard, painted.", files: [BlobRef(hash: sha256Hex(jpeg), kind: "image/jpeg", bytes: Int64(jpeg.count), name: "yard.jpg")]),
+            letter(170, "jo", "yardmaster", "The yard, painted.", files: [
+                BlobRef(hash: sha256Hex(shed), kind: "image/jpeg", bytes: Int64(shed.count), name: "photo 1.jpg"),
+                BlobRef(hash: sha256Hex(signal), kind: "image/jpeg", bytes: Int64(signal.count), name: "photo 3.jpg"),
+            ]),
         ], more: false)
         home.up(loaded(head: 170))
-        let shown = await waitFor("the picture drawn", state: { conversation.state }) {
-            $0.letters.first { $0.seq == 170 }?.images.first?.bytes != nil
+        let shown = await waitFor("the pictures drawn", state: { conversation.state }) {
+            $0.letters.first { $0.seq == 170 }?.images.count == 2
+                && $0.letters.first { $0.seq == 170 }?.images.allSatisfy { $0.bytes != nil } == true
         }
-        XCTAssertEqual(shown.letters.first { $0.seq == 170 }?.images.first?.bytes, jpeg)
+        XCTAssertEqual(shown.letters.first { $0.seq == 170 }?.images.map(\.bytes), [shed, signal])
         XCTAssertTrue(home.blobAsked.isEmpty)
         conversation.leave()
 
-        // A photo picker can finish loading after its conversation has
-        // changed. It stays with the conversation that opened the picker.
+        // A Photos read that finishes after leaving and reopening the same
+        // conversation belongs to the old visit, despite the same names.
+        conversation.open(yard: "", with: "yardmaster")
+        let oldVisit = conversation.attachmentVisit(yard: "", with: "yardmaster")!
+        conversation.leave()
+        conversation.open(yard: "", with: "yardmaster")
+        let late = conversation.attach(bytes: testPNG(1), name: "photo 1", yard: "", with: "yardmaster", visit: oldVisit)
+        XCTAssertNil(late)
+        XCTAssertTrue(conversation.state.attached.isEmpty)
+        conversation.leave()
+
+        // A late read also cannot move to a different conversation.
         conversation.open(yard: "", with: "signalman")
-        conversation.attach(bytes: png, name: "yard.png", yard: "", with: "yardmaster")
-        XCTAssertNil(conversation.state.attached)
+        XCTAssertNil(conversation.attach(bytes: testPNG(1), name: "photo 1", yard: "", with: "yardmaster"))
+        XCTAssertTrue(conversation.state.attached.isEmpty)
         conversation.leave()
     }
 
-    func testPictureAloneIsSentWithEmptyText() async {
-        let jpeg = Data([0xFF, 0xD8, 0xFF, 0xE0, 1, 2, 3])
+    func testPicturesAloneAreSentWithEmptyText() async {
+        let pictures = [testJPEG(1), testJPEG(2), testJPEG(3)]
         home.up(loaded())
         home.pages["yardmaster|0"] = Page(letters: [letter(13, "yardmaster", "jo", "Thirteen.")], more: false)
-        let conversation = conversation(shrink: { _ in jpeg })
+        let conversation = conversation()
         conversation.open(yard: "", with: "yardmaster")
         _ = await waitFor("the page", state: { conversation.state }) { !$0.letters.isEmpty }
-        conversation.attach(bytes: Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3]), name: "yard.png", yard: "", with: "yardmaster")
-        _ = await waitFor("the picture picked", state: { conversation.state }) { $0.attached != nil }
+        for (number, bytes) in pictures.enumerated() {
+            conversation.attach(bytes: bytes, name: "photo \(number + 1)", yard: "", with: "yardmaster")
+        }
+        _ = await waitFor("the pictures picked", state: { conversation.state }) { $0.attached.count == 3 }
         await conversation.send()
+        // The three go as one letter with no words.
+        XCTAssertEqual(home.put, pictures)
         XCTAssertEqual(home.sent.map { "\($0.0)|\($0.1)" }, ["yardmaster|"])
-        XCTAssertEqual(home.sentFiles, [[MailFile(hash: sha256Hex(jpeg), name: "yard.jpg")]])
+        XCTAssertEqual(home.sentFiles, [pictures.enumerated().map { MailFile(hash: sha256Hex($1), name: "photo \($0 + 1).jpg") }])
+        XCTAssertTrue(conversation.state.attached.isEmpty)
         conversation.leave()
     }
 
-    func testPictureThePhoneCannotReadSaysSo() async {
+    func testPictureThePhoneCannotReadSaysSoAndTheRestStand() async {
+        let (good, other, unshrinkable) = (testJPEG(1), testJPEG(2), testJPEG(9))
         home.up(loaded())
-        let conversation = conversation(shrink: { _ in nil })
+        // A shrink that fails for the one picture it cannot read.
+        let conversation = conversation(shrink: { $0 == unshrinkable ? nil : $0 })
         conversation.open(yard: "", with: "yardmaster")
-        conversation.attach(bytes: Data("not a picture".utf8), name: "yard.png", yard: "", with: "yardmaster")
+        conversation.attach(bytes: unshrinkable, name: "yard.png", yard: "", with: "yardmaster")
         let state = await waitFor("the refusal", state: { conversation.state }) { $0.error != nil }
-        XCTAssertEqual(state.error, "The phone cannot read that picture.")
-        XCTAssertNil(state.attached)
+        XCTAssertEqual(state.error, "The phone cannot read yard.jpg.")
+        XCTAssertTrue(state.attached.isEmpty)
+        XCTAssertEqual(state.attaching, 0)
+
+        // In a batch the library would not read one (no bytes) and another
+        // will not shrink: each is skipped with words naming it, and the
+        // pictures picked after the first failure do not wipe its words.
+        conversation.draft("")
+        let visit = conversation.attachmentVisit(yard: "", with: "yardmaster")!
+        XCTAssertNotNil(conversation.attach(load: { nil }, name: "photo 1", yard: "", with: "yardmaster", visit: visit))
+        let unreadable = await waitFor("the library's unreadable pick", state: { conversation.state }) {
+            $0.error == "The phone cannot read photo 1.jpg." && $0.attaching == 0
+        }
+        XCTAssertEqual(unreadable.error, "The phone cannot read photo 1.jpg.")
+        conversation.attach(bytes: good, name: "photo 2", yard: "", with: "yardmaster")
+        conversation.attach(bytes: other, name: "photo 3", yard: "", with: "yardmaster")
+        let stands = await waitFor("the rest stand", state: { conversation.state }) { $0.attached.count == 2 }
+        XCTAssertEqual(stands.attached.map(\.bytes), [good, other])
+        XCTAssertEqual(stands.error, "The phone cannot read photo 1.jpg.")
+        conversation.attach(bytes: unshrinkable, name: "photo 4", yard: "", with: "yardmaster")
+        let skipped = await waitFor("the shrink's refusal", state: { conversation.state }) {
+            $0.error == "The phone cannot read photo 4.jpg." && $0.attaching == 0
+        }
+        XCTAssertEqual(skipped.attached.map(\.bytes), [good, other])
         conversation.leave()
     }
 
-    func testLetterOrPictureThatDoesNotGoSaysWhyAndKeepsItsDraftOrPicture() async {
-        let jpeg = Data([0xFF, 0xD8, 0xFF, 0xE0, 1, 2, 3])
+    func testLetterOrPicturesThatDoNotGoSayWhyAndKeepTheDraftAndTheRowAndTheCacheClean() async {
+        let (shed, yard) = (testJPEG(1), testJPEG(2))
         home.up(loaded())
         home.refuse = .away
-        let conversation = conversation(shrink: { _ in jpeg })
+        let conversation = conversation()
         conversation.open(yard: "", with: "yardmaster")
         conversation.draft("Land it.")
         await conversation.send()
         let state = await waitFor("the refusal", state: { conversation.state }) { $0.error != nil }
         XCTAssertEqual(state.draft, "Land it.")
         XCTAssertEqual(state.error, "The letter did not go: The yard is away: the edge cannot reach it.")
-        // The same send refusal keeps the picked JPEG and explains
-        // that the picture did not go.
+        // The same refusal keeps the one picked JPEG and says the picture
+        // did not go.
         home.refuse = nil
-        conversation.attach(bytes: Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3]), name: "yard.png", yard: "", with: "yardmaster")
-        _ = await waitFor("the picture picked", state: { conversation.state }) { $0.attached != nil }
+        conversation.attach(bytes: shed, name: "yard.png", yard: "", with: "yardmaster")
+        _ = await waitFor("the picture picked", state: { conversation.state }) { $0.attached.count == 1 }
         home.refuse = .away
         await conversation.send()
         let failed = await waitFor("the picture refusal", state: { conversation.state }) {
-            $0.error != nil && $0.attached != nil && !$0.sending
+            $0.error != nil && $0.attached.count == 1 && !$0.sending
         }
         XCTAssertEqual(failed.error, "The picture did not go: The yard is away: the edge cannot reach it.")
-        XCTAssertEqual(failed.attached?.bytes, jpeg)
+        XCTAssertEqual(failed.attached.map(\.bytes), [shed])
+        // Two pictures, refused at the upload and again at the mail, with the
+        // blobs put: the row stays whole, the words are the plural's, and no
+        // picture entered the cache for a letter that did not go.
+        home.refuse = nil
+        conversation.attach(bytes: yard, name: "photo 2", yard: "", with: "yardmaster")
+        _ = await waitFor("the second picture picked", state: { conversation.state }) { $0.attached.count == 2 }
+        home.refuse = .away
+        await conversation.send()
+        XCTAssertEqual(conversation.state.error, "The pictures did not go: The yard is away: the edge cannot reach it.")
+        home.refuse = nil
+        home.mailRefuse = .away
+        await conversation.send()
+        XCTAssertEqual(home.put, [shed, yard])
+        let refused = conversation.state
+        XCTAssertEqual(refused.error, "The pictures did not go: The yard is away: the edge cannot reach it.")
+        XCTAssertEqual(refused.attached.map(\.bytes), [shed, yard])
+        XCTAssertEqual(refused.draft, "Land it.")
+        XCTAssertFalse(kept(shed) || kept(yard))
+        // Sent at last, the pictures are kept for the letter to draw.
+        home.mailRefuse = nil
+        await conversation.send()
+        XCTAssertEqual(home.sentFiles.last?.count, 2)
+        XCTAssertTrue(kept(shed) && kept(yard))
+        XCTAssertTrue(conversation.state.attached.isEmpty)
         conversation.leave()
+    }
+
+    func testSeveralPicturesKeepThePickOrderWhateverOrderTheyShrinkIn() async {
+        let (first, second, third) = (testJPEG(1), testJPEG(2), testJPEG(3))
+        let gate = ShrinkGate()
+        home.up(loaded())
+        let conversation = conversation(shrink: { bytes in await gate.hold(bytes); return bytes })
+        conversation.open(yard: "", with: "yardmaster")
+        let picks = [first, second, third].enumerated().map { number, bytes in
+            conversation.attach(bytes: bytes, name: "photo \(number + 1)", yard: "", with: "yardmaster")!
+        }
+        // Every pick shrinks on its own: the line counts three, the row is empty.
+        XCTAssertEqual(conversation.state.attaching, 3)
+        XCTAssertEqual(attachingWords(conversation.state.attaching), "Preparing 3 pictures…")
+        XCTAssertTrue(conversation.state.attached.isEmpty)
+        // The last shrinks first, then the first, then the middle one; the
+        // middle one lands between them, where it was picked.
+        await gate.release(third)
+        await picks[2].task.value
+        XCTAssertEqual(conversation.state.attached.map(\.bytes), [third])
+        XCTAssertEqual(conversation.state.attaching, 2)
+        await gate.release(first)
+        await picks[0].task.value
+        XCTAssertEqual(conversation.state.attached.map(\.bytes), [first, third])
+        // One left: the line says the picture, not a count.
+        XCTAssertEqual(attachingWords(conversation.state.attaching), "Preparing the picture…")
+        await gate.release(second)
+        await picks[1].task.value
+        let landed = conversation.state
+        XCTAssertEqual(landed.attached.map(\.bytes), [first, second, third])
+        XCTAssertEqual(landed.attached.map(\.name), ["photo 1.jpg", "photo 2.jpg", "photo 3.jpg"])
+        XCTAssertEqual(landed.attaching, 0)
+        XCTAssertNil(attachingWords(landed.attaching))
+        conversation.leave()
+    }
+
+    func testAPicturePastTenIsRefusedWithWordsWhetherTheOthersShrinkOrHaveLanded() async {
+        let gate = ShrinkGate()
+        home.up(loaded())
+        let conversation = conversation(shrink: { bytes in await gate.hold(bytes); return bytes })
+        conversation.open(yard: "", with: "yardmaster")
+        let picks = (1...maxAttached).map { number in
+            conversation.attach(bytes: testJPEG(UInt8(number)), name: "photo \(number)", yard: "", with: "yardmaster")!
+        }
+        // Ten still shrinking fill the row: the eleventh, from the camera or
+        // the library, is refused with words and takes no place.
+        let refused = conversation.attach(bytes: testJPEG(11), name: "photo.jpg", yard: "", with: "yardmaster")
+        XCTAssertNil(refused)
+        XCTAssertEqual(conversation.state.error, "A letter carries at most 10 pictures.")
+        XCTAssertEqual(conversation.state.attaching, 10)
+        for number in 1...maxAttached { await gate.release(testJPEG(UInt8(number))) }
+        for pick in picks { await pick.task.value }
+        XCTAssertEqual(conversation.state.attached.count, 10)
+        XCTAssertNil(conversation.attach(bytes: testJPEG(12), name: "photo.jpg", yard: "", with: "yardmaster"))
+        XCTAssertEqual(conversation.state.attached.count, 10)
+        // A picture taken back makes room for one more.
+        conversation.removeAttach(id: conversation.state.attached[0].id)
+        await gate.release(testJPEG(13))
+        await conversation.attach(bytes: testJPEG(13), name: "photo.jpg", yard: "", with: "yardmaster")?.task.value
+        XCTAssertEqual(conversation.state.attached.count, 10)
+        XCTAssertEqual(conversation.state.attached.last?.bytes, testJPEG(13))
+        conversation.leave()
+    }
+
+    func testAPickTakenBackWhileItShrinksNeverLandsAndNeitherDoesOneOfAConversationLeft() async {
+        let (first, second, third, fourth) = (testJPEG(1), testJPEG(2), testJPEG(3), testJPEG(4))
+        let gate = ShrinkGate()
+        home.up(loaded())
+        let conversation = conversation(shrink: { bytes in await gate.hold(bytes); return bytes })
+        conversation.open(yard: "", with: "yardmaster")
+        let removed = conversation.attach(bytes: first, name: "photo 1", yard: "", with: "yardmaster")!
+        let stays = conversation.attach(bytes: second, name: "photo 2", yard: "", with: "yardmaster")!
+        await gate.waitUntilHeld(first)
+        conversation.removeAttach(id: removed.id)
+        // Cancelled, and no longer counted; the other shrink goes on.
+        XCTAssertTrue(removed.task.isCancelled)
+        XCTAssertFalse(stays.task.isCancelled)
+        XCTAssertEqual(conversation.state.attaching, 1)
+        await gate.release(first)
+        await removed.task.value
+        let shrinkStopped = await gate.wasCancelled(first)
+        XCTAssertTrue(shrinkStopped, "taking a picture back cancels its detached shrink")
+        XCTAssertTrue(conversation.state.attached.isEmpty, "a pick taken back lands nowhere")
+        XCTAssertEqual(conversation.state.attaching, 1)
+        await gate.release(second)
+        await stays.task.value
+        XCTAssertEqual(conversation.state.attached.map(\.bytes), [second])
+        // A landed picture is taken back by the same call.
+        conversation.removeAttach(id: conversation.state.attached[0].id)
+        XCTAssertTrue(conversation.state.attached.isEmpty)
+
+        // A pick still shrinking when its screen is left never lands, not on
+        // the screen when it is opened again nor on another conversation.
+        let left = conversation.attach(bytes: third, name: "photo 3", yard: "", with: "yardmaster")!
+        conversation.leave()
+        XCTAssertTrue(left.task.isCancelled)
+        await gate.release(third)
+        await left.task.value
+        conversation.open(yard: "", with: "yardmaster")
+        XCTAssertTrue(conversation.state.attached.isEmpty)
+        XCTAssertEqual(conversation.state.attaching, 0)
+        let moved = conversation.attach(bytes: fourth, name: "photo 4", yard: "", with: "yardmaster")!
+        conversation.open(yard: "", with: "signalman")
+        await gate.release(fourth)
+        await moved.task.value
+        XCTAssertTrue(conversation.state.attached.isEmpty)
+        XCTAssertEqual(conversation.state.attaching, 0)
+        conversation.open(yard: "", with: "yardmaster")
+        XCTAssertTrue(conversation.state.attached.isEmpty)
+        conversation.leave()
+    }
+
+    func testSendWaitsForTheShrinksAndStopsWhereAPictureIsTakenBackOrFailsOrTheScreenIsLeft() async {
+        let (first, second, third) = (testJPEG(1), testJPEG(2), testJPEG(3))
+        let unshrinkable = testJPEG(9)
+        let gate = ShrinkGate()
+        home.up(loaded())
+        let conversation = conversation(shrink: { bytes in
+            await gate.hold(bytes)
+            return bytes == unshrinkable ? nil : bytes
+        })
+        conversation.open(yard: "", with: "yardmaster")
+        /// A send begun, with its pictures still shrinking: it is waiting once its sending shows.
+        func startSend() async -> Task<Void, Never> {
+            let sending = Task { await conversation.send() }
+            _ = await waitFor("the send waiting", state: { conversation.state }) { $0.sending }
+            return sending
+        }
+        // The first pick is picked before the second, shrinks after it, and
+        // is carried before it: the letter waits for it, then goes in the
+        // order picked.
+        conversation.attach(bytes: first, name: "photo 1", yard: "", with: "yardmaster")
+        await gate.release(second)
+        await conversation.attach(bytes: second, name: "photo 2", yard: "", with: "yardmaster")!.task.value
+        conversation.draft("Both.")
+        var sending = await startSend()
+        XCTAssertEqual(home.mailCalls, 0)
+        await gate.release(first)
+        await sending.value
+        XCTAssertEqual(home.put, [first, second])
+        XCTAssertEqual(home.sentFiles, [[MailFile(hash: sha256Hex(first), name: "photo 1.jpg"), MailFile(hash: sha256Hex(second), name: "photo 2.jpg")]])
+        XCTAssertEqual(conversation.state.draft, "")
+
+        // A Photos original can take time to read. It already has a row
+        // place, and a Send tapped meanwhile waits for it instead of sending
+        // only the words and leaving the picture for the next letter.
+        let readGate = ShrinkGate()
+        let readable = testJPEG(6)
+        let visit = conversation.attachmentVisit(yard: "", with: "yardmaster")!
+        let reading = conversation.attach(
+            load: { await readGate.hold(readable); return readable },
+            name: "photo 6", yard: "", with: "yardmaster", visit: visit
+        )!
+        XCTAssertEqual(conversation.state.attaching, 1)
+        XCTAssertEqual(attachingWords(conversation.state.attaching), "Preparing the picture…")
+        conversation.draft("From Photos.")
+        sending = await startSend()
+        XCTAssertEqual(home.mailCalls, 1)
+        await readGate.release(readable)
+        // Once read, the same pick is shrunk on the detached worker.
+        await gate.release(readable)
+        await reading.task.value
+        await sending.value
+        XCTAssertEqual(home.put, [first, second, readable])
+        XCTAssertEqual(home.sentFiles.last, [MailFile(hash: sha256Hex(readable), name: "photo 6.jpg")])
+        XCTAssertEqual(conversation.state.draft, "")
+
+        // A picture taken back while the letter waits stops it: the draft
+        // and what stays of the row are as they were, and nothing went.
+        conversation.draft("Again.")
+        let pending = conversation.attach(bytes: third, name: "photo 3", yard: "", with: "yardmaster")!
+        sending = await startSend()
+        conversation.removeAttach(id: pending.id)
+        await gate.release(third)
+        await sending.value
+        XCTAssertEqual(home.mailCalls, 2)
+        XCTAssertEqual(conversation.state.draft, "Again.")
+        XCTAssertTrue(conversation.state.attached.isEmpty)
+        XCTAssertNil(conversation.state.error)
+        XCTAssertFalse(conversation.state.sending)
+
+        // So does a picture that will not shrink, its words naming it.
+        _ = conversation.attach(bytes: unshrinkable, name: "photo 4", yard: "", with: "yardmaster")!
+        sending = await startSend()
+        await gate.release(unshrinkable)
+        await sending.value
+        XCTAssertEqual(home.mailCalls, 2)
+        XCTAssertEqual(conversation.state.error, "The phone cannot read photo 4.jpg.")
+        XCTAssertEqual(conversation.state.draft, "Again.")
+
+        // And so does leaving the screen: coming back, the draft is there
+        // and the picture that was shrinking is not.
+        let gone = testJPEG(5)
+        _ = conversation.attach(bytes: gone, name: "photo 5", yard: "", with: "yardmaster")!
+        sending = await startSend()
+        conversation.leave()
+        await gate.release(gone)
+        await sending.value
+        XCTAssertEqual(home.mailCalls, 2)
+        conversation.open(yard: "", with: "yardmaster")
+        XCTAssertEqual(conversation.state.draft, "Again.")
+        XCTAssertTrue(conversation.state.attached.isEmpty)
+        XCTAssertFalse(conversation.state.sending)
+        conversation.leave()
+    }
+
+    func testSendClearsOnlyThePicturesItCarried() async {
+        let (first, second, newer) = (testJPEG(1), testJPEG(2), testJPEG(3))
+        home.up(loaded())
+        let conversation = conversation()
+        conversation.open(yard: "", with: "yardmaster")
+        conversation.attach(bytes: first, name: "photo 1", yard: "", with: "yardmaster")
+        conversation.attach(bytes: second, name: "photo 2", yard: "", with: "yardmaster")
+        _ = await waitFor("the pictures picked", state: { conversation.state }) { $0.attached.count == 2 }
+        home.holdNextMail = true
+        let sending = Task { await conversation.send() }
+        _ = await waitFor("the mail held", state: { self.home.mailCalls }) { $0 == 1 }
+        // A picture picked while the letter goes is for the next one.
+        await conversation.attach(bytes: newer, name: "photo 3", yard: "", with: "yardmaster")?.task.value
+        home.releaseMail()
+        await sending.value
+        XCTAssertEqual(home.sentFiles, [[MailFile(hash: sha256Hex(first), name: "photo 1.jpg"), MailFile(hash: sha256Hex(second), name: "photo 2.jpg")]])
+        XCTAssertEqual(conversation.state.attached.map(\.bytes), [newer])
+        conversation.leave()
+    }
+
+    /// Whether the picture cache holds a file for `bytes` on disk.
+    private func kept(_ bytes: Data) -> Bool {
+        FileManager.default.fileExists(atPath: picturesDir.appendingPathComponent(sha256Hex(bytes)).path)
     }
 
     // MARK: - Fixtures
@@ -890,6 +1195,48 @@ final class InboxModelTests: XCTestCase {
 
     private func event(_ seq: Int64, _ kind: String, _ actor: String, _ data: [String: JSONValue]) -> Event {
         Event(seq: seq, kind: kind, actor: actor, at: "2026-10-08T11:00:00Z", bead: "", data: data)
+    }
+}
+
+/// A picture's bytes as a JPEG and as a PNG, told apart by the last
+/// byte: a shrink the tests give answers the JPEG of a PNG's last byte, so
+/// a pick's bytes tell which went where.
+private func testJPEG(_ last: UInt8) -> Data {
+    Data([0xFF, 0xD8, 0xFF, 0xE0, last])
+}
+
+private func testPNG(_ last: UInt8) -> Data {
+    Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, last])
+}
+
+/// Holds a shrink until the test lets it go, by the bytes it was given
+/// (one shrink at a time for each): a continuation waits, not a thread, so
+/// ten held shrinks starve nothing. A release before the hold is kept.
+private actor ShrinkGate {
+    private var released: Set<Data> = []
+    private var held: [Data: CheckedContinuation<Void, Never>] = [:]
+    private var holdWaiters: [Data: [CheckedContinuation<Void, Never>]] = [:]
+    private var cancelled: Set<Data> = []
+
+    func hold(_ bytes: Data) async {
+        if released.contains(bytes) { return }
+        await withCheckedContinuation { continuation in
+            held[bytes] = continuation
+            holdWaiters.removeValue(forKey: bytes)?.forEach { $0.resume() }
+        }
+        if Task.isCancelled { cancelled.insert(bytes) }
+    }
+
+    func waitUntilHeld(_ bytes: Data) async {
+        if held[bytes] != nil { return }
+        await withCheckedContinuation { holdWaiters[bytes, default: []].append($0) }
+    }
+
+    func wasCancelled(_ bytes: Data) -> Bool { cancelled.contains(bytes) }
+
+    func release(_ bytes: Data) {
+        released.insert(bytes)
+        held.removeValue(forKey: bytes)?.resume()
     }
 }
 
@@ -952,6 +1299,9 @@ final class FakeFollowed: Followed {
     /// and its answer refused.
     var answerRefuse: ApiError? = nil
     var refuse: ApiError? = nil
+    /// Refused to the mail call alone, so a letter's files are put and
+    /// the letter is refused.
+    var mailRefuse: ApiError? = nil
     /// Refused to the whole-bead call alone, so a board can be read
     /// while a card's details are not.
     var beadRefuse: ApiError? = nil
@@ -1009,6 +1359,7 @@ final class FakeFollowed: Followed {
     func mail(to: String, text: String, files: [MailFile]) async throws {
         mailCalls += 1
         if let refuse { throw refuse }
+        if let mailRefuse { throw mailRefuse }
         if holdNextMail {
             holdNextMail = false
             await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in

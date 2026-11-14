@@ -7,7 +7,9 @@ import XCTest
 // permission asked; the yard switch offers the way out in place of pairing
 // another yard, on the first tap in a place visited for the first time too;
 // the crew's mail, the composer's box (its arrow dim while the field is
-// empty, its plus's menu, a picked picture enabling the arrow on its own),
+// empty, its plus's menu, three pictures picked at once from the library,
+// each with its own cross, enabling the arrow on their own, taken back
+// one by one, and a letter of three sent),
 // a letter sent, a fenced one whose Copy puts its code
 // alone on the pasteboard, the one question answered and
 // the line are walked; and Pair a real yard leaves for the first screen with
@@ -80,27 +82,39 @@ final class DemoScreenTests: XCTestCase {
         attach(app, "Demo composer menu")
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)).tap()
         XCTAssertTrue(waitFor { !photos.exists })
-        // The plus's Photos entry picks a picture through the system's
-        // picker (one choice: a tap on the photo returns it, with no Add
-        // step): the field still empty, the attached row appears and the
-        // arrow stands enabled on the picture alone. Taking the picture
-        // back dims it again, and the flow below stands as before. Run on
-        // a simulator whose library holds a photo (`xcrun simctl addmedia`
-        // seeds one).
-        app.buttons["Attach a picture"].tap()
-        XCTAssertTrue(photos.waitForExistence(timeout: 5))
-        photos.tap()
-        let grid = app.scrollViews["photosView_content_scroll_view"]
-        XCTAssertTrue(grid.waitForExistence(timeout: 10))
-        grid.images.matching(identifier: "PXGGridLayout-Info").firstMatch
-            .coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-        let remove = app.buttons["Remove the picture"]
-        XCTAssertTrue(remove.waitForExistence(timeout: 10), "run on a simulator whose library holds a photo")
+        // The plus's Photos entry picks pictures through the system's
+        // picker, several at once (a tap on a photo selects it, Add returns
+        // the selection): the field still empty, a thumbnail with its own
+        // cross stands for each, and the arrow stands enabled on the
+        // pictures alone. Each is taken back by its cross, the last one
+        // dims the arrow again, and the flow below stands as before. Run on
+        // a simulator whose library holds three photos (`xcrun simctl
+        // addmedia` seeds them).
+        let removes = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Remove photo'"))
+        pickThreePhotos(app, shot: "Demo photo picker with three selected")
+        XCTAssertTrue(removes.firstMatch.waitForExistence(timeout: 10), "run on a simulator whose library holds three photos")
+        XCTAssertTrue(waitFor { removes.count == 3 })
         XCTAssertTrue(send.isEnabled)
-        attach(app, "Demo composer with a picture")
-        remove.tap()
-        XCTAssertTrue(waitFor { !remove.exists })
+        attach(app, "Demo composer with three pictures")
+        removes.element(boundBy: 1).tap()
+        XCTAssertTrue(waitFor { removes.count == 2 })
+        XCTAssertTrue(send.isEnabled)
+        attach(app, "Demo composer with two pictures")
+        removes.element(boundBy: 0).tap()
+        XCTAssertTrue(waitFor { removes.count == 1 })
+        removes.element(boundBy: 0).tap()
+        XCTAssertTrue(waitFor { removes.count == 0 })
         XCTAssertFalse(send.isEnabled)
+        // Three again, sent with words: one letter, its pictures drawn under
+        // its words, the composer emptied.
+        pickThreePhotos(app)
+        XCTAssertTrue(waitFor { removes.count == 3 })
+        field.tap()
+        field.typeText("Three from the library")
+        app.buttons["Send"].tap()
+        XCTAssertTrue(app.staticTexts["Three from the library"].waitForExistence(timeout: 10))
+        XCTAssertTrue(waitFor { removes.count == 0 })
+        attach(app, "Demo conversation with a letter of three pictures")
         field.tap()
         field.typeText("Land it today if it is green")
         XCTAssertTrue(send.isEnabled)
@@ -221,6 +235,27 @@ final class DemoScreenTests: XCTestCase {
     @MainActor
     private func row(_ app: XCUIApplication, _ name: String) -> XCUIElement {
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", name)).firstMatch
+    }
+
+    /// The plus's Photos entry, three photos of the library tapped in the
+    /// picker (it numbers them in the order picked: the third cell first, so
+    /// the row can be read against the library's own order) and Add. `shot`
+    /// names a capture of the picker with its numbers.
+    @MainActor
+    private func pickThreePhotos(_ app: XCUIApplication, shot: String? = nil) {
+        app.buttons["Attach a picture"].tap()
+        let photos = app.descendants(matching: .any)["Photos"]
+        XCTAssertTrue(photos.waitForExistence(timeout: 5))
+        photos.tap()
+        let grid = app.scrollViews["photosView_content_scroll_view"]
+        XCTAssertTrue(grid.waitForExistence(timeout: 10))
+        let cells = grid.images.matching(identifier: "PXGGridLayout-Info")
+        XCTAssertGreaterThanOrEqual(cells.count, 3, "run on a simulator whose library holds three photos")
+        for index in [2, 0, 1] {
+            cells.element(boundBy: index).coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
+        if let shot { attach(app, shot) }
+        app.buttons["Add"].tap()
     }
 
     @MainActor

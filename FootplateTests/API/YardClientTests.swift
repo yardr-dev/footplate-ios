@@ -88,6 +88,17 @@ final class YardClientTests: XCTestCase {
                     files: [MailFile(hash: "497790947d4666760ce38f3c00e852c71fdb66cae849bae8e9ede352719e1581", name: "yard.jpg")]
                 )
             }),
+            // Several pictures in one letter: each file by its hash and name, in
+            // the order given.
+            ("Mail", #"{"to":"yardmaster","text":"","actor":"jo","files":[{"hash":"497790947d4666760ce38f3c00e852c71fdb66cae849bae8e9ede352719e1581","name":"photo 1.jpg"},{"hash":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824","name":"photo 2.jpg"}]}"#, {
+                try await laptop.mail(
+                    to: "yardmaster", text: "", actor: "jo",
+                    files: [
+                        MailFile(hash: "497790947d4666760ce38f3c00e852c71fdb66cae849bae8e9ede352719e1581", name: "photo 1.jpg"),
+                        MailFile(hash: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824", name: "photo 2.jpg"),
+                    ]
+                )
+            }),
             ("MailPeer", #"{"to":"clerk","peer":"north","text":"Is the ledger closed?","actor":"jo"}"#, {
                 try await laptop.mailPeer(to: "clerk", peer: "north", text: "Is the ledger closed?", actor: "jo")
             }),

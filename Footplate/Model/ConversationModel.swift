@@ -43,13 +43,36 @@ struct ShownImage: Equatable, Sendable {
     var missed: Bool = false
 }
 
-/// The picture picked for the letter: the shrunk JPEG and the name
-/// it goes under. `id` tells one pick from the next, so a send
-/// clears only the pick it sent.
+/// A picture picked for the letter: the shrunk JPEG and the name it
+/// goes under. `id` tells one pick from the next: a pick is taken back by
+/// it, and a send clears only the picks it sent.
 struct Attached: Equatable, Sendable {
     var id: UUID = UUID()
     var bytes: Data
     var name: String
+}
+
+/// How many pictures one letter carries from the phone. Each is held,
+/// shrunk to 700 KB at most, until the letter goes, so the bound is what
+/// the phone's memory allows, far under the yard's own (64 files a mail).
+let maxAttached = 10
+
+/// The word under the letters while `count` picked pictures are prepared,
+/// none where none does.
+func attachingWords(_ count: Int) -> String? {
+    switch count {
+    case ...0: return nil
+    case 1: return "Preparing the picture…"
+    default: return "Preparing \(count) pictures…"
+    }
+}
+
+/// One pick of the letter's row: its picture once it is prepared, and its
+/// task while it is being read from Photos or shrunk.
+private struct Pick {
+    var id: UUID
+    var picture: Attached? = nil
+    var task: Task<Void, Never>? = nil
 }
 
 struct ConversationState: Equatable, Sendable {
@@ -72,10 +95,11 @@ struct ConversationState: Equatable, Sendable {
     var writable: Bool = true
     var draft: String = ""
     var sending: Bool = false
-    /// The picture picked for the letter, drawn above the field.
-    var attached: Attached? = nil
-    /// A picked picture is being shrunk.
-    var attaching: Bool = false
+    /// The pictures picked for the letter, in the order they were picked,
+    /// drawn above the field.
+    var attached: [Attached] = []
+    /// How many picked pictures are being prepared.
+    var attaching: Int = 0
     /// Why a page or a letter did not go, under the field.
     var error: String? = nil
     /// The picture opened full, drawn over the conversation.
@@ -155,8 +179,10 @@ final class ConversationModel {
     private var draftRevision: UInt64 = 0
     private(set) var reading: Bool = false
     private(set) var sendError: String? = nil
-    private(set) var attachedPicture: Attached? = nil
-    private(set) var attaching: Bool = false
+    /// The letter's row of pictures, in the order they were picked. A pick
+    /// has its place from the moment it is picked, so a shrink that ends
+    /// before an earlier pick's does not move ahead of it.
+    private var picks: [Pick] = []
     private var fetched: [String: Picture] = [:]
     private var fullHash: String? = nil
     private var sheetBead: BeadRoute? = nil
@@ -166,7 +192,7 @@ final class ConversationModel {
 
     private let mailroom: Mailroom
     private let pictures: Pictures
-    private let shrink: @Sendable (Data) -> Data?
+    private let shrink: @Sendable (Data) async -> Data?
     private let now: @Sendable () -> Date
     private let zone: @Sendable () -> TimeZone
     private var active = false
@@ -184,13 +210,11 @@ final class ConversationModel {
     /// The ids asked about and not yet answered, by yard and id: each is
     /// asked once.
     private var looking: Set<AskedBead> = []
-    private var attachTask: Task<Void, Never>? = nil
-    private var attachToken: UUID? = nil
 
     init(
         mailroom: Mailroom,
         pictures: Pictures? = nil,
-        shrink: @escaping @Sendable (Data) -> Data? = { downscaleForLetter($0) },
+        shrink: @escaping @Sendable (Data) async -> Data? = { downscaleForLetter($0) },
         now: @escaping @Sendable () -> Date = { Date() },
         zone: @escaping @Sendable () -> TimeZone = { .current }
     ) {
@@ -251,8 +275,8 @@ final class ConversationModel {
             knownBeads: knownBeads(board: board, yard: yard, looked: looked),
             draft: draftText,
             sending: sending.contains(ConversationKey(yard: yard, with: with)),
-            attached: attachedPicture,
-            attaching: attaching,
+            attached: picks.compactMap(\.picture),
+            attaching: picks.filter { $0.picture == nil }.count,
             error: sendError,
             full: fullHash.flatMap { hash in letters.flatMap(\.images).first { $0.hash == hash } },
             sheet: sheetBead
@@ -277,10 +301,7 @@ final class ConversationModel {
         readTask = nil
         activeRead = nil
         reading = false
-        attachTask?.cancel()
-        attachTask = nil
-        attachToken = nil
-        attaching = false
+        dropPreparing()
         if !same {
             pageLetters = []
             pageMore = false
@@ -288,7 +309,7 @@ final class ConversationModel {
             draftRevision &+= 1
             draftText = ""
             sendError = nil
-            attachedPicture = nil
+            picks = []
         }
         // What was missed is asked for again; what is here stays.
         fetched = fetched.filter { _, picture in
@@ -318,10 +339,7 @@ final class ConversationModel {
         readTask = nil
         activeRead = nil
         reading = false
-        attachTask?.cancel()
-        attachTask = nil
-        attachToken = nil
-        attaching = false
+        dropPreparing()
         fullHash = nil
         sheetBead = nil
         for task in fetching.values { task.cancel() }
@@ -350,39 +368,107 @@ final class ConversationModel {
         pendingAsk = (ConversationKey(yard: yard, with: with), bead)
     }
 
-    /// The picture picked under `name` is shrunk for the letter,
-    /// off the main thread, and drawn above the field. One picked
-    /// while another shrinks replaces it.
-    func attach(bytes: Data, name: String, yard: String, with: String) {
-        guard active, openedYard == yard, openedWith == with, with != yardRow else { return }
-        attachTask?.cancel()
-        let token = UUID()
-        attachToken = token
-        attaching = true
-        sendError = nil
+    /// The open visit that may accept a picture after Photos has read it.
+    /// A conversation can be left and reopened with the same names while a
+    /// library read is still in flight, so its yard and correspondent alone
+    /// do not identify the visit that launched the read.
+    func attachmentVisit(yard: String, with: String) -> Int? {
+        guard active, openedYard == yard, openedWith == with, with != yardRow else { return nil }
+        return generation
+    }
+
+    /// Bytes already read join the row on the visit that opened the picker
+    /// or camera. A failed read names the picture and takes no place.
+    @discardableResult
+    func attach(bytes: Data?, name: String, yard: String, with: String) -> (id: UUID, task: Task<Void, Never>)? {
+        guard let visit = attachmentVisit(yard: yard, with: with) else { return nil }
+        return attach(bytes: bytes, name: name, yard: yard, with: with, visit: visit)
+    }
+
+    /// Bytes already read join the row on the visit that opened the picker
+    /// or camera. The visit prevents a late answer from an earlier screen
+    /// from joining a later visit to this same conversation.
+    @discardableResult
+    func attach(bytes: Data?, name: String, yard: String, with: String, visit: Int) -> (id: UUID, task: Task<Void, Never>)? {
+        let named = jpegName(name)
+        guard let bytes else {
+            guard isCurrentAttachmentVisit(visit, yard: yard, with: with) else { return nil }
+            sendError = "The phone cannot read \(named)."
+            return nil
+        }
+        return attach(load: { bytes }, name: name, yard: yard, with: with, visit: visit)
+    }
+
+    /// Reserve a row position before an asynchronous Photos read starts.
+    /// Send joins this task, so a slow original cannot be left for the next
+    /// letter merely because its bytes have not reached the model yet.
+    @discardableResult
+    func attach(
+        load: @escaping @MainActor () async -> Data?,
+        name: String,
+        yard: String,
+        with: String,
+        visit: Int
+    ) -> (id: UUID, task: Task<Void, Never>)? {
+        guard isCurrentAttachmentVisit(visit, yard: yard, with: with) else { return nil }
+        guard picks.count < maxAttached else {
+            sendError = "A letter carries at most \(maxAttached) pictures."
+            return nil
+        }
+        let named = jpegName(name)
+        let id = UUID()
         let shrink = self.shrink
-        let screen = (yard, with)
-        attachTask = Task { @MainActor in
-            let shrunk = await Task.detached { shrink(bytes) }.value
-            // A newer pick, or another conversation, meanwhile.
-            guard self.attachToken == token, (self.openedYard, self.openedWith) == screen else { return }
-            if let shrunk {
-                self.attaching = false
-                self.attachedPicture = Attached(bytes: shrunk, name: jpegName(name))
-            } else {
-                self.attaching = false
-                self.sendError = "The phone cannot read that picture."
+        let task = Task { @MainActor [weak self] in
+            guard let bytes = await load() else {
+                self?.landed(nil, id: id, named: named)
+                return
             }
+            guard !Task.isCancelled else { return }
+            let worker = Task.detached { await shrink(bytes) }
+            let shrunk = await withTaskCancellationHandler {
+                await worker.value
+            } onCancel: {
+                worker.cancel()
+            }
+            guard !Task.isCancelled else { return }
+            self?.landed(shrunk, id: id, named: named)
+        }
+        picks.append(Pick(id: id, task: task))
+        return (id, task)
+    }
+
+    private func isCurrentAttachmentVisit(_ visit: Int, yard: String, with: String) -> Bool {
+        active && openedYard == yard && openedWith == with && generation == visit && with != yardRow
+    }
+
+    /// A shrink ended: its picture takes its place in the row, or its pick
+    /// is skipped with words naming it. A pick taken back, or dropped with
+    /// its conversation, has no place any more, and what ended after it
+    /// lands nowhere: whoever holds the pick's place owns it.
+    private func landed(_ shrunk: Data?, id: UUID, named: String) {
+        guard let index = picks.firstIndex(where: { $0.id == id }) else { return }
+        if let shrunk {
+            picks[index].picture = Attached(id: id, bytes: shrunk, name: named)
+            picks[index].task = nil
+        } else {
+            picks.remove(at: index)
+            sendError = "The phone cannot read \(named)."
         }
     }
 
-    /// The picked picture is taken back.
-    func removeAttach() {
-        attachTask?.cancel()
-        attachTask = nil
-        attachToken = nil
-        attaching = false
-        attachedPicture = nil
+    /// Every read or shrink in flight is cancelled and its pick dropped, so
+    /// it never lands; the pictures already prepared stay.
+    private func dropPreparing() {
+        for pick in picks { pick.task?.cancel() }
+        picks.removeAll { $0.picture == nil }
+    }
+
+    /// The picked picture `id` is taken back: a read or shrink in flight is
+    /// cancelled and never lands, a prepared one leaves the row.
+    func removeAttach(id: UUID) {
+        guard let index = picks.firstIndex(where: { $0.id == id }) else { return }
+        picks[index].task?.cancel()
+        picks.remove(at: index)
     }
 
     /// The picture `hash` is opened full, drawn over the
@@ -409,46 +495,59 @@ final class ConversationModel {
         sheetBead = nil
     }
 
-    /// Sends the draft with `Mail`, carrying the picked picture:
-    /// the blob is put first, then the mail names its hash, and
-    /// the bytes are kept so the letter draws the picture at
-    /// once. The letter is shown when its event comes, so it is
-    /// shown once. The text may be empty with a picture; without
-    /// one, the mail goes as before.
+    /// Sends the draft with `Mail`, carrying the picked pictures: each
+    /// blob is put first, in the row's order, then one mail names their
+    /// hashes, and the bytes are kept, once the mail has gone, so the
+    /// letter draws the pictures at once. The letter is shown when its
+    /// event comes, so it is shown once. The text may be empty with
+    /// pictures; without any, the mail goes as before. Pictures still
+    /// being read or shrunk are waited for, and a letter goes only with
+    /// every picture it set out with: one taken back, one that will not
+    /// shrink or a screen left meanwhile stops it, the draft and row as they were.
+    /// Only the pictures sent leave the row: one picked after the send
+    /// began is for the next letter.
     func send() async {
-        guard active, !attaching, let yard = openedYard, let with = openedWith, with != yardRow else { return }
+        guard active, let yard = openedYard, let with = openedWith, with != yardRow else { return }
         let key = ConversationKey(yard: yard, with: with)
         guard !sending.contains(key) else { return }
         let text = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
         let revision = draftRevision
-        let attached = attachedPicture
-        guard !text.isEmpty || attached != nil, let followed = mailroom.followed(yard) else { return }
+        let carried = picks.map(\.id)
+        guard !text.isEmpty || !carried.isEmpty, let followed = mailroom.followed(yard) else { return }
+        let visit = generation
         sending.insert(key)
         defer { sending.remove(key) }
         sendError = nil
+        for task in picks.compactMap(\.task) { await task.value }
+        let attached = carried.compactMap { id in picks.first { $0.id == id }?.picture }
+        guard attached.count == carried.count, visit == generation else { return }
+        let what = switch attached.count {
+        case 0: "The letter did not go"
+        case 1: "The picture did not go"
+        default: "The pictures did not go"
+        }
         do {
-            if let attached {
-                let blob = try await followed.putBlob(attached.bytes)
-                try await followed.mail(to: with, text: text, files: [MailFile(hash: blob.hash, name: attached.name)])
-                await pictures.keep(hash: blob.hash, bytes: attached.bytes)
-            } else {
-                try await followed.mail(to: with, text: text, files: [])
+            var files: [MailFile] = []
+            for picture in attached {
+                let blob = try await followed.putBlob(picture.bytes)
+                files.append(MailFile(hash: blob.hash, name: picture.name))
+            }
+            try await followed.mail(to: with, text: text, files: files)
+            for (picture, file) in zip(attached, files) {
+                await pictures.keep(hash: file.hash, bytes: picture.bytes)
             }
             guard active, openedYard == yard, openedWith == with else { return }
             if draftRevision == revision {
                 draftText = ""
                 draftRevision &+= 1
             }
-            if let attached, attachedPicture?.id == attached.id {
-                attachedPicture = nil
-            }
+            let sent = Set(attached.map(\.id))
+            picks.removeAll { sent.contains($0.id) }
         } catch let error as ApiError {
             guard active, openedYard == yard, openedWith == with, draftRevision == revision else { return }
-            let what = attached == nil ? "The letter did not go" : "The picture did not go"
             sendError = "\(what): \(words(error))"
         } catch {
             guard active, openedYard == yard, openedWith == with, draftRevision == revision else { return }
-            let what = attached == nil ? "The letter did not go" : "The picture did not go"
             sendError = "\(what): \(words(ApiError.down(why: "an unexpected error")))"
         }
     }
