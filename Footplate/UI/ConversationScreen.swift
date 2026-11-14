@@ -41,8 +41,9 @@ struct ConversationScrollTracking: Equatable {
 // with the newest at the foot, the correspondent's the width of the
 // screen on no surface and the person's own in a bubble at the right,
 // each drawn by its Markdown (`MessageText`); its images under its
-// text, opened full on tap; the field and Send, with
-// a picture picked from the gallery or the camera above it.
+// text, opened full on tap; the composer, one box, holding the field
+// with the picture picked for the letter above it and, under them, the
+// plus (a menu: Camera, Photos) and the round arrow that sends.
 // Scrolling to the oldest letter reads the page before it. The
 // yard's notices are drawn the same way, with no field. A chip
 // tapped opens its bead as a sheet over the conversation, with an
@@ -60,7 +61,6 @@ struct ConversationScreen: View {
     /// The preview releases its line observer when it closes; the
     /// Lines place keeps it when Open on the line hands off there.
     var beadSheetDismissed: () -> Void = {}
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var field: String = ""
     @State private var scrollTracking = ConversationScrollTracking()
     @State private var showGallery = false
@@ -162,12 +162,8 @@ struct ConversationScreen: View {
                 }
                 if state.writable {
                     Divider().overlay(ThemeColor.borderSubtle.color)
-                    // The picture picked for the letter, above the
-                    // field, taken back with the cross; while it
-                    // shrinks, the word for it.
-                    if let attached = state.attached {
-                        attachedRow(attached)
-                    }
+                    // While the picked picture shrinks, the word for it;
+                    // the picture itself stands inside the composer's box.
                     if state.attaching {
                         Text("Shrinking the picture…")
                             .themeType(.meta)
@@ -176,61 +172,7 @@ struct ConversationScreen: View {
                             .padding(.horizontal, 20)
                             .padding(.vertical, 4)
                     }
-                    // Attach, the field and Send in one row, or the
-                    // field's row above a full-width Send where the
-                    // text is set to an accessibility size, as the
-                    // bead card stacks its buttons: a fixed-width Send
-                    // cannot hold its label grown that large.
-                    let attach = Menu {
-                        Button("Gallery") { showGallery = true }
-                        if canPhoto {
-                            Button("Camera") { showCamera = true }
-                        }
-                    } label: {
-                        Image(systemName: "paperclip")
-                            .font(.system(size: 18))
-                            .foregroundStyle(ThemeColor.textPrimary.color)
-                            .frame(width: 48, height: 48)
-                    }
-                    .accessibilityLabel("Attach a picture")
-                    let write = TextField("Write back", text: $field, axis: .vertical)
-                        .lineLimit(1...5)
-                        .accessibilityIdentifier("conversation-field")
-                        .themeType(.body)
-                        .padding(.horizontal, 12)
-                        .frame(minHeight: 48)
-                        .background(ThemeColor.surfaceRaised.color, in: RoundedRectangle(cornerRadius: 6))
-                        .overlay { RoundedRectangle(cornerRadius: 6).strokeBorder(ThemeColor.borderStrong.color, lineWidth: 1) }
-                        .onChange(of: field) { _, text in
-                            if text != model.draftText { model.draft(text) }
-                        }
-                        .onChange(of: state.draft) { _, draft in
-                            if draft.isEmpty { field = "" }
-                        }
-                    let send = Button("Send") {
-                        Task { await model.send() }
-                    }
-                    .buttonStyle(FootplateButtonStyle(primary: true))
-                    .disabled((field.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && state.attached == nil) || state.sending || state.attaching)
-                    Group {
-                        if dynamicTypeSize.isAccessibilitySize {
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack(alignment: .center, spacing: 8) {
-                                    attach
-                                    write
-                                }
-                                send
-                            }
-                        } else {
-                            HStack(alignment: .center, spacing: 8) {
-                                attach
-                                write
-                                send.frame(width: 96)
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
+                    composer(state)
                 }
             }
             // The picture opened full, over the conversation: a
@@ -317,6 +259,80 @@ struct ConversationScreen: View {
         Binding(get: { model.state.sheet }, set: { if $0 == nil { model.closeBeadSheet() } })
     }
 
+    /// The composer (footplate-ios-xb4g, as Android's since
+    /// footplate-android-vhzg): one rounded box holding the picked
+    /// picture's row, the field with no border of its own and, under them,
+    /// the icon row: the plus at the left, a menu that adds a picture, and
+    /// the round arrow at the right that sends. The box wears the field's
+    /// old surface and hairline. The arrow is dim by the rule the Send
+    /// button it replaces was disabled by.
+    private func composer(_ state: ConversationState) -> some View {
+        let nothingToSend = (field.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && state.attached == nil) || state.sending || state.attaching
+        let box = RoundedRectangle(cornerRadius: 8)
+        return VStack(alignment: .leading, spacing: 0) {
+            if let attached = state.attached {
+                attachedRow(attached)
+            }
+            TextField("Write back", text: $field, axis: .vertical)
+                .lineLimit(1...5)
+                .accessibilityIdentifier("conversation-field")
+                .themeType(.body)
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .onChange(of: field) { _, text in
+                    if text != model.draftText { model.draft(text) }
+                }
+                .onChange(of: state.draft) { _, draft in
+                    if draft.isEmpty { field = "" }
+                }
+            HStack(spacing: 0) {
+                Menu {
+                    if canPhoto {
+                        Button("Camera") { showCamera = true }
+                    }
+                    Button("Photos") { showGallery = true }
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 20))
+                        .foregroundStyle(ThemeColor.textPrimary.color)
+                        .frame(width: 48, height: 48)
+                }
+                .accessibilityLabel("Attach a picture")
+                Spacer(minLength: 0)
+                Button {
+                    Task { await model.send() }
+                } label: {
+                    sendArrowGlyph(dim: nothingToSend)
+                }
+                .buttonStyle(SendArrowStyle(dim: nothingToSend))
+                .disabled(nothingToSend)
+                .accessibilityLabel("Send")
+            }
+            .padding(.horizontal, 4)
+            .padding(.bottom, 4)
+        }
+        .background(ThemeColor.surfaceRaised.color, in: box)
+        .overlay { box.strokeBorder(ThemeColor.borderStrong.color, lineWidth: 1) }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+
+    /// The two fixed glyph layers avoid reconfiguring a system symbol as
+    /// the arrow changes between its disabled and sendable states.
+    private func sendArrowGlyph(dim: Bool) -> some View {
+        ZStack {
+            Image(systemName: "arrow.up")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(ThemeColor.textDisabled.color)
+                .opacity(dim ? 1 : 0)
+            Image(systemName: "arrow.up")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(ThemeColor.textOnAccent.color)
+                .opacity(dim ? 0 : 1)
+        }
+        .accessibilityHidden(true)
+    }
+
     /// The picture picked for the letter: its thumbnail, its
     /// name, and the cross that takes it back.
     private func attachedRow(_ attached: Attached) -> some View {
@@ -356,9 +372,11 @@ struct ConversationScreen: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Remove the picture")
         }
-        .padding(.leading, 20)
+        // Inside the composer's box: the thumbnail stands on the field's
+        // own inset, and the cross over the arrow's.
+        .padding(.leading, 16)
         .padding(.trailing, 4)
-        .padding(.top, 8)
+        .padding(.top, 12)
     }
 
     /// The person's own letter is a bubble on the right, kept 60 points
@@ -441,6 +459,29 @@ struct ConversationScreen: View {
             }
         }
         .padding(.top, textAbove ? 8 : 0)
+    }
+}
+
+/// The composer's round arrow that sends: the primary button's fill and
+/// its pressed one in a circle of 40 points; `dim` (nothing to send) is a
+/// grey circle, the grey one step past the hover's so that it shows on the
+/// box in the dark too. The glyph is sized and coloured on the label; the
+/// style draws the circle. Its target is 48 points, yardr-design's Phone
+/// size, as every other control here.
+private struct SendArrowStyle: ButtonStyle {
+    var dim: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .frame(width: 40, height: 40)
+            .background(
+                dim
+                    ? ThemeColor.surfacePressed.color
+                    : (configuration.isPressed ? ThemeColor.buttonPrimaryPressed.color : ThemeColor.buttonPrimary.color),
+                in: Circle()
+            )
+            .frame(width: 48, height: 48)
+            .contentShape(Rectangle())
     }
 }
 

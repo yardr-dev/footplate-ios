@@ -6,7 +6,9 @@ import XCTest
 // with no yard sees, Try a demo opens the demo yard under its banner with no
 // permission asked; the yard switch offers the way out in place of pairing
 // another yard, on the first tap in a place visited for the first time too;
-// the crew's mail, a letter sent, a fenced one whose Copy puts its code
+// the crew's mail, the composer's box (its arrow dim while the field is
+// empty, its plus's menu, a picked picture enabling the arrow on its own),
+// a letter sent, a fenced one whose Copy puts its code
 // alone on the pasteboard, the one question answered and
 // the line are walked; and Pair a real yard leaves for the first screen with
 // no place of the tabs left, to enter a demo as new, its question open again,
@@ -65,8 +67,44 @@ final class DemoScreenTests: XCTestCase {
         master.tap()
         let field = app.descendants(matching: .any)["conversation-field"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
+        // The composer is one box: its arrow is dim while the field is
+        // empty, and its plus opens the menu that adds a picture (a
+        // simulator has no camera, so Photos alone).
+        let send = app.buttons["Send"]
+        XCTAssertTrue(send.exists)
+        XCTAssertFalse(send.isEnabled)
+        attach(app, "Demo composer empty")
+        app.buttons["Attach a picture"].tap()
+        let photos = app.descendants(matching: .any)["Photos"]
+        XCTAssertTrue(photos.waitForExistence(timeout: 5))
+        attach(app, "Demo composer menu")
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)).tap()
+        XCTAssertTrue(waitFor { !photos.exists })
+        // The plus's Photos entry picks a picture through the system's
+        // picker (one choice: a tap on the photo returns it, with no Add
+        // step): the field still empty, the attached row appears and the
+        // arrow stands enabled on the picture alone. Taking the picture
+        // back dims it again, and the flow below stands as before. Run on
+        // a simulator whose library holds a photo (`xcrun simctl addmedia`
+        // seeds one).
+        app.buttons["Attach a picture"].tap()
+        XCTAssertTrue(photos.waitForExistence(timeout: 5))
+        photos.tap()
+        let grid = app.scrollViews["photosView_content_scroll_view"]
+        XCTAssertTrue(grid.waitForExistence(timeout: 10))
+        grid.images.matching(identifier: "PXGGridLayout-Info").firstMatch
+            .coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let remove = app.buttons["Remove the picture"]
+        XCTAssertTrue(remove.waitForExistence(timeout: 10), "run on a simulator whose library holds a photo")
+        XCTAssertTrue(send.isEnabled)
+        attach(app, "Demo composer with a picture")
+        remove.tap()
+        XCTAssertTrue(waitFor { !remove.exists })
+        XCTAssertFalse(send.isEnabled)
         field.tap()
         field.typeText("Land it today if it is green")
+        XCTAssertTrue(send.isEnabled)
+        attach(app, "Demo composer with words")
         app.buttons["Send"].tap()
         XCTAssertTrue(app.staticTexts["Land it today if it is green"].waitForExistence(timeout: 10))
         attach(app, "Demo conversation")

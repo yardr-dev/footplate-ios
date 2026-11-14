@@ -5,7 +5,8 @@ import XCTest
 
 // The crew screens rendered in the simulator against fake-followed
 // state (design 3.5, the bead's screenshots): the inbox with unread
-// rows, one conversation, a conversation naming bead ids, a chip's
+// rows, one conversation and its composer (one box) empty, with a
+// picture picked and with words, a conversation naming bead ids, a chip's
 // bead as a sheet over the chat, a conversation with a party of a
 // linked yard, and the yard switch with two yards,
 // one away, at the default text size and at two
@@ -100,6 +101,35 @@ final class CrewScreenshotTests: XCTestCase {
             ConversationScreen(model: conversation, line: line, yard: "", with: "yardmaster"),
             scene: scene, to: dir.appendingPathComponent("conversation.png")
         )
+        // The composer (footplate-ios-xb4g): the field with the plus and
+        // the arrow under it in one box, empty, with a picture picked and
+        // with words, each light and dark. The field reads the model's
+        // draft as its screen appears, so the words stand before a new one.
+        let empty = try await renderWindow(
+            ConversationScreen(model: conversation, line: line, yard: "", with: "yardmaster"),
+            scene: scene, to: dir.appendingPathComponent("composer-empty.png")
+        )
+        try await shootAppearances(of: empty, named: "composer-empty", in: dir)
+        conversation.attach(bytes: shedPNG, name: "shed.png", yard: "", with: "yardmaster")
+        let pickDeadline = ContinuousClock.now + .seconds(10)
+        while conversation.state.attached == nil, ContinuousClock.now <= pickDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(conversation.state.attached?.name, "shed.jpg")
+        // Draw the updated window before changing appearance so the
+        // attached-state image records the settled composer.
+        try snapshot(empty, to: dir.appendingPathComponent("composer-attached.png"))
+        try await shootAppearances(of: empty, named: "composer-attached", in: dir)
+        empty.isHidden = true
+        conversation.removeAttach()
+        conversation.draft("Land it tonight.")
+        let words = try await renderWindow(
+            ConversationScreen(model: conversation, line: line, yard: "", with: "yardmaster"),
+            scene: scene, to: dir.appendingPathComponent("composer-text.png")
+        )
+        try await shootAppearances(of: words, named: "composer-text", in: dir)
+        words.isHidden = true
+        conversation.draft("")
         conversation.leave()
         try await render(YardSwitchView(state: inbox.state), scene: scene, to: dir.appendingPathComponent("switch.png"))
         // The rows at the largest text size and at an accessibility one:
