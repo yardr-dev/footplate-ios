@@ -759,7 +759,7 @@ final class DecisionModelTests: XCTestCase {
             id: "yd-two", title: "Two names",
             asks: [BeadAsk(
                 ask: 71, question: "What are the two names?",
-                secret: Secret(source: "crm", env: ["PROOF_ONE", "PROOF_TWO"], line: "two names at once"),
+                secret: Secret(source: "crm", env: ["PROOF_ONE", "PROOF_TWO"], line: "two names at once", reach: Self.crmReach),
                 weight: [AskWeight(kind: "credential", line: "gives a credential or an address to the yard")]
             )]
         ), ask: 71)
@@ -771,6 +771,7 @@ final class DecisionModelTests: XCTestCase {
         XCTAssertTrue(sealedState.secret)
         XCTAssertFalse(sealedState.secretElsewhere)
         XCTAssertNil(sealedState.elsewhere, "the phone gives them: no command in their place")
+        XCTAssertEqual(sealedState.proposes, ["two names at once"] + Self.crmReach + ["PROOF_ONE, PROOF_TWO"])
 
         // One name blank, nothing is asked and no prompt opens.
         let reasonsBeforeBlank = unlock.reasons.count
@@ -892,6 +893,13 @@ final class DecisionModelTests: XCTestCase {
         await secret.later()
         XCTAssertEqual(calls("DeferAsk").count, 1)
         secret.leave()
+
+        // A yard that sends what the value reaches: the card carries the
+        // reach lines under the yard's line, above the names.
+        fake.nextFor(yard: "laptop", path: "/user/call/Bead", FakeResponse.json(200, #"{"result": {"id": "yd-reach", "title": "The token's reach", "stage": "new", "labels": [], "notes": [], "asks": [{"ask": 19, "to": "jo", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "question": "What is the callback token?", "context": [], "options": [], "state": "open", "secret": {"source": "crm", "env": ["CRM_UPDATE_TOKEN"], "reach": ["lands in: the source's env_file, or sources/crm.env in the yard's home when it has none", "read by: declared calls (yardr call crm ...) and the source's check, from the file at each call", "not reached: thread commands (yardr reply, thread open, thread state), which read the speaker's own file; a crew member's is given with --for-crew", "mint: where the source mints, these names are its inputs; a static token beside them is left as it is, and not used while they are set"], "line": "the token the yard calls back with"}}]}}"#))
+        let reach = await opened("yd-reach", 19)
+        XCTAssertEqual(reach.state.proposes, ["the token the yard calls back with"] + Self.crmReach + ["CRM_UPDATE_TOKEN"])
+        reach.leave()
 
         // An API key asked for at a crew member's login screen: no
         // field, no giving, whatever is sent at it.
@@ -1368,6 +1376,15 @@ final class DecisionModelTests: XCTestCase {
     private static let mapDeclined = #"{"bead": "yd-map", "bead_title": "Who wrote in", "ask": 7, "question": "Who is U024BE7LH on slack?", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "state": "declined", "words": "ask me on Monday", "identity": {"source": "slack", "sender": "U024BE7LH"}, "weight": [{"class": "as-user", "line": "writes who a sender is"}]}"#
     private static let tokenDeclined = #"{"bead": "yd-token", "bead_title": "The callback token", "ask": 18, "question": "What is the callback token?", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "state": "declined", "secret": {"source": "crm", "env": ["CRM_UPDATE_TOKEN"], "line": "the token the yard calls back with"}, "weight": [{"class": "credential", "line": "gives a credential or an address to the yard"}]}"#
     private static let greetDeclined = #"{"bead": "yd-greet", "bead_title": "The greeting", "ask": 5, "question": "What should the tone of the greeting be?", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "state": "declined", "words": "the greeting can wait"}"#
+
+    /// What a source credential's value reaches, in the yard's words (the
+    /// crm lines of docs/api.md at yardr a9100140c).
+    private static let crmReach = [
+        "lands in: the source's env_file, or sources/crm.env in the yard's home when it has none",
+        "read by: declared calls (yardr call crm ...) and the source's check, from the file at each call",
+        "not reached: thread commands (yardr reply, thread open, thread state), which read the speaker's own file; a crew member's is given with --for-crew",
+        "mint: where the source mints, these names are its inputs; a static token beside them is left as it is, and not used while they are set",
+    ]
 }
 
 /// The unlock the tests drive: the gate they set, and the prompt

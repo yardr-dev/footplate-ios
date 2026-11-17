@@ -332,6 +332,12 @@ struct Secret: Equatable, Sendable {
     var env: [String] = []
     /// What is asked for, in the yard's words: shown as it is.
     var line: String = ""
+    /// What the value reaches once it is given, in the yard's short lines:
+    /// where it lands, which reads use it and which do not, shown as they
+    /// are. Absent on a harness key and on a waiting login's input, whose
+    /// line already says where the value goes, and from a yard that sends
+    /// none.
+    var reach: [String] = []
     /// The waiting harness login the value goes to: what its sign-in page
     /// gave. Empty on any other secret.
     var login: String = ""
@@ -845,12 +851,13 @@ extension AskWeight: Codable {
 }
 
 extension Secret: Codable {
-    enum CodingKeys: String, CodingKey { case source, env, line, login, harness, hook, user, crew, `as` }
+    enum CodingKeys: String, CodingKey { case source, env, line, reach, login, harness, hook, user, crew, `as` }
     init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         source = box.string(.source)
         env = box.list(.env, of: String.self)
         line = box.string(.line)
+        reach = box.list(.reach, of: String.self)
         login = box.string(.login)
         harness = box.string(.harness)
         hook = box.string(.hook)

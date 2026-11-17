@@ -1028,7 +1028,8 @@ private func weightOf(board: Board?, bead: String, askNumber: Int64, ask: BeadAs
 
 /// What a card the edge cannot approve proposes, as its lines: the
 /// command whole and what it does, the setup's pack and what it does,
-/// or what a secret is asked for.
+/// or what a secret is asked for, what its value reaches, and the
+/// names the fields below take values for.
 func proposes(_ ask: BeadAsk) -> [String] {
     if let run = ask.run {
         var lines = runHead(run)
@@ -1047,6 +1048,11 @@ func proposes(_ ask: BeadAsk) -> [String] {
     if let secret = ask.secret {
         var lines: [String] = []
         if !secret.line.isEmpty { lines.append(secret.line) }
+        // The reach stands between what is asked and the names the
+        // fields take values for; a card with none (a harness key, a
+        // waiting login, an older yard) is the line and the names, as
+        // it was.
+        lines += secret.reach
         if !secret.env.isEmpty { lines.append(secret.env.joined(separator: ", ")) }
         return lines
     }

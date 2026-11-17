@@ -12,8 +12,8 @@ import XCTest
 // conversation Ask about this opens,
 // a weighty card with its own row shut, a harness login's code card
 // with its sign-in link, an API key's card, a sealed two-name secret
-// card with one field per name, and starter's summary card
-// with the text of one of its files.
+// card with its reach under its line and one field per name, and
+// starter's summary card with the text of one of its files.
 // A pairing card says the door its approval crosses, approving it shows the
 // QR screen of the pairing it opened, and End ends it (yardr-6maq 3.4).
 // Hand-run for the bead note; the gate runs it too, and it only
@@ -182,12 +182,13 @@ final class DecisionScreenshotTests: XCTestCase {
         home.sealed = true
         try await render(
             DecisionScreen(model: decision, yard: "", bead: "yd-two", ask: 71),
-            scene: scene, to: dir.appendingPathComponent("two-names.png")
+            scene: scene, to: dir.appendingPathComponent("two-names.png"), height: 1300
         )
         XCTAssertTrue(decision.state.givable)
         XCTAssertEqual(decision.state.secretNames, ["PROOF_ONE", "PROOF_TWO"])
         XCTAssertFalse(decision.state.codeAsk)
         XCTAssertNil(decision.state.elsewhere)
+        XCTAssertEqual(decision.state.proposes, ["two names at once"] + Self.crmReach + ["PROOF_ONE, PROOF_TWO"])
         decision.leave()
         home.sealed = false
 
@@ -494,6 +495,15 @@ final class DecisionScreenshotTests: XCTestCase {
         return solid
     }
 
+    /// What a source credential's value reaches, in the yard's words (the
+    /// crm lines of docs/api.md at yardr a9100140c).
+    private static let crmReach = [
+        "lands in: the source's env_file, or sources/crm.env in the yard's home when it has none",
+        "read by: declared calls (yardr call crm ...) and the source's check, from the file at each call",
+        "not reached: thread commands (yardr reply, thread open, thread state), which read the speaker's own file; a crew member's is given with --for-crew",
+        "mint: where the source mints, these names are its inputs; a static token beside them is left as it is, and not used while they are set",
+    ]
+
     private func loaded() -> Loaded {
         Loaded(
             me: Me(user: "jo", saidBy: "phone", yard: "south"),
@@ -590,7 +600,7 @@ final class DecisionScreenshotTests: XCTestCase {
                 BeadAsk(
                     ask: 71, question: "What are the two names the source asks for?",
                     context: ["The source check needs both names before it runs."],
-                    secret: Secret(source: "crm", env: ["PROOF_ONE", "PROOF_TWO"], line: "two names at once"),
+                    secret: Secret(source: "crm", env: ["PROOF_ONE", "PROOF_TWO"], line: "two names at once", reach: Self.crmReach),
                     weight: [AskWeight(kind: "credential", line: "gives a credential or an address to the yard")]
                 ),
             ]),
