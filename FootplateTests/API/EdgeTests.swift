@@ -351,6 +351,51 @@ final class EdgeTests: XCTestCase {
         XCTAssertEqual(used, pairingRefused("no_pairing"))
     }
 
+    // The front door reads losslessly: where JSONSerialization strips
+    // one leading U+FEFF of a string value, this keeps every scalar, so
+    // the phone reads what the card's SHA-256 names. Values otherwise
+    // read as they did.
+    func testJsonObjectKeepsEveryScalarAndReadsValuesAsBefore() {
+        let bom = "\u{FEFF}"
+        // A leading BOM survives, nested or not; a second and an inner
+        // one are unchanged.
+        XCTAssertEqual(jsonObject("{\"t\": \"\(bom)# T\"}")?["t"] as? String, "\(bom)# T")
+        XCTAssertEqual((jsonObject("{\"o\": {\"t\": \"\(bom)# T\"}}")?["o"] as? [String: Any])?["t"] as? String, "\(bom)# T")
+        XCTAssertEqual((jsonObject("{\"a\": [\"\(bom)# T\"]}")?["a"] as? [String])?.first, "\(bom)# T")
+        XCTAssertEqual(jsonObject("{\"t\": \"\(bom)\(bom)# T\"}")?["t"] as? String, "\(bom)\(bom)# T")
+        XCTAssertEqual(jsonObject("{\"t\": \"a\(bom)b\"}")?["t"] as? String, "a\(bom)b")
+        // And byte for byte: the raw EF BB BF the terminal keeps.
+        XCTAssertEqual(
+            (jsonObject("{\"t\": \"\(bom)# T\"}")?["t"] as? String).map { Array($0.utf8) },
+            [0xEF, 0xBB, 0xBF, 0x23, 0x20, 0x54]
+        )
+        // Null reads as NSNull, never omitted, nested or not ...
+        XCTAssertTrue(jsonObject("{\"n\": null}")?["n"] is NSNull)
+        XCTAssertTrue((jsonObject("{\"o\": {\"n\": null}}")?["o"] as? [String: Any])?["n"] is NSNull)
+        XCTAssertTrue((jsonObject("{\"a\": [null]}")?["a"] as? [Any])?.first is NSNull)
+        // ... whole numbers whole, fractionals fractional, bools bool.
+        XCTAssertEqual(jsonObject("{\"n\": 151}")?["n"] as? Int, 151)
+        XCTAssertEqual(jsonObject("{\"n\": 9007199254740993}")?["n"] as? Int, 9007199254740993)
+        XCTAssertEqual(jsonObject("{\"n\": 1.5}")?["n"] as? Double, 1.5)
+        XCTAssertEqual(jsonObject("{\"b\": true}")?["b"] as? Bool, true)
+        XCTAssertEqual(jsonObject("{\"b\": false}")?["b"] as? Bool, false)
+        // Duplicate keys read as they did under JSONSerialization: the
+        // first wins. (The bead pinned last-wins, Go's reading, but
+        // both Apple parsers keep the first — verified by running
+        // swift — so parity wins, and the yard's encoder never writes
+        // a key twice.)
+        XCTAssertEqual(jsonObject("{\"r\": 1, \"r\": 2}")?["r"] as? Int, 1)
+        // A document BOM is framing, not a value, and reads as before.
+        XCTAssertEqual(jsonObject("\(bom){\"a\": 1}")?["a"] as? Int, 1)
+    }
+
+    func testJsonObjectNeedsADictOnTop() {
+        for body in ["[1, 2]", "\"s\"", "123", "1.5", "true", "null", "", "not json", "not added\n"] {
+            XCTAssertNil(jsonObject(body), body)
+        }
+        XCTAssertEqual(jsonObject("{}")?.count, 0)
+    }
+
     private var pairingSpentError: ApiError {
         .refused(
             code: "pairing_spent",

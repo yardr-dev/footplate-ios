@@ -708,6 +708,94 @@ final class YardClientTests: XCTestCase {
         XCTAssertEqual(events, [])
         XCTAssertEqual(fake.taken().path, "/user/events?after=151")
     }
+
+    // What a call answers reaches the model byte for byte: a leading
+    // BOM survives the front door and the re-serialize to the typed
+    // decode, whole numbers stay whole, and anything but a dict is no
+    // answer. The byte-exact rows go through the calls, never the
+    // demo's transport, which stays lossy.
+    func testCallsReadTheirAnswersByteForByte() async throws {
+        let f = try fixtures()
+        let bom = "\u{FEFF}"
+        // A leading BOM in a letter's text, nested in the result,
+        // reaches the page; a second and an inner one are unchanged,
+        // and a null reads as its fallback. The more flag beside them
+        // reads false.
+        fake.nextFor(yard: "laptop", path: "/user/call/Conversation", .json(200, """
+            {"result": [
+              {"seq": 13, "text": "\(bom)# T"},
+              {"seq": 14, "text": "\(bom)\(bom)# T"},
+              {"seq": 15, "text": "a\(bom)b"},
+              {"seq": 16, "text": null, "files": null}
+            ], "more": false}
+            """))
+        let page = try await f.laptop.conversation(a: "jo", b: "yardmaster", limit: 30)
+        XCTAssertEqual(page.letters.map(\.text), ["\(bom)# T", "\(bom)\(bom)# T", "a\(bom)b", ""])
+        XCTAssertEqual(Array(page.letters[0].text.utf8.prefix(3)), [0xEF, 0xBB, 0xBF])
+        XCTAssertEqual(page.letters[3].files, [])
+        XCTAssertFalse(page.more)
+        _ = fake.taken()
+        // ... and true where the yard says so.
+        fake.nextFor(yard: "laptop", path: "/user/call/Conversation", .json(200, #"{"result": [], "more": true}"#))
+        let headed = try await f.laptop.conversation(a: "jo", b: "yardmaster", limit: 30)
+        XCTAssertTrue(headed.more)
+        _ = fake.taken()
+        // A bare string result keeps its BOM to the typed decode, in
+        // the bytes the terminal keeps: no call answers a bare string,
+        // so this row drives the chain the calls share — answer, front
+        // door, re-serialize, typed decode — on exact wire bytes.
+        let wire = Data("{\"result\": \"\(bom)# T\"}".utf8)
+        let answer = Answer(status: 200, head: HTTPHead(status: 200, headers: [:]), data: wire)
+        let bytes = try f.laptop.resultData(YardClient.Reply(whole: try XCTUnwrap(jsonObject(answer.body))))
+        XCTAssertEqual(bytes, Data([0x22, 0xEF, 0xBB, 0xBF, 0x23, 0x20, 0x54, 0x22]))
+        XCTAssertEqual(try f.laptop.decode("a string result", String.self, from: bytes), "\(bom)# T")
+        // The int64 edge goes whole through the re-serialize to the
+        // typed Int64, exact past 2^53. (A small int's row stands in
+        // the first test's Head call.)
+        fake.nextFor(yard: "laptop", path: "/user/call/Head", .json(200, #"{"result": 9007199254740993}"#))
+        let edge = try await f.laptop.head()
+        XCTAssertEqual(edge, 9007199254740993)
+        _ = fake.taken()
+        // A fractional re-serializes as it stands: no call answers a
+        // bare fractional, so this row drives the shared chain on
+        // exact wire bytes, as the string row does.
+        let fractional = try f.laptop.resultData(YardClient.Reply(whole: try XCTUnwrap(jsonObject("{\"result\": 1.5}"))))
+        XCTAssertEqual(String(data: fractional, encoding: .utf8), "1.5")
+        XCTAssertEqual(try f.laptop.decode("a fractional", Double.self, from: fractional), 1.5)
+        // A nested null re-serializes as null, never dropped.
+        for (nullWire, expected) in [
+            ("{\"result\": {\"a\": null}}", #"{"a":null}"#),
+            ("{\"result\": [null]}", "[null]"),
+        ] {
+            let chained = try XCTUnwrap(jsonObject(nullWire))
+            XCTAssertEqual(
+                String(data: try f.laptop.resultData(YardClient.Reply(whole: chained)), encoding: .utf8),
+                expected, nullWire
+            )
+        }
+        // A bool through the re-serialize: the crew's login screen,
+        // false where the yard says false. (True stands in the first
+        // test's Crew call.)
+        fake.nextFor(yard: "laptop", path: "/user/call/Crew", .json(200, #"{"result": [{"name": "signalman", "login_screen": false}]}"#))
+        let crew = try await f.laptop.crew()
+        XCTAssertEqual(crew.map(\.loginScreen), [false])
+        _ = fake.taken()
+        // Duplicate keys read as they did: the first wins. (The bead
+        // pinned last-wins, Go's reading, but both Apple parsers keep
+        // the first — verified by running swift — so parity wins, and
+        // the yard's encoder never writes a key twice.)
+        fake.nextFor(yard: "laptop", path: "/user/call/Head", .json(200, #"{"result": 1, "result": 2}"#))
+        let first = try await f.laptop.head()
+        XCTAssertEqual(first, 1)
+        _ = fake.taken()
+        // Anything but a dict is no answer.
+        for top in ["[1, 2]", "\"s\"", "123"] {
+            fake.nextFor(yard: "laptop", path: "/user/call/Head", .json(200, top))
+            let error = await raisedApiError { _ = try await f.laptop.head() }
+            XCTAssertEqual(error, .protocol(what: "Head: status 200, and no JSON object"), top)
+            _ = fake.taken()
+        }
+    }
 }
 
 /// Events read by a collecting task, for the cancellation test.

@@ -62,12 +62,43 @@ func dataFromBase64URL(_ text: String) -> Data? {
     return data
 }
 
+/// A JSON value of any shape, read losslessly: `JSONSerialization`
+/// strips exactly one leading U+FEFF of a string value, where
+/// `JSONDecoder` keeps every scalar, so the front door decodes
+/// through this. The order is `JSONValue`'s: null reads as `NSNull`,
+/// never omitted, and Int before Double keeps whole numbers whole
+/// for `resultData`'s re-serialize to the typed decode.
+private struct AnyDecodable: Decodable {
+    var value: Any
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() {
+            value = NSNull()
+        } else if let bool = try? container.decode(Bool.self) {
+            value = bool
+        } else if let int = try? container.decode(Int.self) {
+            value = int
+        } else if let double = try? container.decode(Double.self) {
+            value = double
+        } else if let string = try? container.decode(String.self) {
+            value = string
+        } else if let array = try? container.decode([AnyDecodable].self) {
+            value = array.map(\.value)
+        } else if let object = try? container.decode([String: AnyDecodable].self) {
+            value = object.mapValues(\.value)
+        } else {
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "a JSON value of no shape")
+        }
+    }
+}
+
 func jsonObject(_ body: String) -> [String: Any]? {
     guard let data = body.data(using: .utf8),
-          let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+          let decoded = try? JSONDecoder().decode([String: AnyDecodable].self, from: data) else {
         return nil
     }
-    return object
+    return decoded.mapValues(\.value)
 }
 
 final class Edge: Sendable {
