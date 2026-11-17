@@ -577,6 +577,84 @@ final class DecisionModelTests: XCTestCase {
         let cut = await opened("yd-pack-cut", 62)
         XCTAssertNil(cut.state.pack)
         XCTAssertEqual(cut.state.proposes, [])
+
+        // The same pack path marks invisible characters in its readings,
+        // while its bodies and hashes stay on the untouched bytes. An
+        // ordinary text keeps exactly the lines it had before.
+        let trojan = "# Trojan\n\nline with override \u{202E}reversed\u{202C} here\nzero\u{200B}width, bell\u{0007} and bom\u{FEFF} here\nfamily: 👩\u{200D}👩\u{200D}👧\n"
+        let direct = PackPart(title: "Text", body: trojan)
+        XCTAssertEqual(direct.body, trojan, "the body stays untouched")
+        XCTAssertEqual(
+            direct.lines.flatMap(\.spans).filter(\.mark).map(\.text),
+            ["U+202E", "U+202C", "U+200B", "U+0007", "U+FEFF", "U+200D", "U+200D"]
+        )
+        // A leading BOM marks at the model's own layer. The wire below
+        // cannot carry one: JSONSerialization.jsonObject strips a string
+        // value's first U+FEFF before the model sees it (footplate-ios-6e0w).
+        XCTAssertEqual(PackPart(title: "Text", body: "\u{FEFF}abc\n").lines[0].text, "U+FEFFabc")
+
+        // An ordinary text: the same lines as today, all plain.
+        let ordinaryFile = PackCards.files[0]
+        let plain = PackPart(title: "Text", body: ordinaryFile.text).lines
+        XCTAssertEqual(plain.map(\.text), ordinaryFile.lines.map(String.init))
+        XCTAssertTrue(plain.flatMap(\.spans).allSatisfy { !$0.mark })
+        // A tab is visible spacing, kept literal; a lone CR is line
+        // structure, never a mark; a literal U+XXXX stays plain.
+        let tabbed = PackPart(title: "Text", body: "a\tb\n").lines
+        XCTAssertEqual(tabbed.map(\.text), ["a\tb"])
+        XCTAssertTrue(tabbed.flatMap(\.spans).allSatisfy { !$0.mark })
+        XCTAssertEqual(PackPart(title: "Text", body: "a\rb\n").lines.map(\.text), ["a", "b"])
+        let literal = PackPart(title: "Text", body: "see U+202E here\n").lines[0]
+        XCTAssertEqual(literal.text, "see U+202E here")
+        XCTAssertTrue(literal.spans.allSatisfy { !$0.mark }, "a literal code point draws as its neighbours do")
+
+        // End to end: a create's text and a change's diff and new text, a
+        // Trojan name and a Trojan command-file program, as the yard sends
+        // them.
+        let changeName = "roles/evil\u{202E}note.md"
+        let changeNew = "new \u{202E}X\u{202C} here\n"
+        let changeDiff = "--- \(changeName)\n+++ \(changeName)\n@@ -1 +1 @@\n-old\n+new \u{202E}X\u{202C} here\n"
+        fake.nextFor(yard: "laptop", path: "/user/call/Bead", FakeResponse.json(200, PackCards.bead(
+            "yd-trojan",
+            files: [
+                PackCards.File(name: "roles/trojan.md", text: trojan),
+                PackCards.File(name: changeName, text: changeNew, action: "change", diff: changeDiff, oldSHA: PackCards.sha256("old\n")),
+            ],
+            sources: [(name: "wired", text: "name: wired\nbase: https://wired.example.com/v1\n", file: "wired/limi\u{200B}ts")]
+        )))
+        let trojanCard = await opened("yd-trojan", 61)
+        let trojanPack = try XCTUnwrap(trojanCard.state.pack)
+        XCTAssertEqual(trojanPack.opens.count, 2)
+
+        let createEntry = try XCTUnwrap(trojanPack.opens.values.first { $0.name == "roles/trojan.md" })
+        trojanCard.openText(createEntry)
+        let created = try XCTUnwrap(trojanCard.state.pack?.text)
+        XCTAssertEqual(created.parts.map(\.title), ["Text"])
+        XCTAssertEqual(created.parts[0].body, trojan)
+        XCTAssertEqual(created.hashes, PackHashes(old: "", new: PackCards.sha256(trojan)))
+        XCTAssertEqual(
+            created.parts[0].lines.flatMap(\.spans).filter(\.mark).map(\.text),
+            ["U+202E", "U+202C", "U+200B", "U+0007", "U+FEFF", "U+200D", "U+200D"]
+        )
+
+        let (_, trojanChanged) = try XCTUnwrap(trojanPack.opens.first { $0.value.name == changeName })
+        trojanCard.openText(trojanChanged)
+        let trojanDiff = try XCTUnwrap(trojanCard.state.pack?.text)
+        XCTAssertEqual(trojanDiff.entry.name, changeName, "the entry keeps the raw name it opens by")
+        XCTAssertEqual(markedReading(of: changeName), "roles/evilU+202Enote.md")
+        XCTAssertEqual(trojanDiff.parts.map(\.title), ["Diff", "New text"])
+        XCTAssertEqual(trojanDiff.parts[0].lines.map(\.quiet), [true, true, true, false, false])
+        XCTAssertTrue(trojanDiff.parts[0].lines[0].text.contains("U+202E"), "the Trojan name marks in the quiet header")
+        XCTAssertTrue(trojanDiff.parts[0].lines[4].text.contains("U+202E") && trojanDiff.parts[0].lines[4].text.contains("U+202C"))
+        XCTAssertEqual(trojanDiff.parts[1].body, changeNew)
+        XCTAssertTrue(trojanDiff.parts[1].lines[0].text.contains("U+202E") && trojanDiff.parts[1].lines[0].text.contains("U+202C"))
+
+        let sourceEntry = try XCTUnwrap(trojanCard.state.pack?.more.first { $0.name == "wired" })
+        trojanCard.openText(sourceEntry)
+        let trojanSource = try XCTUnwrap(trojanCard.state.pack?.text)
+        XCTAssertEqual(trojanSource.parts.map(\.title), ["Declaration", "Command file wired/limi\u{200B}ts"])
+        XCTAssertTrue(markedSpans(of: trojanSource.parts[1].title).contains(MarkedSpan(text: "U+200B", mark: true)))
+        trojanCard.leave()
     }
 
     func testASetupAskIsApprovedWithItsPresetBehindTheUnlock() async {

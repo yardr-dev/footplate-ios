@@ -225,9 +225,8 @@ struct DecisionScreen: View {
             ForEach(more, id: \.self) { entry in
                 textRow(entry) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(entry.kind == .source ? "source \(entry.name)" : entry.name)
+                        markedText(markedSpans(of: entry.kind == .source ? "source \(entry.name)" : entry.name), base: .textPrimary)
                             .themeType(.code)
-                            .foregroundStyle(ThemeColor.textPrimary.color)
                         Text(entry.action)
                             .themeType(.meta)
                             .foregroundStyle(ThemeColor.textSecondary.color)
@@ -583,9 +582,14 @@ struct PackTextScreen: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .foregroundStyle(ThemeColor.textPrimary.color)
             .background(ThemeColor.surfaceApp.color.ignoresSafeArea())
-            .navigationTitle(String(text.entry.name.split(separator: "/").last ?? ""))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    markedText(markedSpans(of: String(text.entry.name.split(separator: "/").last ?? "")), base: .textPrimary)
+                        .font(.headline)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                         .accessibilityIdentifier("text-done")
@@ -597,9 +601,8 @@ struct PackTextScreen: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(text.entry.name)
+            markedText(markedSpans(of: text.entry.name), base: .textPrimary)
                 .themeType(.title)
-                .foregroundStyle(ThemeColor.textPrimary.color)
                 .textSelection(.enabled)
                 .accessibilityAddTraits(.isHeader)
             Text(text.entry.kind == .source ? "source, \(text.entry.action)" : text.entry.action)
@@ -649,9 +652,8 @@ struct PackTextScreen: View {
     private func row(_ row: Row) -> some View {
         switch row {
         case .title(let title):
-            Text(title)
+            markedText(markedSpans(of: title), base: .textPrimary)
                 .themeType(.section)
-                .foregroundStyle(ThemeColor.textPrimary.color)
                 .accessibilityAddTraits(.isHeader)
                 .padding(.top, 24)
                 .padding(.bottom, 4)
@@ -660,9 +662,8 @@ struct PackTextScreen: View {
                 .padding(.bottom, 8)
         case .line(let line):
             // An empty line has no height: a space keeps the gap.
-            Text(line.text.isEmpty ? " " : line.text)
+            lineText(line)
                 .themeType(.code)
-                .foregroundStyle(line.quiet ? ThemeColor.textSecondary.color : ThemeColor.textPrimary.color)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
         case .empty:
@@ -670,5 +671,23 @@ struct PackTextScreen: View {
                 .themeType(.meta)
                 .foregroundStyle(ThemeColor.textSecondary.color)
         }
+    }
+
+    /// One marked line drawn: plain spans in the line's own colour, each
+    /// `U+XXXX` mark in the accent. The string is the marked reading, so a
+    /// copy carries the marks.
+    private func lineText(_ line: PackLine) -> Text {
+        if line.text.isEmpty {
+            return Text(" ").foregroundStyle((line.quiet ? ThemeColor.textSecondary : ThemeColor.textPrimary).color)
+        }
+        return markedText(line.spans, base: line.quiet ? .textSecondary : .textPrimary)
+    }
+}
+
+/// Marked spans drawn: plain spans in `base`, each `U+XXXX` mark in the
+/// accent.
+func markedText(_ spans: [MarkedSpan], base: ThemeColor) -> Text {
+    spans.reduce(Text("")) { acc, span in
+        acc + Text(span.text).foregroundStyle((span.mark ? ThemeColor.textAccent : base).color)
     }
 }

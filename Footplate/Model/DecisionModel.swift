@@ -103,27 +103,99 @@ struct PackPart: Equatable, Sendable {
     var sha256: String = ""
 }
 
+/// One span of a marked line: plain text, or a `U+XXXX` mark standing for
+/// one invisible character the file holds. A literal `U+XXXX` the file
+/// holds is plain, so it draws as its neighbours do and only a true mark
+/// takes the accent.
+struct MarkedSpan: Equatable, Sendable {
+    var text: String
+    var mark: Bool = false
+}
+
+/// Whether the scalar shows as a `U+XXXX` mark in a summary card's file
+/// texts: Go's Bidi_Control, every Cc but the tab, the line and paragraph
+/// separators, and the zero-width characters. The tab stays literal: it is
+/// visible spacing, as the yard's Letters keeps it. The split swallows
+/// 000A/000B/000C/000D/0085 and 2028/2029 before they reach a line, so in a
+/// line they show as structure; in a name, which has no split, they mark.
+func isMarkedScalar(_ scalar: Unicode.Scalar) -> Bool {
+    let v = scalar.value
+    switch v {
+    case 0x061C, 0x200E, 0x200F,
+        0x202A, 0x202B, 0x202C, 0x202D, 0x202E,
+        0x2066, 0x2067, 0x2068, 0x2069,
+        0x2028, 0x2029,
+        0x200B, 0x200C, 0x200D, 0xFEFF:
+        return true
+    case 0x0000...0x001F, 0x007F...0x009F:
+        return v != 0x0009
+    default:
+        return false
+    }
+}
+
+/// The marked reading of `raw`: each marked scalar as its uppercase
+/// `U+XXXX`, every other scalar as it stands. Plain neighbours join one
+/// span; each mark is its own, so the UI colors exactly the marks.
+func markedSpans(of raw: String) -> [MarkedSpan] {
+    var spans: [MarkedSpan] = []
+    var plain = ""
+    for scalar in raw.unicodeScalars {
+        if isMarkedScalar(scalar) {
+            if !plain.isEmpty {
+                spans.append(MarkedSpan(text: plain))
+                plain = ""
+            }
+            spans.append(MarkedSpan(text: String(format: "U+%04X", scalar.value), mark: true))
+        } else {
+            plain.unicodeScalars.append(scalar)
+        }
+    }
+    if !plain.isEmpty || spans.isEmpty {
+        spans.append(MarkedSpan(text: plain))
+    }
+    return spans
+}
+
+/// The marked reading of `raw` joined: for the nav title, which takes no
+/// accent.
+func markedReading(of raw: String) -> String {
+    markedSpans(of: raw).map(\.text).joined()
+}
+
 /// One line of a part's body, and whether it is quiet: a diff's header,
 /// the file names and the hunk markers, drawn quieter than the lines it
-/// frames.
+/// frames. The text is the marked reading, marks included: what is drawn
+/// and copied.
 struct PackLine: Equatable, Sendable {
-    var text: String
+    var spans: [MarkedSpan]
     var quiet: Bool = false
+    var text: String { spans.map(\.text).joined() }
+    init(text: String, quiet: Bool = false) {
+        self.spans = [MarkedSpan(text: text)]
+        self.quiet = quiet
+    }
+    init(spans: [MarkedSpan], quiet: Bool = false) {
+        self.spans = spans.isEmpty ? [MarkedSpan(text: "")] : spans
+        self.quiet = quiet
+    }
 }
 
 extension PackPart {
     /// The body as its lines. The newline that ends the last one is not a
     /// line of its own. In a diff, what comes before the first hunk and
     /// each hunk's marker are quiet; the lines of a hunk are not, whatever
-    /// they begin with.
+    /// they begin with. Each line is the marked reading of its raw: the
+    /// body stays untouched, and an ordinary text reads exactly as before.
     var lines: [PackLine] {
         var split = body.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).map(String.init)
         if split.last?.isEmpty == true { split.removeLast() }
         var inHunk = false
-        return split.map { line in
-            guard diff else { return PackLine(text: line) }
-            if line.hasPrefix("@@") { inHunk = true }
-            return PackLine(text: line, quiet: !inHunk || line.hasPrefix("@@"))
+        return split.map { raw in
+            let spans = markedSpans(of: raw)
+            guard diff else { return PackLine(spans: spans) }
+            if raw.hasPrefix("@@") { inHunk = true }
+            return PackLine(spans: spans, quiet: !inHunk || raw.hasPrefix("@@"))
         }
     }
 }

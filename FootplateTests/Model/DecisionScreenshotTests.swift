@@ -52,7 +52,7 @@ final class DecisionScreenshotTests: XCTestCase {
         // the test.
         let png = timetablePNG()
         home.blobs[sha256Hex(png)] = png
-        home.beads = beads(carrying: png).merging(["yd-pack": try packBead(), "yd-bars": barsChange()]) { $1 }
+        home.beads = beads(carrying: png).merging(["yd-pack": try packBead(), "yd-bars": barsChange(), "yd-trojan": trojanBead()]) { $1 }
         let picturesDir = FileManager.default.temporaryDirectory.appendingPathComponent("note-pictures-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: picturesDir) }
         let notePictures = NotePictures(pictures: Pictures(directory: picturesDir))
@@ -217,6 +217,24 @@ final class DecisionScreenshotTests: XCTestCase {
         )
         XCTAssertGreaterThan(solid, 0.5, "the second part's lines were not drawn")
         decision.leave()
+
+        // A Trojan text: the name and the lines show their U+XXXX marks in
+        // the accent, over the untouched body.
+        let trojanEntry = PackEntry(kind: .file, name: trojanBeadName, action: "create")
+        try await renderSheet(
+            DecisionScreen(model: decision, yard: "", bead: "yd-trojan", ask: 64), of: decision,
+            opening: trojanEntry,
+            scene: scene, to: dir.appendingPathComponent("pack-trojan.png")
+        )
+        decision.openText(trojanEntry)
+        let trojanText = try XCTUnwrap(decision.state.pack?.text)
+        XCTAssertEqual(trojanText.parts[0].body, trojanBeadText)
+        XCTAssertEqual(
+            trojanText.parts[0].lines.flatMap(\.spans).filter(\.mark).map(\.text),
+            ["U+202E", "U+202C", "U+200B", "U+0007"]
+        )
+        decision.closeText()
+        decision.leave()
     }
 
     // The pairing card before its approval, with the door its approval
@@ -377,6 +395,32 @@ final class DecisionScreenshotTests: XCTestCase {
             )
         )
         return Bead(id: "yd-bars", asks: [BeadAsk(ask: 63, question: "Update the starter pack in depot yard?", run: run)])
+    }
+
+    /// A summary card whose one file is a Trojan: its name hides an
+    /// override, its text an override, a zero-width space and a bell.
+    private var trojanBeadName: String { "roles/trojan\u{202E}note.md" }
+    private var trojanBeadText: String {
+        "# Trojan file\n\nThis line hides an override: \u{202E}evil\u{202C} here.\nZero\u{200B}width and a bell\u{0007} here.\n"
+    }
+
+    private func trojanBead() -> Bead {
+        let text = trojanBeadText
+        let run = Run(
+            argv: ["pack", "apply", "starter", "--depot", "yard"], command: "yardr pack apply starter --depot yard",
+            does: [
+                "pack starter (\(PackCards.label)), of kind git, into depot yard: 1 to create, 0 to change, digest sha256:\(PackCards.digest).",
+                "file \(trojanBeadName): create, sha256 (none) -> sha256 \(PackCards.sha256(text)), \(text.utf8.count) bytes (4 insertions, 0 deletions).",
+            ],
+            pack: RunPack(
+                name: "starter", depot: "yard", summary: true, files: [PackFile(name: trojanBeadName, line: 1)],
+                plan: PackPlan(objects: [PlanObject(
+                    kind: "file", name: trojanBeadName, action: "create",
+                    newSHA256: PackCards.sha256(text), text: text
+                )])
+            )
+        )
+        return Bead(id: "yd-trojan", asks: [BeadAsk(ask: 64, question: "Install the starter pack in depot yard?", run: run)])
     }
 
     /// starter's summary card as the yard sends it, read as the client does.
