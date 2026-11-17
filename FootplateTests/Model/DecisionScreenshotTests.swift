@@ -11,7 +11,8 @@ import XCTest
 // of them carrying a picture, the other bead expanded the same, the
 // conversation Ask about this opens,
 // a weighty card with its own row shut, a harness login's code card
-// with its sign-in link, an API key's card, and starter's summary card
+// with its sign-in link, an API key's card, a sealed two-name secret
+// card with one field per name, and starter's summary card
 // with the text of one of its files.
 // A pairing card says the door its approval crosses, approving it shows the
 // QR screen of the pairing it opened, and End ends it (yardr-6maq 3.4).
@@ -166,14 +167,29 @@ final class DecisionScreenshotTests: XCTestCase {
             DecisionScreen(model: decision, yard: "", bead: "yd-login", ask: 34),
             scene: scene, to: dir.appendingPathComponent("login.png")
         )
-        XCTAssertTrue(decision.state.givesCode)
+        XCTAssertTrue(decision.state.givable)
+        XCTAssertEqual(decision.state.secretNames, ["INPUT"])
+        XCTAssertTrue(decision.state.codeAsk)
         decision.leave()
         try await render(
             DecisionScreen(model: decision, yard: "", bead: "yd-key", ask: 22),
             scene: scene, to: dir.appendingPathComponent("key.png")
         )
-        XCTAssertFalse(decision.state.givesCode)
+        XCTAssertFalse(decision.state.givable, "plain: an API key keeps its command")
         decision.leave()
+        // The same yard reached sealed: a two-name secret offers one
+        // field per name, each headed by its name.
+        home.sealed = true
+        try await render(
+            DecisionScreen(model: decision, yard: "", bead: "yd-two", ask: 71),
+            scene: scene, to: dir.appendingPathComponent("two-names.png")
+        )
+        XCTAssertTrue(decision.state.givable)
+        XCTAssertEqual(decision.state.secretNames, ["PROOF_ONE", "PROOF_TWO"])
+        XCTAssertFalse(decision.state.codeAsk)
+        XCTAssertNil(decision.state.elsewhere)
+        decision.leave()
+        home.sealed = false
 
         // Starter's summary card on a tall screen, as tall as a window can
         // be at 3x (a view past 8192 px comes out blank), then the sheet its
@@ -568,6 +584,14 @@ final class DecisionScreenshotTests: XCTestCase {
                         harness: "claude", crew: "yardmaster"
                     ),
                     weight: [AskWeight(kind: "credential", line: "ANTHROPIC_API_KEY, the API key Claude Code runs with, asked for crew member yardmaster")]
+                ),
+            ]),
+            "yd-two": Bead(id: "yd-two", title: "Two names", stage: "new", asks: [
+                BeadAsk(
+                    ask: 71, question: "What are the two names the source asks for?",
+                    context: ["The source check needs both names before it runs."],
+                    secret: Secret(source: "crm", env: ["PROOF_ONE", "PROOF_TWO"], line: "two names at once"),
+                    weight: [AskWeight(kind: "credential", line: "gives a credential or an address to the yard")]
                 ),
             ]),
             "yd-map": Bead(id: "yd-map", title: "Who wrote in", stage: "new", asks: [

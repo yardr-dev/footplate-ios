@@ -278,10 +278,13 @@ final class YardClientTests: XCTestCase {
             ("ApproveSetup", #"{"bead":"yd-courier","ask":44,"option":1,"actor":"jo","weighed":true}"#, {
                 try await laptop.approveSetup(bead: "yd-courier", ask: 44, option: 1, actor: "jo", weighed: true)
             }),
-            // The one value the phone sends: a login's one-time code under
-            // the name the ask asks for, with weighed where it is true.
+            // The phone sends each value under the name the ask asks for,
+            // with weighed where it is true.
             ("GiveSecret", #"{"bead":"yd-login","ask":34,"values":{"INPUT":"the-code"},"actor":"jo","weighed":true}"#, {
                 try await laptop.giveSecret(bead: "yd-login", ask: 34, values: ["INPUT": "the-code"], actor: "jo", weighed: true)
+            }),
+            ("GiveSecret", #"{"bead":"yd-two","ask":71,"values":{"PROOF_ONE":"synthetic-id","PROOF_TWO":"synthetic-secret"},"actor":"jo","weighed":true}"#, {
+                try await laptop.giveSecret(bead: "yd-two", ask: 71, values: ["PROOF_ONE": "synthetic-id", "PROOF_TWO": "synthetic-secret"], actor: "jo", weighed: true)
             }),
             ("GiveSecret", #"{"bead":"yd-login","ask":34,"values":{"INPUT":"the-code"},"actor":"jo"}"#, {
                 try await laptop.giveSecret(bead: "yd-login", ask: 34, values: ["INPUT": "the-code"], actor: "jo")

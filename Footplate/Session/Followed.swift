@@ -73,9 +73,10 @@ protocol Followed: AnyObject {
     /// `weighed` after a passed gate.
     func approveSetup(bead: String, ask: Int64, option: Int64, weighed: Bool) async throws
 
-    /// Gives a harness login's one-time code, the one secret the edge
-    /// carries: each name of the ask's `secret.env` to what was typed,
-    /// with `weighed` after a passed gate.
+    /// Gives the secrets of a card the phone offers, each name of the
+    /// ask's `secret.env` to what was typed, with `weighed` after a
+    /// passed gate: the login's code anywhere, any other where the yard
+    /// is reached sealed.
     func give(bead: String, ask: Int64, values: [String: String], weighed: Bool) async throws
 
     /// Later: the ask is put aside.

@@ -152,13 +152,14 @@ func became(_ ask: DecidedAsk, now: Date, zone: TimeZone) -> String {
 let loginInputName = "INPUT"
 
 /// Whether the card is the daemon's ask for the one-time code a harness's
-/// sign-in page gave: the one secret the yard takes down the edge link
-/// (`AskSecret.OperatorLoginInput` in yardr), a `login` asked for the one
-/// name `INPUT` with no source, hook, harness, user, crew member or `as`
-/// beside it. An API key (`harness`), a source's credential, a hook's
+/// sign-in page gave (`AskSecret.OperatorLoginInput` in yardr), a `login`
+/// asked for the one name `INPUT` with no source, hook, harness, user,
+/// crew member or `as` beside it: the one secret the phone gives on a
+/// plain channel. An API key (`harness`), a source's credential, a hook's
 /// secret, a user's own address or credential and the code of a user's
-/// own login (`as`) are not it: the yard refuses each of them down the
-/// link, after the edge has seen the value, so the phone asks for none.
+/// own login (`as`) are not it: on a plain channel the yard refuses each
+/// of them down the link, after the edge has seen the value, so the phone
+/// asks for none; on a sealed one the phone offers every secret.
 func givesLoginCode(_ secret: Secret?) -> Bool {
     guard let secret else { return false }
     return !secret.login.isEmpty
@@ -171,17 +172,28 @@ func givesLoginCode(_ secret: Secret?) -> Bool {
         && secret.as.isEmpty
 }
 
-/// Whether the card is one the edge cannot answer: a secret ask is
-/// answered on the yard's machine alone, but for a harness login's
-/// one-time code, which is given on the phone behind the unlock. A run or
-/// setup ask is approved on the phone, behind the unlock.
-func answeredElsewhere(_ secret: Secret?) -> Bool {
-    secret != nil && !givesLoginCode(secret)
+/// Whether the card offers its secret's fields on the phone, one per name
+/// of `env`, behind the weighed gate. The login's code is offered wherever
+/// the yard is reached; every other secret only where it is reached sealed,
+/// so the edge carries the typed values unread. A secret that names nothing
+/// has no field to offer.
+func offersSecrets(_ secret: Secret?, sealed: Bool) -> Bool {
+    guard let secret, !secret.env.isEmpty else { return false }
+    return givesLoginCode(secret) || sealed
 }
 
-/// The command that answers a secret card on the yard's machine: a
-/// secret never crosses the edge but a login's one-time code, and is
-/// never typed on the phone otherwise.
+/// Whether the card is one the phone cannot answer: a secret ask is
+/// answered on the yard's machine alone, but for what `offersSecrets`
+/// offers on the phone. A run or setup ask is approved on the phone,
+/// behind the unlock.
+func answeredElsewhere(_ secret: Secret?, sealed: Bool) -> Bool {
+    secret != nil && !offersSecrets(secret, sealed: sealed)
+}
+
+/// The command that answers a secret card the phone does not offer on
+/// the yard's machine: on a plain channel a secret never crosses the
+/// edge but a login's one-time code, and is never typed on the phone
+/// otherwise.
 func secretCommand(bead: String, ask: Int64) -> String {
     "yardr bead answer \(bead) \(ask) --secret"
 }
@@ -216,13 +228,15 @@ func pickCommand(bead: String, ask: Int64, option: Int64) -> String {
 }
 
 /// The command that answers a card on the yard's machine, in place of
-/// Pick, Approve or Give: a secret ask's, or one the yard refused — a
-/// run approval's, a setup approval's with its preset, a pick's with
-/// its option, or a login code's giving. Nil on a card the phone answers
-/// on. The bare `yardr bead answer <bead> <ask>` is never shown: the CLI
-/// refuses it without a mode.
-func elsewhereCommand(bead: String, ask: BeadAsk, chosen: Int64, refused: Bool) -> String? {
-    if answeredElsewhere(ask.secret) {
+/// Pick, Approve or Give: a secret ask the phone does not offer, or one
+/// the yard refused — a run approval's, a setup approval's with its
+/// preset, a pick's with its option, or a secrets giving. Nil on a card
+/// the phone answers on. `sealed` is whether the yard is reached sealed:
+/// a sealed secret is given on the phone until the yard refuses it. The
+/// bare `yardr bead answer <bead> <ask>` is never shown: the CLI refuses
+/// it without a mode.
+func elsewhereCommand(bead: String, ask: BeadAsk, chosen: Int64, refused: Bool, sealed: Bool) -> String? {
+    if answeredElsewhere(ask.secret, sealed: sealed) {
         return secretCommand(bead: bead, ask: ask.ask)
     }
     guard refused else { return nil }

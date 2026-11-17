@@ -6,9 +6,9 @@ import Foundation
 // the prompt. Over the edge a phone approves run and setup asks, always
 // behind the gate, and picks on mapping asks that write a user's
 // identity; any pick on a card whose weight is not empty, a class the
-// phone does not know among them, passes the gate too. So does giving a
-// harness login's one-time code, the one secret the edge carries,
-// always. Where the phone has no screen lock the card asks the ask's
+// phone does not know among them, passes the gate too. So does giving
+// the secrets of a card the phone offers, always. Where the phone has
+// no screen lock the card asks the ask's
 // number typed back instead, and `weighed` goes on a match.
 
 /// How the gate stands in front of a weighty pick on this phone.
@@ -49,10 +49,15 @@ func approveReason(what: String, yard: String) -> String {
     }
 }
 
-/// What the prompt shows for giving the one-time code of a harness
-/// login's sign-in page, and in which yard. Never empty.
-func giveReason(yard: String) -> String {
-    yard.isEmpty ? "give the sign-in code" : "give the sign-in code in \(yard)"
+/// What the prompt shows for giving secrets: what is given (the sign-in
+/// code, the secret or the secrets), and in which yard. Never empty.
+func giveReason(_ what: String, yard: String) -> String {
+    switch (what.isEmpty, yard.isEmpty) {
+    case (true, true): return "give"
+    case (true, false): return "give in \(yard)"
+    case (false, true): return "give \(what)"
+    case (false, false): return "give \(what) in \(yard)"
+    }
 }
 
 /// Whether a pick of `option` (numbered from 1, as the yard numbers it)

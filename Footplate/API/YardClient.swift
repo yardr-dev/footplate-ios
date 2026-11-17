@@ -9,8 +9,9 @@ import Synchronization
 // values and no setup account: `approveAsk` and `approveSetup` carry
 // only the pick and `weighed`, so a yard refusal is what a later bead
 // shows the yard command for; ordinary picks go through `answerAsk`.
-// The one value it sends is a harness login's one-time code, in
-// `giveSecret`.
+// The values it sends are the secrets of a card the phone offers, in
+// `giveSecret`: the login's code anywhere, any other where the yard is
+// reached sealed.
 
 final class YardClient: Sendable {
     private let edge: Edge
@@ -341,15 +342,16 @@ final class YardClient: Sendable {
         _ = try await call(method: "ApproveSetup", args: args)
     }
 
-    /// Gives a secret ask the value it asked for, each name of its
-    /// `secret.env` to what the person typed. The edge link takes it for
-    /// one ask alone, the daemon's for the one-time code a harness's
-    /// sign-in page gave (the yard reads the ask the call names and
-    /// refuses any other secret): the phone sends it for no other.
-    /// The yard hands the value to the waiting login and keeps it
-    /// nowhere, and answers the names given; the value is in no
-    /// description or error of ours either. `weighed` as in
-    /// `answerAsk`: the yard refuses a giving without it.
+    /// Gives a secret ask the values it asked for, each name of its
+    /// `secret.env` to what the person typed. The phone offers the login's
+    /// one-time code anywhere and any other secret where the yard is
+    /// reached sealed, so the edge carries a doomed value nowhere: a plain
+    /// giving of any other secret is refused by the yard, which reads the
+    /// ask the call names. The yard hands a login's code to the waiting
+    /// login and keeps it nowhere, and stores any other as its secret
+    /// under the asked names; what was given is in no description or
+    /// error of ours either. `weighed` as in `answerAsk`: the yard
+    /// refuses a giving without it.
     func giveSecret(bead: String, ask: Int64, values: [String: String], actor: String, weighed: Bool = false) async throws {
         var args: [String: Any] = ["bead": bead, "ask": ask, "values": values, "actor": actor]
         if weighed { args["weighed"] = true }

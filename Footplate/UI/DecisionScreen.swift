@@ -11,11 +11,12 @@ import UIKit
 // Decline, with Ask about this under them while the ask is open. A run or
 // setup ask is approved with Approve behind the unlock. A card the edge
 // cannot approve shows what it proposes and the command that answers
-// it on the yard's machine, with Copy, in place of Pick or Approve. The
-// one secret it can, a harness login's one-time code, takes the code in
-// a field that does not echo and Give behind the unlock; the web
-// addresses in a card's question and context, the sign-in page among
-// them, are links. A depot pack too large to read whole is a summary
+// it on the yard's machine, with Copy, in place of Pick or Approve. A
+// secret it offers takes one field per asked name that does not echo
+// and Give behind the unlock: the login's code anywhere, any other
+// where the yard is reached sealed; the web addresses in a card's
+// question and context, the sign-in page among them, are links. A depot
+// pack too large to read whole is a summary
 // card: its sentences are the first screen, each file's line a row that
 // opens that file's whole text in a sheet over the card, under its name,
 // its action and its SHA-256s. A pairing card says, under its weight,
@@ -127,7 +128,9 @@ struct DecisionScreen: View {
     @State private var wordsField: String = ""
     @State private var typedField: String = ""
     @State private var declineField: String = ""
-    @State private var codeField: String = ""
+    /// What is typed for the card's secrets, by name: the model's call
+    /// takes them as its argument, and they are kept nowhere else.
+    @State private var secretValues: [String: String] = [:]
 
     var body: some View {
         let state = model.state
@@ -157,9 +160,13 @@ struct DecisionScreen: View {
         .toolbar(.hidden, for: .tabBar)
         .onAppear { model.open(yard: yard, bead: bead, ask: ask) }
         .onDisappear { model.leave() }
-        // A code the yard refused is not kept in the field.
-        .onChange(of: state.givesCode) { _, gives in
-            if !gives { codeField = "" }
+        // Secrets the yard refused are not kept in the fields, and none
+        // typed for another card's names is kept for this one.
+        .onChange(of: state.givable) { _, gives in
+            if !gives { secretValues = [:] }
+        }
+        .onChange(of: state.secretNames) { _, names in
+            secretValues = secretValues.filter { names.contains($0.key) }
         }
         // A summary card's text: shut on a swipe down, and gone once the
         // card no longer holds it.
@@ -190,7 +197,7 @@ struct DecisionScreen: View {
         ForEach(Array(state.details.enumerated()), id: \.offset) { _, detail in
             detailsRow(detail)
         }
-        let picking = state.elsewhere == nil && !state.approvable && !state.givesCode && state.done == nil
+        let picking = state.elsewhere == nil && !state.approvable && !state.givable && state.done == nil
         let approving = state.approvable && state.done == nil
         let canChoose = state.unlocking == nil && !state.sending
         if state.approvable {
@@ -240,17 +247,21 @@ struct DecisionScreen: View {
             if let command = state.elsewhere {
                 elsewhere(command, state: state)
             }
-            if state.givesCode {
-                secretField("The code the page gave you", text: $codeField)
+            if state.givable {
+                // One field per asked name, each headed by its name but for
+                // the login's code; none echoes.
+                ForEach(state.secretNames, id: \.self) { name in
+                    secretField(state.codeAsk ? "The code the page gave you" : name, text: secretBinding(name))
+                }
                 if state.typeBack {
                     field("No screen lock: type \(state.ask) back to give", text: $typedField, mono: true) { model.typed($0) }
                 }
-                // Give is a tap alone: the field's return goes to nothing.
+                // Give is a tap alone: the fields' returns go to nothing.
                 Button("Give") {
-                    Task { await model.give(code: codeField) }
+                    Task { await model.give(values: secretValues) }
                 }
                 .buttonStyle(FootplateButtonStyle(primary: true))
-                .disabled(codeField.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || state.sending || state.unlocking != nil)
+                .disabled(!secretsReady(state) || state.sending || state.unlocking != nil)
             }
             if picking {
                 let wordsOnly = state.options.isEmpty
@@ -531,6 +542,17 @@ struct DecisionScreen: View {
             .textInputAutocapitalization(.never)
             .themeType(.body)
             .fieldBox()
+    }
+
+    /// The binding of one secret field, by its name.
+    private func secretBinding(_ name: String) -> Binding<String> {
+        Binding(get: { secretValues[name] ?? "" }, set: { secretValues[name] = $0 })
+    }
+
+    /// Every offered name has something typed.
+    private func secretsReady(_ state: DecisionState) -> Bool {
+        !state.secretNames.isEmpty
+            && state.secretNames.allSatisfy { !(secretValues[$0] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 }
 

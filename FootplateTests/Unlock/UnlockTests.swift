@@ -59,25 +59,35 @@ final class UnlockTests: XCTestCase {
         XCTAssertEqual(approveReason(what: "", yard: "laptop"), "approve in laptop")
         XCTAssertEqual(approveReason(what: "setup of courier", yard: ""), "approve setup of courier")
         XCTAssertEqual(approveReason(what: "", yard: ""), "approve")
-        XCTAssertEqual(giveReason(yard: "laptop"), "give the sign-in code in laptop")
-        XCTAssertEqual(giveReason(yard: ""), "give the sign-in code")
+        XCTAssertEqual(giveReason("the sign-in code", yard: "laptop"), "give the sign-in code in laptop")
+        XCTAssertEqual(giveReason("the sign-in code", yard: ""), "give the sign-in code")
+        XCTAssertEqual(giveReason("the secret", yard: "laptop"), "give the secret in laptop")
+        XCTAssertEqual(giveReason("the secrets", yard: "laptop"), "give the secrets in laptop")
+        XCTAssertEqual(giveReason("", yard: "laptop"), "give in laptop")
+        XCTAssertEqual(giveReason("", yard: ""), "give")
     }
 
-    func testOnlyALoginsOneTimeCodeIsGivenOnThePhone() {
+    func testThePhoneOffersTheLoginsCodeAnywhereAndEverySecretSealed() {
         // The daemon's ask for the code a sign-in page gave: a login
-        // asked for INPUT, and nothing beside it.
+        // asked for INPUT, and nothing beside it. Offered wherever the
+        // yard is reached.
         let code = Secret(env: ["INPUT"], line: "a secret: INPUT, for the waiting login claude-ab12", login: "claude-ab12")
         XCTAssertTrue(givesLoginCode(code))
-        XCTAssertFalse(answeredElsewhere(code), "the phone gives it")
-        // Every other secret is answered on the yard's machine, as the
-        // yard refuses each of them down the link: an API key, a
-        // source's credential, a hook's signing secret, a user's own
-        // address or credential, a crew member's, and the code of a
-        // user's own login.
+        XCTAssertTrue(offersSecrets(code, sealed: false))
+        XCTAssertTrue(offersSecrets(code, sealed: true))
+        XCTAssertFalse(answeredElsewhere(code, sealed: false), "the phone gives it")
+        XCTAssertFalse(answeredElsewhere(code, sealed: true), "the phone gives it")
+        // Every other secret is answered on the yard's machine on a plain
+        // channel, as the yard refuses each of them down the link, and
+        // offered on the phone where the yard is reached sealed: an API
+        // key, a source's credential, a hook's signing secret, a user's own
+        // address or credential, a crew member's, and the code of a user's
+        // own login.
         let others: [(String, Secret)] = [
             ("an API key", Secret(env: ["ANTHROPIC_API_KEY"], harness: "claude", crew: "yardmaster")),
             ("an API key beside a login", Secret(env: ["INPUT"], login: "claude-ab12", harness: "claude")),
             ("a source's credential", Secret(source: "crm", env: ["CRM_UPDATE_TOKEN"])),
+            ("two names at once", Secret(source: "crm", env: ["PROOF_ONE", "PROOF_TWO"])),
             ("a hook's signing secret", Secret(source: "crm", env: ["HOOK_SECRET"], hook: "crm-updates")),
             ("a user's address", Secret(source: "phone", env: ["PHONE_USER"], user: "jo")),
             ("a crew member's credential", Secret(source: "crm", env: ["CRM_TOKEN"], crew: "yardmaster")),
@@ -90,15 +100,30 @@ final class UnlockTests: XCTestCase {
         ]
         for (what, secret) in others {
             XCTAssertFalse(givesLoginCode(secret), what)
-            XCTAssertTrue(answeredElsewhere(secret), what)
+            XCTAssertFalse(offersSecrets(secret, sealed: false), what)
+            XCTAssertTrue(offersSecrets(secret, sealed: true), what)
+            XCTAssertTrue(answeredElsewhere(secret, sealed: false), what)
+            XCTAssertFalse(answeredElsewhere(secret, sealed: true), what)
         }
+        // A secret naming nothing has no field to offer, sealed or not.
+        let nameless = Secret(source: "crm")
+        XCTAssertFalse(offersSecrets(nameless, sealed: true), "no name, no field")
+        XCTAssertTrue(answeredElsewhere(nameless, sealed: true))
         XCTAssertFalse(givesLoginCode(nil))
-        XCTAssertFalse(answeredElsewhere(nil), "an ask that asks for no secret")
+        XCTAssertFalse(offersSecrets(nil, sealed: true))
+        XCTAssertFalse(answeredElsewhere(nil, sealed: false), "an ask that asks for no secret")
+        XCTAssertFalse(answeredElsewhere(nil, sealed: true), "an ask that asks for no secret")
         // A giving the yard refused shows the command that answers it
         // on the yard's machine, as an approval it refused does.
         let ask = BeadAsk(ask: 34, secret: code)
-        XCTAssertNil(elsewhereCommand(bead: "yd-x", ask: ask, chosen: 0, refused: false))
-        XCTAssertEqual(elsewhereCommand(bead: "yd-x", ask: ask, chosen: 0, refused: true), "yardr bead answer yd-x 34 --secret")
+        XCTAssertNil(elsewhereCommand(bead: "yd-x", ask: ask, chosen: 0, refused: false, sealed: false))
+        XCTAssertEqual(elsewhereCommand(bead: "yd-x", ask: ask, chosen: 0, refused: true, sealed: false), "yardr bead answer yd-x 34 --secret")
+        // A sealed secret shows no command until the yard refuses it; a
+        // plain non-code shows it at once.
+        let tokenAsk = BeadAsk(ask: 18, secret: Secret(source: "crm", env: ["CRM_UPDATE_TOKEN"]))
+        XCTAssertEqual(elsewhereCommand(bead: "yd-x", ask: tokenAsk, chosen: 0, refused: false, sealed: false), "yardr bead answer yd-x 18 --secret")
+        XCTAssertNil(elsewhereCommand(bead: "yd-x", ask: tokenAsk, chosen: 0, refused: false, sealed: true))
+        XCTAssertEqual(elsewhereCommand(bead: "yd-x", ask: tokenAsk, chosen: 0, refused: true, sealed: true), "yardr bead answer yd-x 18 --secret")
     }
 
     func testAPhoneWithoutAScreenLockTakesTheNumberTypedBack() {

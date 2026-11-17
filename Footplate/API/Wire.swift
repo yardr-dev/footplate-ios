@@ -324,9 +324,9 @@ struct AskWeight: Equatable, Sendable {
     var line: String = ""
 }
 
-/// What a secret ask asks for. The phone gives one only where the card is
-/// a harness login's one-time code (`givesLoginCode`); every other is
-/// answered on the yard's machine.
+/// What a secret ask asks for. The phone gives what `offersSecrets` offers
+/// on the phone: the login's code anywhere, any other where the yard is
+/// reached sealed; every other secret is answered on the yard's machine.
 struct Secret: Equatable, Sendable {
     var source: String = ""
     var env: [String] = []
