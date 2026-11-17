@@ -21,9 +21,9 @@ import XCTest
 // cancel's restored draft are held by ConversationModelTests over a fake,
 // and on a real phone by footplate-ios-txgy. The gate never runs it.
 final class DictationScreenTests: XCTestCase {
-    private let speechString = "Turn your recorded voice into words on this device"
+    private let speechString = "Turn your recorded voice into words on this device; the recording stays here and goes nowhere — not to Apple."
     private let microphoneString = "Record what you say so the composer can write it down"
-    private let firstLine = "What you say is heard on this device, and the words are written into the field. Nothing goes to the yard until you send it. Footplate opens the microphone only while you record."
+    private let firstLine = "What you say is heard on this device, and the words are written into the field. Nothing goes to the yard until you send it, and nothing goes to Apple — the hearing happens on this device. Footplate opens the microphone only while you record."
 
     /// Both prompts allowed: the line at the first tap, the speech prompt
     /// and then the microphone prompt, each with the app's own words, and

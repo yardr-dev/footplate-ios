@@ -54,14 +54,16 @@ final class DictationTests: XCTestCase {
         XCTAssertFalse(dictationAsks(standing(true, .granted, .denied)))
     }
 
-    /// The first tap's line is the bead's, word for word and with no word
-    /// of one device (the app is for the iPhone and the iPad); each refusal
-    /// names which consent it is; silence says nothing and every other
-    /// failure says something.
+    /// The first tap's line is the bead's, word for word, with no word of one
+    /// device (the app is for the iPhone and the iPad) and with the answer to
+    /// the system's speech prompt, whose own paragraph says the speech data
+    /// is sent to Apple: ours says that nothing is. Each refusal names which
+    /// consent it is; silence says nothing and every other failure says
+    /// something.
     func testTheWordsAreThePinnedOnesAndEachRefusalSaysWhichConsent() {
         XCTAssertEqual(
             dictationLine,
-            "What you say is heard on this device, and the words are written into the field. Nothing goes to the yard until you send it. Footplate opens the microphone only while you record."
+            "What you say is heard on this device, and the words are written into the field. Nothing goes to the yard until you send it, and nothing goes to Apple — the hearing happens on this device. Footplate opens the microphone only while you record."
         )
         for device in ["iPhone", "iPad", "tablet", " phone"] {
             XCTAssertFalse(dictationLine.contains(device), device)
@@ -79,7 +81,10 @@ final class DictationTests: XCTestCase {
     }
 
     /// A missing usage string crashes the app at the prompt: both are in the
-    /// built app, in the bead's words.
+    /// built app, in the bead's words. The speech one is set under the
+    /// system's own paragraph, which says the speech data is sent to Apple
+    /// and is shown for on-device requests too: it answers that paragraph,
+    /// and names no device.
     func testTheBuiltAppCarriesTheTwoUsageStrings() {
         XCTAssertEqual(
             Bundle.main.object(forInfoDictionaryKey: "NSMicrophoneUsageDescription") as? String,
@@ -87,7 +92,7 @@ final class DictationTests: XCTestCase {
         )
         XCTAssertEqual(
             Bundle.main.object(forInfoDictionaryKey: "NSSpeechRecognitionUsageDescription") as? String,
-            "Turn your recorded voice into words on this device"
+            "Turn your recorded voice into words on this device; the recording stays here and goes nowhere — not to Apple."
         )
     }
 

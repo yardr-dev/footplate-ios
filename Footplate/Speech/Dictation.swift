@@ -79,8 +79,11 @@ func dictationAsks(_ standing: DictationStanding) -> Bool {
 
 /// The line beside the composer at a tap that asks for a consent: what is
 /// heard, where it goes, and when the microphone is open. Written for the
-/// iPad as for the iPhone, and pinned by the bead.
-let dictationLine = "What you say is heard on this device, and the words are written into the field. Nothing goes to the yard until you send it. Footplate opens the microphone only while you record."
+/// iPad as for the iPhone, and pinned by the bead. It stands behind the
+/// system's speech prompt, whose own paragraph says the speech data is sent
+/// to Apple (shown for on-device requests too, and not ours to change), so
+/// it says that nothing goes to Apple, as the prompt's usage string does.
+let dictationLine = "What you say is heard on this device, and the words are written into the field. Nothing goes to the yard until you send it, and nothing goes to Apple — the hearing happens on this device. Footplate opens the microphone only while you record."
 
 /// The line for a refused consent, naming which one it is.
 func refusalWords(_ refusal: Refusal) -> String {
