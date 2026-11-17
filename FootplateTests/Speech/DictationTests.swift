@@ -63,7 +63,7 @@ final class DictationTests: XCTestCase {
     func testTheWordsAreThePinnedOnesAndEachRefusalSaysWhichConsent() {
         XCTAssertEqual(
             dictationLine,
-            "What you say is heard on this device, and the words are written into the field. Nothing goes to the yard until you send it, and nothing goes to Apple — the hearing happens on this device. Footplate opens the microphone only while you record."
+            "What you say is heard on this device, and the words are written into the field. Nothing goes to the yard until you send it, and nothing goes to Apple — the hearing happens on this device. footplate opens the microphone only while you record."
         )
         for device in ["iPhone", "iPad", "tablet", " phone"] {
             XCTAssertFalse(dictationLine.contains(device), device)
