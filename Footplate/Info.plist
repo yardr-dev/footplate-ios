@@ -8,6 +8,8 @@
         <string>ibm_plex_mono_regular.ttf</string>
     </array>
     <key>NSCameraUsageDescription</key><string>Scan a yard's pairing code or take a picture to send to its crew</string>
+    <key>NSMicrophoneUsageDescription</key><string>Record what you say so the composer can write it down</string>
+    <key>NSSpeechRecognitionUsageDescription</key><string>Turn your recorded voice into words on this device</string>
     <key>EDGE_URL</key><string>$(EDGE_URL)</string>
     <key>PUSH_APP_GROUP</key><string>$(PUSH_APP_GROUP)</string>
     <key>PUSH_KEYCHAIN_GROUP</key><string>$(PUSH_KEYCHAIN_GROUP)</string>

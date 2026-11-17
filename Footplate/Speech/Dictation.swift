@@ -1,0 +1,207 @@
+import Foundation
+
+// Dictation in the composer (footplate-ios-tedd), as footplate-android's
+// voice/Voice.kt has it for the phone's own recognizer: a tap on the
+// microphone writes what the person says into the field, heard on this
+// device and nowhere else, so that nothing goes to the yard until the
+// letter is sent. The recognizer and the microphone stand behind
+// `Dictation`, as the unlock prompt stands behind `UnlockPrompt`: the gate,
+// the words and the recording's state machine are unit tests on the
+// simulator, whose microphone is the Mac's, which may have none, and which
+// may hold no on-device model; the recognizer's prompts and engine are
+// walked by hand in a simulator (FootplateUITests/DictationScreenTests) and
+// its words checked by hand on an iPhone (footplate-ios-txgy). Where the
+// phone cannot hear its locale on the device there is no microphone, never
+// a server in its place.
+
+/// Where one of the two consents dictation needs stands: speech
+/// recognition and the microphone. Only speech reports a restriction; a
+/// microphone the device does not allow is reported as denied.
+enum Consent: Equatable, Sendable {
+    /// Never asked: the microphone's tap asks.
+    case undecided
+    case granted
+    case denied
+    /// The device does not allow it (a profile, parental controls).
+    case restricted
+}
+
+/// What the phone offers dictation, read at one moment: nothing of it is
+/// kept across a tap, a launch or a model download, for any of it can
+/// change between two reads.
+struct DictationStanding: Equatable, Sendable {
+    /// The recognizer of the system's current locale hears on the device.
+    var onDevice: Bool
+    var speech: Consent
+    var microphone: Consent
+}
+
+/// Which consent a refusal names.
+enum Refusal: Equatable, Sendable {
+    case speechDenied
+    case speechRestricted
+    case microphoneDenied
+}
+
+/// What the composer draws for dictation: the gate.
+enum DictationGate: Equatable, Sendable {
+    /// Nothing: the phone does not hear this locale on the device (no model
+    /// for it, or none installed yet), and says nothing about it.
+    case absent
+    /// The microphone: a tap records, asking first for any consent that is
+    /// not decided.
+    case offered
+    /// No microphone: a line says which consent is refused, with a link to
+    /// Settings.
+    case refused(Refusal)
+}
+
+/// The gate for `standing`. Hearing on the device comes first: where the
+/// phone cannot, a refusal would name a consent that makes no difference.
+/// Speech is named before the microphone, as it is asked before it.
+func dictationGate(_ standing: DictationStanding) -> DictationGate {
+    guard standing.onDevice else { return .absent }
+    switch standing.speech {
+    case .denied: return .refused(.speechDenied)
+    case .restricted: return .refused(.speechRestricted)
+    case .undecided, .granted: break
+    }
+    switch standing.microphone {
+    case .denied, .restricted: return .refused(.microphoneDenied)
+    case .undecided, .granted: return .offered
+    }
+}
+
+/// Whether a tap has a prompt to show: a consent that was never asked.
+func dictationAsks(_ standing: DictationStanding) -> Bool {
+    standing.speech == .undecided || standing.microphone == .undecided
+}
+
+/// The line beside the composer at a tap that asks for a consent: what is
+/// heard, where it goes, and when the microphone is open. Written for the
+/// iPad as for the iPhone, and pinned by the bead.
+let dictationLine = "What you say is heard on this device, and the words are written into the field. Nothing goes to the yard until you send it. Footplate opens the microphone only while you record."
+
+/// The line for a refused consent, naming which one it is.
+func refusalWords(_ refusal: Refusal) -> String {
+    switch refusal {
+    case .speechDenied:
+        return "Speech recognition is off for footplate: allow it in Settings to dictate."
+    case .speechRestricted:
+        return "This device does not allow speech recognition, so dictation stays off."
+    case .microphoneDenied:
+        return "The microphone is off for footplate: allow it in Settings to dictate."
+    }
+}
+
+/// Where a recording stands.
+enum Recording: Equatable, Sendable {
+    /// The tap is asking for a consent, or the microphone is opening: the
+    /// strip stands and its stop waits.
+    case starting
+    /// The microphone is open and the words arrive in the field.
+    case listening
+    /// The stop, or a send, was tapped: the microphone is shut and the
+    /// recognizer settles the words it heard.
+    case finishing
+}
+
+/// Why a recording did not go on, in the few cases that differ for the
+/// person: nothing is said of silence.
+enum DictationFailure: Error, Equatable, Sendable {
+    /// Nothing was heard that the recognizer took for speech.
+    case notHeard
+    /// The microphone would not open (another sound holds it, or there is
+    /// no input to record from).
+    case couldNotStart
+    /// The recognizer cannot hear just now: its model is gone, its service
+    /// is down, or the phone's limit for it is used.
+    case unavailable
+    /// The recognizer stopped for a reason it does not say.
+    case stopped
+
+    /// What is said under the field, none for silence.
+    var words: String? {
+        switch self {
+        case .notHeard: return nil
+        case .couldNotStart: return "The microphone could not start; tap it to try again."
+        case .unavailable: return "Speech recognition is not available just now; try again in a little while."
+        case .stopped: return "Speech recognition stopped; tap the microphone to try again."
+        }
+    }
+}
+
+/// What a recording says, in the order it happens; the stream ends where
+/// the recording does.
+enum DictationEvent: Equatable, Sendable {
+    /// Everything heard since the recording began, whole: each says the
+    /// whole again, with the earlier words revised where the recognizer
+    /// has changed its mind. `final` where the recognizer has settled them
+    /// and will say no more.
+    case words(String, final: Bool)
+    /// How loud the microphone hears, 0 to 1, for the strip's bars.
+    case level(Float)
+    /// The microphone was taken from the recording: a call, another app, a
+    /// route that is gone. What was heard stands.
+    case interrupted
+    /// The recognizer stopped.
+    case failed(DictationFailure)
+}
+
+/// The recognizer and the microphone of the phone.
+@MainActor
+protocol Dictation {
+    /// The phone's standing now, read from the system each time it is
+    /// asked: the locale is the system's current one at this moment, and
+    /// nothing is kept for the next read.
+    func standing() -> DictationStanding
+
+    /// Asks for each consent that is not decided, speech recognition first
+    /// and the microphone after it, and stops at the first refusal. The
+    /// standing after the prompts.
+    func authorize() async -> DictationStanding
+
+    /// Opens the microphone and begins recognising, on a recognizer made
+    /// now for the locale now. Throws where it cannot, the microphone left
+    /// shut. Called only by a tap: nothing is made ready before it.
+    func begin() throws -> any DictationRun
+}
+
+/// One recording, from `begin()` to its end.
+@MainActor
+protocol DictationRun: AnyObject {
+    var events: AsyncStream<DictationEvent> { get }
+
+    /// The microphone is shut now, and the recognizer settles what it heard:
+    /// its final words come on `events`.
+    func finish()
+
+    /// The microphone is shut now and the recognition is dropped, nothing
+    /// more said. Safe after the recording has ended in any way.
+    func cancel()
+}
+
+/// The draft with the words heard after it, a space between the two where
+/// the draft does not end in one. Words with nothing in them add nothing.
+func dictated(_ base: String, _ words: String) -> String {
+    let said = words.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !said.isEmpty else { return base }
+    guard let last = base.last, !last.isWhitespace else { return base + said }
+    return base + " " + said
+}
+
+/// How loud a sound is for the strip's bars, 0 (quiet) to 1: its
+/// root-mean-square amplitude in decibels, 50 dB below full scale and
+/// under being 0.
+func barLevel(rms: Float) -> Float {
+    guard rms > 0 else { return 0 }
+    return min(1, max(0, (20 * log10(rms) + 50) / 50))
+}
+
+/// How many levels the strip keeps: more than it draws on the widest phone.
+let barsKept = 64
+
+/// `levels` with `level` entering at the right, the oldest leaving.
+func entering(_ level: Float, in levels: [Float]) -> [Float] {
+    Array((levels + [level]).suffix(barsKept))
+}

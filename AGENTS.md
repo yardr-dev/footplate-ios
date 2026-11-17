@@ -59,6 +59,9 @@ Under `Footplate/`:
   `ConversationModel` puts each open one under the letter as a preview) stand beside them, and so does `Markdown`,
   which reads a letter's words into the blocks they are drawn as, as the
   desktop's `markdown.rs` does and over Unicode scalars as it does.
+  `ConversationModel` also holds the composer's dictation: the microphone's
+  gate, a recording's state machine and the words it writes into the draft,
+  over the `Speech/` seam.
 - `UI/`: SwiftUI screens (Pair, Sign in, Crew, Decide, Decision,
   Conversation, and the Lines place's Lines, Route map, Bead card and
   Media, the grid of a bead's note pictures with its full-size pager),
@@ -82,6 +85,21 @@ Under `Footplate/`:
   through `Notify`'s rules, and the registrar that keeps the
   relay's rows through the edge; `FootplateTests/Push/` drives
   them against the fake yard.
+- `Speech/`: dictation in the composer, heard on the device and nowhere
+  else: the plain gate, words and event types and the `Dictation` seam
+  the recording is made through (`Dictation.swift`), and the phone's
+  recognizer over it (`SpeechDictation.swift`: `SFSpeechRecognizer` for the
+  system's current locale, every request made by `dictationRequest()` with
+  `requiresOnDeviceRecognition` set, and an `AVAudioEngine` microphone that
+  is open only while a recording stands). Its two usage strings,
+  `NSMicrophoneUsageDescription` and `NSSpeechRecognitionUsageDescription`,
+  are in `Info.plist`, and a missing one crashes the app at its prompt.
+  `FootplateTests/Speech/` holds the fake recognizer and the plain pieces'
+  tests; the recording's state machine is tested in `FootplateTests/Model/`
+  through the fake. The recognizer's own prompts and engine are walked by
+  hand in a simulator (`FootplateUITests/DictationScreenTests`, on a fresh
+  install: a simulator's microphone is the Mac's, which may have none), and
+  its words checked on an iPhone.
 - `Yard/`: the account and per-yard records in the Keychain, the QR
   read, and the pairer (sign-in, pairing, forgetting).
 - `Demo/`: the demo yard behind Try a demo on the Pair screen, for a

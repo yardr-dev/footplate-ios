@@ -44,7 +44,10 @@ struct ConversationScrollTracking: Equatable {
 // text, opened full on tap; the composer, one box, holding the field
 // with the pictures picked for the letter above it, a row of thumbnails
 // each with its own cross, and, under them, the plus (a menu: Camera,
-// Photos) and the round arrow that sends.
+// Photos), the microphone where the phone hears on the device, and the
+// round arrow that sends. A recording puts a strip in the place of the plus
+// and the microphone: a cross that drops it, the sound, and a stop that
+// keeps its words in the field (footplate-ios-tedd).
 // Scrolling to the oldest letter reads the page before it. The
 // yard's notices are drawn the same way, with no field. A chip
 // tapped opens its bead as a sheet over the conversation, with an
@@ -74,6 +77,7 @@ struct ConversationScreen: View {
     @State private var pickerItems: [PhotosPickerItem] = []
     @State private var showCamera = false
     @State private var cameraVisit: Int? = nil
+    @Environment(\.scenePhase) private var scenePhase
 
     private var canPhoto: Bool {
         UIImagePickerController.isSourceTypeAvailable(.camera)
@@ -180,6 +184,11 @@ struct ConversationScreen: View {
                             .padding(.horizontal, 20)
                             .padding(.vertical, 4)
                     }
+                    // What is heard and where it goes, at the first tap; or
+                    // the consent that is refused, with its way to Settings.
+                    if let line = state.dictation.line {
+                        dictationLineView(line, settings: state.dictation.settings)
+                    }
                     composer(state)
                 }
             }
@@ -209,8 +218,23 @@ struct ConversationScreen: View {
             // The model's draft is the field's: one kept across a leave,
             // or one the bead card's Ask started with the bead's id.
             field = model.draftText
+            // The microphone is drawn from what the phone says now, never
+            // from an earlier launch's reading.
+            model.readDictationGate()
         }
         .onDisappear { model.leave() }
+        .onChange(of: scenePhase) { _, phase in
+            switch phase {
+            case .background:
+                model.backgrounded()
+            case .active:
+                // A consent given in Settings, or a model downloaded, while
+                // the app was away.
+                model.readDictationGate()
+            default:
+                break
+            }
+        }
         .photosPicker(isPresented: $showGallery, selection: $pickerItems, maxSelectionCount: maxAttached, selectionBehavior: .ordered, matching: .images)
         .onChange(of: pickerItems) { _, items in
             guard !items.isEmpty else { return }
@@ -279,12 +303,15 @@ struct ConversationScreen: View {
     /// The composer (footplate-ios-xb4g, as Android's since
     /// footplate-android-vhzg): one rounded box holding the picked
     /// pictures' row, the field with no border of its own and, under them,
-    /// the icon row: the plus at the left, a menu that adds a picture, and
-    /// the round arrow at the right that sends. The box wears the field's
-    /// old surface and hairline. The arrow is dim by the rule the Send
-    /// button it replaces was disabled by.
+    /// the icon row: the plus at the left, a menu that adds a picture, the
+    /// microphone beside the round arrow at the right that sends
+    /// (footplate-ios-tedd). While a recording stands the plus and the
+    /// microphone give way to its strip. The box wears the field's old
+    /// surface and hairline. The arrow is dim by the rule the Send button it
+    /// replaces was disabled by, and stays lit while a recording stands, as
+    /// Android's does: a send ends the recording and sends what it heard.
     private func composer(_ state: ConversationState) -> some View {
-        let nothingToSend = (field.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && state.attached.isEmpty) || state.sending || state.attaching > 0
+        let nothingToSend = (field.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && state.attached.isEmpty && state.dictation.recording == nil) || state.sending || state.attaching > 0
         let box = RoundedRectangle(cornerRadius: 8)
         return VStack(alignment: .leading, spacing: 0) {
             if !state.attached.isEmpty {
@@ -302,23 +329,44 @@ struct ConversationScreen: View {
                 .onChange(of: state.draft) { _, draft in
                     if draft.isEmpty { field = "" }
                 }
-            HStack(spacing: 0) {
-                Menu {
-                    if canPhoto {
-                        Button("Camera") {
-                            cameraVisit = model.attachmentVisit(yard: yard, with: with)
-                            showCamera = cameraVisit != nil
-                        }
-                    }
-                    Button("Photos") { showGallery = true }
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 20))
-                        .foregroundStyle(ThemeColor.textPrimary.color)
-                        .frame(width: 48, height: 48)
+                // The words heard are written to the draft by the model, and
+                // the field, which keeps its own text, takes them from it.
+                .onChange(of: state.dictation.written) { _, _ in
+                    field = model.draftText
                 }
-                .accessibilityLabel("Attach a picture")
-                Spacer(minLength: 0)
+            HStack(spacing: 0) {
+                if let recording = state.dictation.recording {
+                    recordingStrip(recording)
+                } else {
+                    Menu {
+                        if canPhoto {
+                            Button("Camera") {
+                                cameraVisit = model.attachmentVisit(yard: yard, with: with)
+                                showCamera = cameraVisit != nil
+                            }
+                        }
+                        Button("Photos") { showGallery = true }
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 20))
+                            .foregroundStyle(ThemeColor.textPrimary.color)
+                            .frame(width: 48, height: 48)
+                    }
+                    .accessibilityLabel("Attach a picture")
+                    Spacer(minLength: 0)
+                    if state.dictation.microphone {
+                        Button {
+                            Task { await model.dictate() }
+                        } label: {
+                            Image(systemName: "mic")
+                                .font(.system(size: 20))
+                                .foregroundStyle(ThemeColor.textPrimary.color)
+                                .frame(width: 48, height: 48)
+                        }
+                        .accessibilityLabel("Dictate")
+                        .accessibilityIdentifier("conversation-dictate")
+                    }
+                }
                 Button {
                     Task { await model.send() }
                 } label: {
@@ -351,6 +399,66 @@ struct ConversationScreen: View {
                 .opacity(dim ? 0 : 1)
         }
         .accessibilityHidden(true)
+    }
+
+    /// What a recording puts in the place of the plus and the microphone, as
+    /// Android's strip does: the cross that drops the recording, the sound
+    /// between, and the stop that keeps its words. The stop waits until the
+    /// microphone is open, and for no second stop after it.
+    private func recordingStrip(_ recording: Recording) -> some View {
+        HStack(spacing: 0) {
+            Button {
+                model.cancelDictation()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 20))
+                    .foregroundStyle(ThemeColor.textPrimary.color)
+                    .frame(width: 48, height: 48)
+            }
+            .accessibilityLabel("Cancel")
+            .accessibilityIdentifier("conversation-dictate-cancel")
+            SoundBars(model: model)
+                .padding(.horizontal, 8)
+                .accessibilityElement()
+                .accessibilityLabel(recording == .listening ? "Listening" : "")
+            Button {
+                Task { await model.stopDictation() }
+            } label: {
+                Image(systemName: "stop.fill")
+                    .font(.system(size: 18))
+                    .foregroundStyle((recording == .listening ? ThemeColor.textPrimary : ThemeColor.textDisabled).color)
+                    .frame(width: 48, height: 48)
+            }
+            .disabled(recording != .listening)
+            .accessibilityLabel("Stop")
+            .accessibilityIdentifier("conversation-dictate-stop")
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    /// The line over the composer for the microphone: the first tap's words,
+    /// or the refusal that hid it, with the link that opens this app's page
+    /// in Settings, where the consent is given back.
+    private func dictationLineView(_ line: String, settings: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(line)
+                .themeType(.meta)
+                .foregroundStyle(ThemeColor.textSecondary.color)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityIdentifier("conversation-dictation-line")
+            if settings, let url = URL(string: UIApplication.openSettingsURLString) {
+                Link(destination: url) {
+                    Text("Open Settings")
+                        .themeType(.label)
+                        .foregroundStyle(ThemeColor.textAccent.color)
+                        .frame(minHeight: 48, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityIdentifier("dictation-open-settings")
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 4)
     }
 
     /// The pictures picked for the letter, in the order they were picked:
@@ -556,6 +664,37 @@ private struct SendArrowStyle: ButtonStyle {
             )
             .frame(width: 48, height: 48)
             .contentShape(Rectangle())
+    }
+}
+
+/// The sound the microphone hears, as bars in a row with the newest at the
+/// right, the older going left. A place with no reading yet stands as a
+/// short bar in the disabled grey, so the row is a line while no one speaks.
+/// It reads the model's `levels` itself, apart from `state`, so that its
+/// many changes redraw these bars and nothing else on the screen.
+private struct SoundBars: View {
+    var model: ConversationModel
+
+    var body: some View {
+        let levels = model.levels
+        Canvas { context, size in
+            let width: CGFloat = 3
+            let gap: CGFloat = 3
+            let floor: CGFloat = 2
+            let room = max(0, Int((size.width + gap) / (width + gap)))
+            let heard = Array(levels.suffix(room))
+            for place in 0..<room {
+                // From the right: place 0 is the newest.
+                let level = place < heard.count ? heard[heard.count - 1 - place] : nil
+                let height = max(floor, CGFloat(level ?? 0) * size.height)
+                let x = size.width - CGFloat(place + 1) * width - CGFloat(place) * gap
+                let bar = CGRect(x: x, y: (size.height - height) / 2, width: width, height: height)
+                let color = level == nil ? ThemeColor.textDisabled.color : ThemeColor.textAccent.color
+                context.fill(Path(roundedRect: bar, cornerRadius: width / 2), with: .color(color))
+            }
+        }
+        .frame(height: 24)
+        .frame(maxWidth: .infinity)
     }
 }
 

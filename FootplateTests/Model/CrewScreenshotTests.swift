@@ -6,7 +6,11 @@ import XCTest
 // The crew screens rendered in the simulator against fake-followed
 // state (design 3.5, the bead's screenshots): the inbox with unread
 // rows, one conversation and its composer (one box) empty, with a
-// picture picked, with three and with words, a conversation naming bead ids, a chip's
+// picture picked, with three and with words, with a recording standing
+// and with the speech consent refused (footplate-ios-tedd; the microphone
+// is forced through the fake recognizer, so that the shots do not depend on
+// what the simulator hears, nor on a microphone to record from), a
+// conversation naming bead ids, a chip's
 // bead as a sheet over the chat, letters naming open asks, each with its
 // preview and its Open card, a conversation with a party of a
 // linked yard, and the yard switch with two yards,
@@ -80,7 +84,12 @@ final class CrewScreenshotTests: XCTestCase {
         }
         XCTAssertFalse(inbox.state.rows.isEmpty)
 
-        let conversation = ConversationModel(mailroom: mailroom, now: { now }, zone: { TimeZone(secondsFromGMT: 0)! })
+        // The phone's recognizer, forced: it offers the microphone, as a phone
+        // with an on-device model does, so that the composers below draw it.
+        let dictation = FakeDictation()
+        let conversation = ConversationModel(
+            mailroom: mailroom, now: { now }, zone: { TimeZone(secondsFromGMT: 0)! }, dictation: dictation
+        )
         let line = LineModel(
             followers: { ["": home, "laptop": laptop] }, records: records, pairer: pairer,
             nav: nav, conversation: conversation, origins: { _ in "https://edge.example" },
@@ -150,6 +159,39 @@ final class CrewScreenshotTests: XCTestCase {
         try await shootAppearances(of: words, named: "composer-text", in: dir)
         words.isHidden = true
         conversation.draft("")
+        // A recording (footplate-ios-tedd): the strip stands where the plus and
+        // the microphone were, with the cross, the sound and the stop, and the
+        // words heard so far are written into the field.
+        await conversation.dictate()
+        XCTAssertEqual(conversation.state.dictation.recording, .listening)
+        for level in [0.08, 0.2, 0.55, 0.4, 0.75, 0.5, 0.15, 0.3, 0.65, 0.5, 0.2, 0.35, 0.7, 0.45, 0.25, 0.6, 0.35, 0.1] {
+            dictation.run.level(Float(level))
+        }
+        dictation.run.say("Land it tonight, and the shed after")
+        let heardDeadline = ContinuousClock.now + .seconds(10)
+        while conversation.state.draft != "Land it tonight, and the shed after" || conversation.levels.count < 18,
+            ContinuousClock.now <= heardDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(conversation.state.draft, "Land it tonight, and the shed after")
+        let recording = try await renderWindow(
+            ConversationScreen(model: conversation, line: line, yard: "", with: "yardmaster"),
+            scene: scene, to: dir.appendingPathComponent("composer-recording.png")
+        )
+        try await shootAppearances(of: recording, named: "composer-recording", in: dir)
+        recording.isHidden = true
+        conversation.cancelDictation()
+        XCTAssertEqual(conversation.state.draft, "")
+        // The speech consent refused: no microphone, and the line names which
+        // consent it was, with the way to Settings.
+        dictation.current = DictationStanding(onDevice: true, speech: .denied, microphone: .granted)
+        let refused = try await renderWindow(
+            ConversationScreen(model: conversation, line: line, yard: "", with: "yardmaster"),
+            scene: scene, to: dir.appendingPathComponent("composer-refused.png")
+        )
+        XCTAssertEqual(conversation.state.dictation.line, refusalWords(.speechDenied))
+        try await shootAppearances(of: refused, named: "composer-refused", in: dir)
+        refused.isHidden = true
         conversation.leave()
         try await render(YardSwitchView(state: inbox.state), scene: scene, to: dir.appendingPathComponent("switch.png"))
         // The rows at the largest text size and at an accessibility one:

@@ -10,7 +10,11 @@ import Foundation
 // files are said by count (`1 file, open it in footplate`). A chip
 // tapped opens its bead as a sheet over the conversation. A letter that
 // names an open ask (`ask 3`, `ask 3 on yd-x`) has a preview of it under
-// it, with a button to its card in Decide; nothing is answered here.
+// it, with a button to its card in Decide; nothing is answered here. The
+// composer's microphone writes what the person says into the draft, heard
+// on the phone (footplate-ios-tedd): a recording is the model's, from the
+// tap to its stop, its cross, a send, a call, the app leaving or the screen
+// leaving, and the recognizer and the microphone stand behind `Dictation`.
 
 /// One letter as the conversation shows it.
 struct Shown: Equatable, Sendable {
@@ -120,6 +124,40 @@ private struct Pick {
     var task: Task<Void, Never>? = nil
 }
 
+/// What the composer draws of dictation (footplate-ios-tedd).
+struct DictationShown: Equatable, Sendable {
+    /// The microphone stands in the icon row: the phone hears the locale on
+    /// the device, no consent is refused, and no recording stands.
+    var microphone: Bool = false
+    /// Where a recording stands; the strip takes the place of the plus and
+    /// the microphone.
+    var recording: Recording? = nil
+    /// The line over the composer: the first tap's, or a refusal's.
+    var line: String? = nil
+    /// The line is a refusal: a link to Settings stands beside it.
+    var settings: Bool = false
+    /// Moves each time the model writes the draft for the field to take
+    /// (words heard, the draft a cancel puts back), so that the field,
+    /// which keeps its own text, follows it.
+    var written: Int = 0
+}
+
+/// One recording of the open conversation, from the tap to its end.
+private struct Sitting {
+    var token = UUID()
+    var phase: Recording = .starting
+    /// The draft as it stood at the tap: the words heard are written after
+    /// it, and a cancel puts it back.
+    var base: String
+    var run: (any DictationRun)? = nil
+    /// Reads what the run says.
+    var hearing: Task<Void, Never>? = nil
+    /// The bound on waiting for the final words after a stop.
+    var settling: Task<Void, Never>? = nil
+    /// Ends the recording that hears no words for a while.
+    var quiet: Task<Void, Never>? = nil
+}
+
 struct ConversationState: Equatable, Sendable {
     /// Whom it is with, or `yard` for the yard's notices.
     var title: String = ""
@@ -151,6 +189,8 @@ struct ConversationState: Equatable, Sendable {
     var full: ShownImage? = nil
     /// A chip's bead, drawn as a sheet over the conversation.
     var sheet: BeadRoute? = nil
+    /// The microphone, its strip and its lines.
+    var dictation: DictationShown = DictationShown()
 }
 
 private struct ConversationKey: Hashable {
@@ -284,6 +324,33 @@ final class ConversationModel {
     /// it names.
     private var pendingAsk: (key: ConversationKey, bead: String)? = nil
 
+    /// The phone's recognizer and microphone. Nothing of it is asked
+    /// before the composer appears, and the engine only at a tap.
+    private let dictation: any Dictation
+    /// How long a stop waits for the recognizer's final words before the
+    /// words that stand are taken as final.
+    private let finalWait: Duration
+    /// How long a recording stands with no new words before it ends by
+    /// itself, as Android's does (footplate-android-tfq3): it goes through
+    /// every pause, and this keeps a microphone from staying open on a
+    /// phone put down, or writing down what is said near it.
+    private let quietWait: Duration
+    /// The model's timers, a seam for the tests: a test that waited on the
+    /// clock would race it.
+    private let wait: @Sendable (Duration) async throws -> Void
+    /// The gate as last read: as the composer appears, as the app comes
+    /// forward and at each tap. Never kept past the model.
+    private var gate: DictationGate = .absent
+    /// The first tap's line, standing from the tap until its recording ends.
+    private var disclosure: String? = nil
+    private var sitting: Sitting? = nil
+    /// What the microphone hears lately, for the strip's bars. Apart from
+    /// `state` so that its many changes redraw the bars and not the letters.
+    private(set) var levels: [Float] = []
+    private var dictatedWrites = 0
+    /// Sends that wait for a recording to end.
+    private var recordingWaiters: [CheckedContinuation<Void, Never>] = []
+
     private let mailroom: Mailroom
     private let pictures: Pictures
     private let shrink: @Sendable (Data) async -> Data?
@@ -310,13 +377,21 @@ final class ConversationModel {
         pictures: Pictures? = nil,
         shrink: @escaping @Sendable (Data) async -> Data? = { downscaleForLetter($0) },
         now: @escaping @Sendable () -> Date = { Date() },
-        zone: @escaping @Sendable () -> TimeZone = { .current }
+        zone: @escaping @Sendable () -> TimeZone = { .current },
+        dictation: (any Dictation)? = nil,
+        finalWait: Duration = .seconds(3),
+        quietWait: Duration = .seconds(60),
+        wait: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
         self.mailroom = mailroom
         self.pictures = pictures ?? Pictures.live()
         self.shrink = shrink
         self.now = now
         self.zone = zone
+        self.dictation = dictation ?? SpeechDictation()
+        self.finalWait = finalWait
+        self.quietWait = quietWait
+        self.wait = wait
         boardsObserver = mailroom.observeBoards { [weak self] in
             self?.boardChanged()
         }
@@ -374,8 +449,25 @@ final class ConversationModel {
             attaching: picks.filter { $0.picture == nil }.count,
             error: sendError,
             full: fullHash.flatMap { hash in letters.flatMap(\.images).first { $0.hash == hash } },
-            sheet: sheetBead
+            sheet: sheetBead,
+            dictation: dictationShown
         )
+    }
+
+    /// The microphone's gate, its recording and its lines as the composer
+    /// draws them. A refusal's line is the gate's and stands while the
+    /// consent is refused; the first tap's stands from the tap.
+    private var dictationShown: DictationShown {
+        var shown = DictationShown(recording: sitting?.phase, written: dictatedWrites)
+        switch gate {
+        case .absent: break
+        case .offered: shown.microphone = true
+        case .refused(let refusal):
+            shown.line = refusalWords(refusal)
+            shown.settings = true
+        }
+        if shown.line == nil { shown.line = disclosure }
+        return shown
     }
 
     /// The conversation `yard`/`with` is shown: read from its newest
@@ -392,6 +484,7 @@ final class ConversationModel {
             return
         }
         generation += 1
+        concludeRecording()
         readTask?.cancel()
         readTask = nil
         activeRead = nil
@@ -430,6 +523,9 @@ final class ConversationModel {
     func leave() {
         active = false
         generation += 1
+        // The microphone is shut with the screen; the words heard stand in
+        // the draft the conversation keeps.
+        concludeRecording()
         readTask?.cancel()
         readTask = nil
         activeRead = nil
@@ -450,6 +546,10 @@ final class ConversationModel {
     }
 
     func draft(_ text: String) {
+        // The person's own edit while a recording stands ends it: the words
+        // heard so far are in the text they edited, and a recording that
+        // went on would write over it.
+        if sitting != nil, text != draftText { concludeRecording() }
         draftRevision &+= 1
         draftText = text
         sendError = nil
@@ -590,6 +690,197 @@ final class ConversationModel {
         sheetBead = nil
     }
 
+    /// The microphone's gate, read from the phone now: as the composer
+    /// appears and as the app comes forward, for the phone's answer changes
+    /// where the person is not looking (a consent given in Settings, a model
+    /// downloaded). The microphone shows only where this says so.
+    func readDictationGate() {
+        gate = dictationGate(dictation.standing())
+    }
+
+    /// The microphone's tap. The gate is read again first, so that a tap on
+    /// an icon that a later read would have taken away records nothing. At
+    /// a tap that has a consent to ask for, the line says what is heard and
+    /// where it goes, then the two prompts come, speech first, then the
+    /// recording begins. A refusal hides the microphone, and the gate's
+    /// line says which consent it was. The engine is started here and
+    /// nowhere else.
+    func dictate() async {
+        guard active, sitting == nil, let with = openedWith, with != yardRow else { return }
+        var standing = dictation.standing()
+        gate = dictationGate(standing)
+        guard gate == .offered else { return }
+        let made = Sitting(base: draftText)
+        let token = made.token
+        sitting = made
+        sendError = nil
+        levels = []
+        if dictationAsks(standing) {
+            disclosure = dictationLine
+            standing = await dictation.authorize()
+            gate = dictationGate(standing)
+            // The recording ended while the prompts stood (the screen was
+            // left, the app went away, the cross was tapped): nothing starts.
+            guard sitting?.token == token else { return }
+            guard gate == .offered else {
+                sitting = nil
+                disclosure = nil
+                return
+            }
+        }
+        do {
+            let run = try dictation.begin()
+            sitting?.run = run
+            sitting?.phase = .listening
+            armQuiet(token)
+            let events = run.events
+            sitting?.hearing = Task { @MainActor [weak self] in
+                for await event in events { self?.hear(event, token: token) }
+                self?.runEnded(token: token)
+            }
+        } catch {
+            sitting = nil
+            disclosure = nil
+            // The recognizer refused where the gate had allowed: the gate is
+            // read again, and the microphone goes if the phone no longer hears.
+            gate = dictationGate(dictation.standing())
+            sendError = (error as? DictationFailure ?? .couldNotStart).words
+        }
+    }
+
+    /// The strip's stop: the microphone is shut, the recognizer settles what
+    /// it heard, and the words stand in the field.
+    func stopDictation() async {
+        guard sitting?.phase == .listening else { return }
+        await finishRecording()
+    }
+
+    /// The strip's cross: what was heard is dropped, and the draft is as it
+    /// was at the tap.
+    func cancelDictation() {
+        concludeRecording(restoring: true)
+    }
+
+    /// The app went to the background, or the phone's call or another app
+    /// took the microphone: the recording ends where it stands, the words
+    /// heard staying in the field.
+    func backgrounded() {
+        concludeRecording()
+    }
+
+    /// What a run says reaches the model by its recording's token: a
+    /// recording that has ended is nobody's to write to.
+    private func hear(_ event: DictationEvent, token: UUID) {
+        guard let current = sitting, current.token == token else { return }
+        switch event {
+        case .level(let level):
+            if current.phase == .listening { levels = entering(level, in: levels) }
+        case .words(let text, let final):
+            // Words with nothing in them leave what stands: a partial that has
+            // heard nothing yet, or a final of silence after words were shown.
+            if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                write(dictated(current.base, text))
+                if !final, current.phase == .listening { armQuiet(token) }
+            }
+            if final { concludeRecording() }
+        case .interrupted:
+            concludeRecording()
+        case .failed(let failure):
+            concludeRecording(failure: failure)
+        }
+    }
+
+    /// The run's stream ended with no word of how: the recording is over
+    /// with the words that stand.
+    private func runEnded(token: UUID) {
+        guard sitting?.token == token else { return }
+        concludeRecording()
+    }
+
+    /// The draft is written by the model, and the field takes it.
+    private func write(_ text: String) {
+        guard text != draftText else { return }
+        draftRevision &+= 1
+        draftText = text
+        dictatedWrites &+= 1
+    }
+
+    /// A recording ends, whatever ended it. Its run is cancelled, so that
+    /// the microphone is shut and the audio session given back where the
+    /// recognizer has not already done it, and the words heard stand in the
+    /// draft unless `restoring` puts back the draft as it was at the tap. A
+    /// failure is said under the field; silence says nothing.
+    private func concludeRecording(failure: DictationFailure? = nil, restoring: Bool = false) {
+        guard let current = sitting else { return }
+        sitting = nil
+        current.hearing?.cancel()
+        current.settling?.cancel()
+        current.quiet?.cancel()
+        current.run?.cancel()
+        disclosure = nil
+        levels = []
+        if restoring { write(current.base) }
+        if let words = failure?.words { sendError = words }
+        for waiter in recordingWaiters { waiter.resume() }
+        recordingWaiters = []
+    }
+
+    /// A stop: the microphone is shut and the recognizer settles what it
+    /// heard, then the words it ends with stand and the recording is over.
+    /// Waits for that, as a send needs the draft whole before it takes it.
+    /// The wait has a bound, for a recognizer that never says it is done:
+    /// the words that stand are then the words.
+    private func finishRecording() async {
+        guard let current = sitting else { return }
+        switch current.phase {
+        case .starting:
+            // The prompts stand, or the microphone is opening: nothing is
+            // heard yet to settle.
+            concludeRecording()
+            return
+        case .listening:
+            sitting?.phase = .finishing
+            sitting?.quiet?.cancel()
+            current.run?.finish()
+            let token = current.token
+            let wait = self.wait
+            let bound = finalWait
+            sitting?.settling = Task { @MainActor [weak self] in
+                do { try await wait(bound) } catch { return }
+                self?.settled(token)
+            }
+        case .finishing:
+            break
+        }
+        guard sitting != nil else { return }
+        await withCheckedContinuation { recordingWaiters.append($0) }
+    }
+
+    /// The final words did not come in the bound.
+    private func settled(_ token: UUID) {
+        guard sitting?.token == token else { return }
+        concludeRecording()
+    }
+
+    /// The quiet timer starts again: the recording has heard words.
+    private func armQuiet(_ token: UUID) {
+        guard sitting?.token == token else { return }
+        sitting?.quiet?.cancel()
+        let wait = self.wait
+        let quiet = quietWait
+        sitting?.quiet = Task { @MainActor [weak self] in
+            do { try await wait(quiet) } catch { return }
+            self?.quieted(token)
+        }
+    }
+
+    /// No words came for the quiet time: the microphone is shut, and the
+    /// words that stand are kept, as at a stop. Nothing is said of it.
+    private func quieted(_ token: UUID) {
+        guard sitting?.token == token, sitting?.phase == .listening else { return }
+        concludeRecording()
+    }
+
     /// Sends the draft with `Mail`, carrying the picked pictures: each
     /// blob is put first, in the row's order, then one mail names their
     /// hashes, and the bytes are kept, once the mail has gone, so the
@@ -602,11 +893,18 @@ final class ConversationModel {
     /// Only the pictures sent leave the row: one picked after the send
     /// began is for the next letter. What the letter carried is cleared
     /// even when the screen was left while it went, where the same
-    /// conversation's draft and row still stand.
+    /// conversation's draft and row still stand. A recording that stands
+    /// ends first, as Android's send does: it stops, its words are
+    /// inserted, and the letter goes with them.
     func send() async {
         guard active, let yard = openedYard, let with = openedWith, with != yardRow else { return }
         let key = ConversationKey(yard: yard, with: with)
         guard !sending.contains(key) else { return }
+        if sitting != nil {
+            let visit = generation
+            await finishRecording()
+            guard active, visit == generation, openedYard == yard, openedWith == with, !sending.contains(key) else { return }
+        }
         let text = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
         let revision = draftRevision
         let carried = picks.map(\.id)
