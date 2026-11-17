@@ -10,11 +10,9 @@ import NoiseChannel
 // library, bound the same way and holding no PAKE of its own.
 // This file marshals bytes across that boundary and names its
 // failures; what a failure is said as to a person is the
-// client's. The bound versions and the binding are not yet
+// client's. The bound versions and the binding have not been
 // independently reviewed (spake2-go states it has had no formal
-// audit), and nothing here calls them audited: the app shows no
-// sealed claim on their word, and a yard with a channel is shown
-// not yet sealed.
+// audit), and nothing here calls them audited.
 
 /// Why a channel step did not go: the binding's sentence, kept
 /// for the log of the call that failed. No key stands in it.

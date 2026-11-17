@@ -23,10 +23,15 @@ struct YardRow: Equatable, Sendable {
     var word: String?
     /// `2 to decide` where the yard has open asks and its follow is up.
     var waiting: String? = nil
-    /// `not yet sealed` where the yard holds this device's channel
-    /// key: no sealed claim stands until the bound library's
-    /// review passes (Channel.swift), and this says no more.
+    /// What the yard's channel is, as its calls are: `sealed (paired)`
+    /// or `sealed (in place)` where they go sealed, `could not be
+    /// sealed` where the yard refused this phone's key, and nil where
+    /// they go plain, a key still waiting for its registration among
+    /// them (`PairedYard.channelNote`).
     var channelNote: String? = nil
+    /// The line that lasts beside `sealed (in place)` and beside no
+    /// other word (`PairedYard.channelCaveat`).
+    var channelCaveat: String? = nil
     /// An in-place migration has completed, so the person can choose
     /// to pair again by QR and replace the migration's trust-on-first-use.
     var canPairAgainByQR: Bool = false
@@ -229,7 +234,8 @@ final class InboxModel {
                     selected: yard.name == kept.selected,
                     word: said,
                     waiting: said == nil && open > 0 ? "\(open) to decide" : nil,
-                    channelNote: yard.channelNote,
+                    channelNote: yard.channelNote(refused: records.keyRefused(yard)),
+                    channelCaveat: yard.channelCaveat,
                     canPairAgainByQR: yard.sealedHow == "in place" && yard.yardChannelPublic != nil
                 )
             },

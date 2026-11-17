@@ -30,7 +30,8 @@ final class ChannelTests: XCTestCase {
         let yard = try await pairSealed()
         XCTAssertEqual("paired", yard.sealedHow)
         XCTAssertNotNil(yard.channel)
-        XCTAssertEqual("not yet sealed", yard.channelNote)
+        XCTAssertEqual("sealed (paired)", yard.channelNote())
+        XCTAssertNil(yard.channelCaveat, "the line that lasts stands beside sealed (in place) alone")
         // No request carried the pairing code or the token in the
         // clear: the pair call's body is the sealed handshake, and
         // the calls that followed ride /user/e2e alone.
@@ -282,7 +283,7 @@ extension ChannelTests {
         // the run's sealed answer in place of a QR's, and its own pinned
         // at the yard.
         XCTAssertEqual("paired", yard.sealedHow)
-        XCTAssertEqual("not yet sealed", yard.channelNote)
+        XCTAssertEqual("sealed (paired)", yard.channelNote())
         XCTAssertEqual(channelPublicString(try XCTUnwrap(yard.yardChannelPublic)), fake.channelPublic(yardName: ""))
         let devicePublic = channelPublicString(try channelPublicOf(try XCTUnwrap(yard.channelPrivate)))
         XCTAssertEqual(fake.pinnedKey(yardName: "", token: yard.token), devicePublic)

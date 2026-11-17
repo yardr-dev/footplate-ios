@@ -16,7 +16,8 @@ import XCTest
 // linked yard, and the yard switch with two yards,
 // one away, at the default text size and at two
 // large ones, with a yard of its own beside the edge's, and with a yard
-// of another account's the account is a member of. Hand-run for the bead
+// of another account's the account is a member of, and with a yard of each
+// way its channel can stand (footplate-ios-ja7d). Hand-run for the bead
 // note; the gate runs it too, and it only asserts that each screen
 // renders non-empty at phone size.
 // PNGs land in `TEST_RUNNER_CREW_SHOTS_DIR`, or the temporary
@@ -790,6 +791,68 @@ final class CrewScreenshotTests: XCTestCase {
             ?? FileManager.default.temporaryDirectory.appendingPathComponent("crew-shots")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try await render(YardSwitchView(state: inbox.state), scene: scene, to: dir.appendingPathComponent("switch-named.png"))
+    }
+
+    /// The yard switch with a yard of each way a channel can stand
+    /// (footplate-ios-ja7d): sealed in place, with the line that lasts and
+    /// the offer to pair again by QR; sealed by a pairing; one that refused
+    /// its key, which could not be sealed; and two that say nothing, a key
+    /// waiting for its registration and a yard of its own, whose calls go
+    /// plain. Drawn light, dark and at a large text size, where the line
+    /// that lasts wraps and is not cut.
+    func testYardSwitchSaysHowEachYardsChannelStands() async throws {
+        let scene = try XCTUnwrap(
+            UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first,
+            "no window scene to render in"
+        )
+        let fake = FakeYard()
+        let records = Records(secret: MemoryShelf(), plain: MemoryShelf(), origin: fake.origin)
+        records.keepSession(account: fake.email, session: fake.session())
+        func key(_ byte: UInt8) -> Data { Data(repeating: byte, count: 32) }
+        records.keepYard(PairedYard(
+            name: "", yard: "south", user: "jo", device: "phone", token: "yardr-dev-south-1",
+            channelPrivate: key(0x11), yardChannelPublic: key(0x22), sealedHow: "in place"
+        ))
+        records.keepYard(PairedYard(
+            name: "laptop", yard: "laptop", user: "jo", device: "phone", token: "yardr-dev-laptop-1",
+            channelPrivate: key(0x33), yardChannelPublic: key(0x44), sealedHow: "paired"
+        ))
+        records.keepYard(PairedYard(
+            name: "shed", yard: "shed", user: "jo", device: "phone", token: "yardr-dev-shed-1",
+            channelPrivate: key(0x55), sealedHow: "in place"
+        ))
+        records.keepYard(PairedYard(
+            name: "annex", yard: "annex", user: "jo", device: "phone", token: "yardr-dev-annex-1",
+            channelPrivate: key(0x66), sealedHow: "in place"
+        ))
+        let plantime = "workshop-mini.tail1a2b3c.ts.net:8446"
+        records.keepYard(PairedYard(
+            name: plantime, yard: "plantime", user: "jo", device: "phone", token: "yardr-dev-plantime-1",
+            origin: "https://workshop-mini.tail1a2b3c.ts.net:8446"
+        ))
+        records.noteKeyRefused(try XCTUnwrap(records.kept.yards.first { $0.name == "shed" }))
+        records.select("")
+        let inbox = InboxModel(
+            pairer: Pairer(edge: try fake.edge(), records: records), records: records,
+            followers: { [:] }, mailroom: Mailroom(), nav: Nav()
+        )
+        XCTAssertEqual(
+            inbox.state.yards.map(\.channelNote),
+            ["sealed (in place)", "sealed (paired)", "could not be sealed", nil, nil]
+        )
+
+        let dir = try shotsDirectory()
+        let window = try await renderWindow(
+            YardSwitchView(state: inbox.state),
+            scene: scene, to: dir.appendingPathComponent("switch-sealed.png")
+        )
+        defer { window.isHidden = true }
+        try await shootAppearances(of: window, named: "switch-sealed", in: dir)
+        window.isHidden = true
+        try await render(
+            YardSwitchView(state: inbox.state).environment(\.dynamicTypeSize, .accessibility3),
+            scene: scene, to: dir.appendingPathComponent("switch-sealed-ax.png")
+        )
     }
 
     /// A person with a dozen yards (footplate-ios-jyh8): their rows are

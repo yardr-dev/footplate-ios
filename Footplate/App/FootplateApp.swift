@@ -387,10 +387,11 @@ private struct FootplateScene: View {
 /// pinned from the answer, and the yard is sealed from then on —
 /// the publish rebuilds its client inside the channel. A yard
 /// the answer refuses pins nothing, keeps its plain calls as
-/// before, and is answered in the result for the app to say so;
-/// a yard that merely cannot be reached is not refused, and the
-/// next launch asks again. No second registration is made for a
-/// yard that stands pinned.
+/// before, is noted refused in the records for its row to say so
+/// (`Records.noteKeyRefused`), and is answered in the result for
+/// the app's notice; a yard that merely cannot be reached is not
+/// refused, and the next launch asks again. No second
+/// registration is made for a yard that stands pinned.
 @MainActor
 func migrateInPlace(records: Records, edge: Edge, session: String) async -> [PairedYard] {
     var refused: [PairedYard] = []
@@ -405,7 +406,8 @@ func migrateInPlace(records: Records, edge: Edge, session: String) async -> [Pai
             records.pinMigrated(name: yard.name, yardPublic: yardPublic)
         } catch let error as ApiError {
             if case .refused = error {
-                refused.append(yard)
+                records.noteKeyRefused(yard)
+                if records.keyRefused(yard) { refused.append(yard) }
             }
         } catch {
             continue

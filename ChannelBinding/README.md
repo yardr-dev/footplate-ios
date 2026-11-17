@@ -28,10 +28,8 @@ yard of the app's tests and nothing the app calls.
 Two rules the code holds:
 
 - Nothing here is called audited. flynn/noise at the pinned
-  version and this binding are **not yet independently reviewed**
-  for conformance, spake2-go states it has had no formal audit, and
-  the app shows no sealed claim on their word: a yard with a channel
-  stands "not yet sealed" until that review passes.
+  version and this binding **have not been independently reviewed**
+  for conformance, and spake2-go states it has had no formal audit.
 - Bytes that cross the bound boundary are the caller's and are
   freed when the call returns, so every key a handshake or a
   session holds is the binding's own copy, made at its boundary.
@@ -115,6 +113,5 @@ symbolicates there.
 
 The `tool` directive in `go.mod` keeps `gobind` in the module, as
 current `gomobile` asks. A change to the pinned flynn/noise or
-spake2-go version is a design change, not a tidy: it reopens the
-review question above, and the transcript tests here and the app's
-channel tests must both still pass.
+spake2-go version is a design change, not a tidy: the transcript
+tests here and the app's channel tests must both still pass.

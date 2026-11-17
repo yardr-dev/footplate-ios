@@ -36,8 +36,8 @@ Under `Footplate/`:
   yard that pinned its key, and the PAKE a typed code is redeemed
   through (`Edge.pairPAKE`, never plain at the edge): `ChannelBinding/`
   at the root holds the Go binding over `flynn/noise` v1.1.0 and the
-  yard's own `spake2-go` v0.0.1 (see its README; neither the bound
-  versions nor the binding is independently reviewed yet);
+  yard's own `spake2-go` v0.0.1 (see its README; the bound versions
+  and the binding have not been independently reviewed);
   `fakeedge/` under it is the by-hand stand-in's yard half (PAKE and
   `/user/e2e` over the binding), spawned by `scripts/fake-edge`.
 - `Session/`: one follower per paired yard, with `load`, the stream after

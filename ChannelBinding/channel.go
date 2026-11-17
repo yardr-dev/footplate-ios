@@ -6,8 +6,8 @@
 // explicit-nonce and replay framing (transcribed from the yard's
 // internal/yardkey, as footplate's e2e.rs carries it over snow),
 // and constructs no Noise of its own. The bound v1.1.0 and this
-// binding are not yet independently reviewed; nothing here calls
-// them audited, and the app shows no sealed claim on their word.
+// binding have not been independently reviewed; nothing here
+// calls them audited.
 package channel
 
 import (

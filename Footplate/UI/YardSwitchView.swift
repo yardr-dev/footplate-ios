@@ -4,8 +4,11 @@ import SwiftUI
 // the person gave it, else the account's own by the yard's own, a yard
 // of its own by its address's host and port) with its waiting count as
 // words or its follow's word, the selected one marked by the rust yard
-// line at its left; an unreachable yard stays selectable. Pair another
-// yard, Rename this yard and Forget this yard stand under the rows.
+// line at its left; an unreachable yard stays selectable. A row's second
+// line says the user and, where the yard's calls go sealed, how its key
+// came to stand (`sealed (in place)` with the line that lasts under it),
+// or that it could not be sealed. Pair another yard, Rename this yard
+// and Forget this yard stand under the rows.
 struct YardSwitchView: View {
     var state: InboxState
     var onSelect: (String) -> Void = { _ in }
@@ -74,6 +77,16 @@ struct YardSwitchView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    // The line that lasts beside `sealed (in place)`, whole:
+                    // it is two sentences, so it wraps and is never cut.
+                    if let caveat = yard.channelCaveat {
+                        Text(caveat)
+                            .themeType(.meta)
+                            .foregroundStyle(ThemeColor.textSecondary.color)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 20)
+                    }
                     if yard.canPairAgainByQR {
                         Button("Pair again by QR", action: onPairAgainByQR)
                             .themeType(.meta)

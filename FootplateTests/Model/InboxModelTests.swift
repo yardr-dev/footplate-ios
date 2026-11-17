@@ -464,9 +464,13 @@ final class InboxModelTests: XCTestCase {
     }
 
     func testSwitchSaysWhatWaitsAndForgettingClearsOnlyThatYardsRoutes() async {
-        // The row offers QR re-pairing only for a pinned in-place
-        // migration; a newly paired device remains not yet sealed too,
-        // but has no migration to replace.
+        // Each row says how its yard's calls go: sealed, by how the key
+        // came to stand, and nothing where they are plain, a key still
+        // waiting for its registration among them; a yard that refused
+        // its key says so on its own row, as many as did. The in-place
+        // one carries the line that lasts, and the offer to pair again
+        // by QR is for it alone; a newly paired device has no migration
+        // to replace.
         let channelRecords = Records(secret: MemoryShelf(), plain: MemoryShelf(), origin: fake.origin)
         channelRecords.keepSession(account: fake.email, session: fake.session())
         channelRecords.keepYard(PairedYard(
@@ -479,11 +483,36 @@ final class InboxModelTests: XCTestCase {
             channelPrivate: Data(repeating: 0x33, count: 32),
             yardChannelPublic: Data(repeating: 0x44, count: 32), sealedHow: "paired"
         ))
+        channelRecords.keepYard(PairedYard(name: "plain", yard: "plain", user: "jo", device: "phone", token: "plain-token"))
+        for (name, key) in [("waiting", 0x55), ("refused-a", 0x66), ("refused-b", 0x77)] {
+            channelRecords.keepYard(PairedYard(
+                name: name, yard: name, user: "jo", device: "phone", token: "\(name)-token",
+                channelPrivate: Data(repeating: UInt8(key), count: 32), sealedHow: "in place"
+            ))
+        }
+        for name in ["refused-a", "refused-b"] {
+            channelRecords.noteKeyRefused(channelRecords.kept.yards.first { $0.name == name }!)
+        }
         let channelRows = Dictionary(uniqueKeysWithValues: inbox(records: channelRecords).state.yards.map { ($0.name, $0) })
-        XCTAssertEqual(channelRows["migrated"]?.channelNote, "not yet sealed")
+        XCTAssertEqual(channelRows["migrated"]?.channelNote, "sealed (in place)")
+        XCTAssertEqual(
+            channelRows["migrated"]?.channelCaveat,
+            "An edge that cheated when this phone registered its key could read its calls. Pairing again by QR gives full protection."
+        )
         XCTAssertTrue(channelRows["migrated"]?.canPairAgainByQR == true)
-        XCTAssertEqual(channelRows["new-pair"]?.channelNote, "not yet sealed")
+        XCTAssertEqual(channelRows["new-pair"]?.channelNote, "sealed (paired)")
+        XCTAssertNil(channelRows["new-pair"]?.channelCaveat)
         XCTAssertFalse(channelRows["new-pair"]?.canPairAgainByQR ?? true)
+        for name in ["plain", "waiting"] {
+            XCTAssertNil(channelRows[name]?.channelNote, name)
+            XCTAssertNil(channelRows[name]?.channelCaveat, name)
+            XCTAssertFalse(channelRows[name]?.canPairAgainByQR ?? true, name)
+        }
+        for name in ["refused-a", "refused-b"] {
+            XCTAssertEqual(channelRows[name]?.channelNote, "could not be sealed", name)
+            XCTAssertNil(channelRows[name]?.channelCaveat, name)
+            XCTAssertFalse(channelRows[name]?.canPairAgainByQR ?? true, name)
+        }
 
         home.up(loaded())
         laptop.state.status = .down(words: "The yard is away: the edge cannot reach it.", short: "yard away")

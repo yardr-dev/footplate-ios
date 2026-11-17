@@ -403,13 +403,15 @@ extension RecordsTests {
         let home = yards.first { $0.name == "" }!
         // The edge yard holds a key of this phone's, recorded in
         // place, with no yard key pinned yet: it cannot call
-        // sealed until the yard takes its registration, and it
-        // stands not yet sealed. A yard of its own gets none.
+        // sealed until the yard takes its registration, and its
+        // row says nothing of a channel meanwhile. A yard of its
+        // own gets none.
         XCTAssertNotNil(home.channelPrivate)
         XCTAssertNil(home.yardChannelPublic)
         XCTAssertNil(home.channel)
         XCTAssertEqual(home.sealedHow, "in place")
-        XCTAssertEqual(home.channelNote, "not yet sealed")
+        XCTAssertNil(home.channelNote())
+        XCTAssertNil(home.channelCaveat)
         let own = yards.first { $0.name == "yard.example.net" }!
         XCTAssertNil(own.channelPrivate)
         // The private half lies on the secret shelf alone.
@@ -436,9 +438,158 @@ extension RecordsTests {
         ))
         let again = makeRecords(secret: secret, plain: plain).kept
         XCTAssertEqual(again.yards.first?.channel, ChannelKeys(devicePrivate: key.devicePrivate, yardPublic: yardPublic))
-        XCTAssertEqual(again.yards.first?.channelNote, "not yet sealed")
+        XCTAssertEqual(again.yards.first?.channelNote(), "sealed (paired)")
         // Migration never stands a second key beside a paired one.
         records.makeMigrationKeys()
         XCTAssertEqual(makeRecords(secret: secret, plain: plain).kept.yards.first?.channelPrivate, key.devicePrivate)
+    }
+}
+
+// What the yard switch says of a yard that refused the registration of
+// its key in place (footplate-ios-ja7d): `could not be sealed` for the
+// launch and for the record whose key was refused, set where the yard
+// refuses and gone by itself where the record is taken, paired again,
+// forgotten or replaced. One test for each way it goes.
+extension RecordsTests {
+    private static let yardKey = Data(repeating: 0x2A, count: 32)
+
+    /// An edge yard paired before the channel, its key made on this
+    /// phone and the yard's refusal of it noted: what `migrateInPlace`
+    /// leaves. `token` tells one record of the name from another.
+    private func refusedInPlace(_ records: Records, name: String = "", token: String = "yardr-dev-south-1") -> PairedYard {
+        records.keepYard(PairedYard(name: name, yard: "south", user: "jo", device: "phone", token: token))
+        records.makeMigrationKeys()
+        let yard = records.kept.yards.first { $0.name == name }!
+        records.noteKeyRefused(yard)
+        return yard
+    }
+
+    /// What the yard switch says of the yard named so, as the model reads it.
+    private func note(_ records: Records, of name: String = "") -> String? {
+        records.kept.yards.first { $0.name == name }.flatMap { $0.channelNote(refused: records.keyRefused($0)) }
+    }
+
+    func testAYardThatRefusedItsKeyReadsCouldNotBeSealed() {
+        let records = makeRecords(secret: MemoryShelf(), plain: MemoryShelf())
+        records.keepYard(PairedYard(name: "", yard: "south", user: "jo", device: "phone", token: "yardr-dev-south-1"))
+        records.makeMigrationKeys()
+        // Waiting for its registration, it says nothing.
+        XCTAssertNil(note(records))
+        // Once the yard refuses the key it says so: nothing was
+        // pinned, the key stands unregistered and the calls are plain.
+        records.noteKeyRefused(records.kept.yards[0])
+        XCTAssertEqual(note(records), "could not be sealed")
+        XCTAssertNil(records.kept.yards[0].channel)
+        XCTAssertNil(records.kept.yards[0].channelCaveat)
+    }
+
+    func testARefusalIsShownOnlyForAnEdgeYardWithAKeyAndNoChannel() {
+        let records = makeRecords(secret: MemoryShelf(), plain: MemoryShelf())
+        let key = try! makeDeviceKey()
+        // No key was made for it: nothing was registered, so nothing was refused.
+        let plain = PairedYard(name: "plain", yard: "plain", user: "jo", device: "phone", token: "yardr-dev-plain-1")
+        // A yard of its own is called with its token alone, whatever its record holds.
+        let own = PairedYard(
+            name: "own.example.net", yard: "own", user: "jo", device: "phone", token: "yardr-dev-own-1",
+            origin: "https://own.example.net", channelPrivate: key.devicePrivate, sealedHow: "in place"
+        )
+        // A yard that holds the channel reads sealed, whatever it refused before.
+        let taken = PairedYard(
+            name: "taken", yard: "taken", user: "jo", device: "phone", token: "yardr-dev-taken-1",
+            channelPrivate: key.devicePrivate, yardChannelPublic: Self.yardKey, sealedHow: "in place"
+        )
+        for yard in [plain, own, taken] {
+            records.keepYard(yard)
+            records.noteKeyRefused(yard)
+        }
+        XCTAssertNil(note(records, of: "plain"))
+        XCTAssertNil(note(records, of: "own.example.net"))
+        XCTAssertEqual(note(records, of: "taken"), "sealed (in place)")
+        // Nor does a yard of its own read sealed on the strength of both
+        // halves: its calls are plain, and so is what its row says.
+        let ownKeyed = PairedYard(
+            name: "own.example.net", yard: "own", user: "jo", device: "phone", token: "yardr-dev-own-1",
+            origin: "https://own.example.net", channelPrivate: key.devicePrivate, yardChannelPublic: Self.yardKey, sealedHow: "paired"
+        )
+        XCTAssertNil(ownKeyed.channelNote())
+        XCTAssertNil(ownKeyed.channelCaveat)
+    }
+
+    func testARefusalGoesWhenTheYardTakesTheKeyAfterAll() {
+        let records = makeRecords(secret: MemoryShelf(), plain: MemoryShelf())
+        let refused = refusedInPlace(records)
+        XCTAssertEqual(note(records), "could not be sealed")
+        // A registration that is taken pins the yard's key, and the yard reads sealed.
+        records.pinMigrated(name: "", yardPublic: Self.yardKey)
+        XCTAssertFalse(records.keyRefused(refused), "taking the key clears its refusal")
+        XCTAssertEqual(note(records), "sealed (in place)")
+        XCTAssertNotNil(records.kept.yards.first?.channelCaveat)
+    }
+
+    func testARefusalGoesWhenTheYardIsPairedAgain() {
+        let records = makeRecords(secret: MemoryShelf(), plain: MemoryShelf())
+        let refused = refusedInPlace(records)
+        // Replacing the record clears the refusal even if its token stays the same.
+        records.keepYard(PairedYard(name: "", yard: "south", user: "jo", device: "phone", token: refused.token))
+        XCTAssertFalse(records.keyRefused(refused))
+        records.makeMigrationKeys()
+        XCTAssertNil(note(records))
+        // Paired again by QR with its channel key: sealed from the first call.
+        let key = try! makeDeviceKey()
+        _ = refusedInPlace(records, token: "yardr-dev-south-3")
+        records.keepYard(PairedYard(
+            name: "", yard: "south", user: "jo", device: "phone", token: "yardr-dev-south-4",
+            channelPrivate: key.devicePrivate, yardChannelPublic: Self.yardKey, sealedHow: "paired"
+        ))
+        XCTAssertEqual(note(records), "sealed (paired)")
+    }
+
+    func testARefusalGoesWithTheYardThatIsForgotten() {
+        let records = makeRecords(secret: MemoryShelf(), plain: MemoryShelf())
+        let laptop = refusedInPlace(records, name: "laptop", token: "yardr-dev-laptop-1")
+        let home = refusedInPlace(records, name: "", token: "yardr-dev-south-1")
+        records.forgetYard("laptop")
+        XCTAssertFalse(records.keyRefused(laptop), "forgetting a yard clears its refusal")
+        XCTAssertNil(note(records, of: "laptop"))
+        XCTAssertEqual(note(records), "could not be sealed", "the yard that stays keeps its own")
+        // The same name paired again waits for its own registration.
+        records.keepYard(PairedYard(name: "laptop", yard: "laptop", user: "jo", device: "phone", token: "yardr-dev-laptop-2"))
+        records.makeMigrationKeys()
+        XCTAssertNil(note(records, of: "laptop"))
+        // Forgetting every yard goes the same way.
+        records.forgetAll()
+        XCTAssertFalse(records.keyRefused(home), "forgetting every yard clears each refusal")
+        records.keepYard(PairedYard(name: "", yard: "south", user: "jo", device: "phone", token: "yardr-dev-south-2"))
+        records.makeMigrationKeys()
+        XCTAssertNil(note(records))
+    }
+
+    func testARefusalBelongsToTheRecordWhoseKeyWasRefused() {
+        let records = makeRecords(secret: MemoryShelf(), plain: MemoryShelf())
+        let old = refusedInPlace(records, token: "yardr-dev-south-1")
+        // Another token of the same name replaces the record: its key was never asked.
+        records.keepYard(PairedYard(name: "", yard: "south", user: "jo", device: "tablet", token: "yardr-dev-south-2"))
+        XCTAssertFalse(records.keyRefused(old), "a token change clears the old record's refusal")
+        records.makeMigrationKeys()
+        XCTAssertNil(note(records))
+        // The old record's refusal arriving late, with its registration in
+        // flight while it was replaced, does not mark the new one.
+        records.noteKeyRefused(old)
+        XCTAssertFalse(records.keyRefused(old), "a late refusal for a replaced key is ignored")
+        XCTAssertNil(note(records))
+    }
+
+    func testARefusalIsNotKeptAndTheNextLaunchAsksAgain() {
+        let secret = MemoryShelf()
+        let plain = MemoryShelf()
+        let records = makeRecords(secret: secret, plain: plain)
+        _ = refusedInPlace(records)
+        XCTAssertEqual(note(records), "could not be sealed")
+        // The key stands across the launch and waits for its registration
+        // again, which the yard may take this time: nothing is said meanwhile.
+        let again = makeRecords(secret: secret, plain: plain)
+        XCTAssertNotNil(again.kept.yards.first?.channelPrivate)
+        XCTAssertNil(again.kept.yards.first?.channel)
+        XCTAssertNil(note(again))
     }
 }

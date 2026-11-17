@@ -34,8 +34,20 @@ that takes no run (no channel key, or older than the PAKE) is said so with the
 code unspent, and the person scans the QR its operator opens instead. A scanned
 QR with no fourth field keeps its plain redemption, and so does a yard of your
 own address. The PAKE is the yard's own `spake2-go`, bound the way `flynn/noise`
-is (`ChannelBinding/`). It states it has had no formal audit, nothing here
-claims one, and the phone shows no sealed claim yet.
+is (`ChannelBinding/`). It states it has had no formal audit, and nothing here
+claims one.
+
+The yard switch says how each yard's calls go. A yard paired through its
+channel key, or through a typed code's PAKE, reads `sealed (paired)`. A yard
+paired before the channel gets a key made on this phone, registered under its
+token by one call that crosses the edge plain; once the yard has taken it the
+yard reads `sealed (in place)`, with a line under it: an edge that cheated when
+this phone registered its key could read its calls, and Pair again by QR gives
+full protection. A yard that refused the key reads `could not be sealed` for
+that launch and is asked again at the next; its calls stay plain meanwhile, and
+pairing it again by QR seals it. A yard whose calls go plain says nothing: one
+of your own address, one paired with a QR that held no channel key, and one
+whose key is still waiting to be registered.
 
 A paired yard can be given a name of the person's own, since the name the
 edge gives it, or its address's host and port, tells few yards apart. Rename

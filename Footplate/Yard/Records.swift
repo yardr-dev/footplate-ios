@@ -272,8 +272,8 @@ struct PairedYard: Equatable, Sendable {
     /// this phone for a yard paired before the channel and waits
     /// for the yard to take its registration (yardr-n9d2). Nil
     /// where no key stands. The words are the record's, as the
-    /// yard will keep them; the phone shows neither until the
-    /// bound library's review passes (Channel.swift).
+    /// yard will keep them; the yard switch says them once the
+    /// yard's key stands beside the device's (`channelNote`).
     var sealedHow: String? = nil
 
     /// The yard's channel, where both halves stand: the calls of
@@ -284,13 +284,35 @@ struct PairedYard: Equatable, Sendable {
         return ChannelKeys(devicePrivate: channelPrivate, yardPublic: yardChannelPublic)
     }
 
-    /// What the yard switch says of the channel, in place of any
-    /// sealed claim: a yard with a key of this device stands not
-    /// yet sealed until the review of the bound library passes,
-    /// and a yard with none says nothing.
-    var channelNote: String? {
-        channelPrivate == nil ? nil : "not yet sealed"
+    /// Whether the yard's calls go sealed: an edge yard with both
+    /// halves of its channel. A yard of its own is called with no
+    /// channel whatever its record holds (`AppServices.refollow`),
+    /// so the label follows the call, not the record.
+    private var callsSealed: Bool { origin.isEmpty && channel != nil }
+
+    /// What the yard switch says of the channel, which is what the
+    /// yard's calls do: `sealed (paired)` or `sealed (in place)`
+    /// where they go sealed, by how the key came to stand, and
+    /// nothing where they go plain: a yard of its own, a pairing
+    /// made plainly, or a key made on this phone that the yard has
+    /// not taken yet. A yard that `refused` the key (`Records.keyRefused`)
+    /// says `could not be sealed`: its key stands unregistered and
+    /// its calls stay plain.
+    func channelNote(refused: Bool = false) -> String? {
+        if callsSealed { return sealedHow == "in place" ? "sealed (in place)" : "sealed (paired)" }
+        return origin.isEmpty && channelPrivate != nil && refused ? "could not be sealed" : nil
     }
+
+    /// The line of design 3.4 that lasts beside `sealed (in place)`:
+    /// the registration crossed the edge plain, so an edge that
+    /// cheated then could have put its own key in the yard's place,
+    /// until the phone is paired again by QR. The same sentence
+    /// stands on Android.
+    var channelCaveat: String? {
+        callsSealed && sealedHow == "in place" ? Self.lastingLine : nil
+    }
+
+    static let lastingLine = "An edge that cheated when this phone registered its key could read its calls. Pairing again by QR gives full protection."
 
     /// The handle of the account the yard belongs to, where it is
     /// another's; empty for the account's own yard and a yard of its
@@ -354,6 +376,14 @@ final class Records {
     /// name `""` where this is set. Nil where nothing moved — no `""`
     /// record, an edge-owned `""` yard, or a refused move.
     private(set) var migratedYardName: String? = nil
+
+    /// The yards whose registration in place the yard refused since
+    /// this launch (`migrateInPlace`), each by its name with the token
+    /// of the record whose key was refused. Not kept: the next launch
+    /// asks the yard again. Replacing, forgetting or pinning the yard's
+    /// key clears its refusal; a late answer is accepted only for the
+    /// record and key that made the request.
+    private var keyRefusals: [String: String] = [:]
 
     private let secret: any Shelf
     private let plain: any Shelf
@@ -439,6 +469,7 @@ final class Records {
         if yard.localName == nil {
             yard.localName = kept.yards.first { $0.name == yard.name }?.localName
         }
+        keyRefusals.removeValue(forKey: yard.name)
         secret.write(put: [Self.yardPrefix + yard.name: yardSecret(of: yard)])
         plain.write(put: [Self.yardMetaPrefix + yard.name: meta(of: yard), Self.selectedKey: yard.name])
         kept.yards = kept.yards.filter { $0.name != yard.name } + [yard]
@@ -474,6 +505,7 @@ final class Records {
     func forgetYard(_ name: String) {
         let yards = kept.yards.filter { $0.name != name }
         let selected = kept.selected.flatMap { s in yards.contains { $0.name == s } ? s : nil } ?? yards.first?.name
+        keyRefusals.removeValue(forKey: name)
         secret.write(remove: [Self.yardPrefix + name])
         if let selected {
             plain.write(put: [Self.selectedKey: selected], remove: [Self.yardMetaPrefix + name])
@@ -491,6 +523,7 @@ final class Records {
     /// the system gives it again only at a launch, and a yard paired
     /// before then is registered with it at once.
     func forgetAll() {
+        keyRefusals.removeAll()
         secret.write(remove: Array(secret.keys().subtracting([pushTokenKey])))
         var plainRemove = [Self.originKey, Self.accountNameKey, Self.accountHandleKey, Self.selectedKey]
         plainRemove += plain.keys().filter { $0.hasPrefix(Self.yardMetaPrefix) }
@@ -504,8 +537,8 @@ final class Records {
     /// place): the private half kept beside the token, and the
     /// yard marked `in place`. The yard's own key is learned only
     /// when its one registration call takes the key: until then the
-    /// yard keeps its plain calls, since it pinned nothing, and
-    /// stands not yet sealed.
+    /// yard keeps its plain calls, since it pinned nothing, and its
+    /// row says nothing of a channel.
     /// A yard that holds a key already is left as it stands, so a
     /// second launch makes none.
     func makeMigrationKeys() {
@@ -532,8 +565,41 @@ final class Records {
               kept.yards[index].yardChannelPublic == nil
         else { return }
         kept.yards[index].yardChannelPublic = yardPublic
+        keyRefusals.removeValue(forKey: name)
         secret.write(put: [Self.yardPrefix + name: yardSecret(of: kept.yards[index])])
         publish()
+    }
+
+    /// Notes that the yard refused the registration of this record's
+    /// key: its row says `could not be sealed` while the record
+    /// stands as it is, for this launch. It publishes nothing, since
+    /// no follower or registration changes with it: the screens read
+    /// it where they draw. A late refusal for a replaced record or
+    /// a registration already pinned is ignored.
+    func noteKeyRefused(_ yard: PairedYard) {
+        guard let current = kept.yards.first(where: { $0.name == yard.name }),
+              current.token == yard.token,
+              current.origin.isEmpty,
+              current.sealedHow == "in place",
+              current.channelPrivate != nil,
+              current.channelPrivate == yard.channelPrivate,
+              current.yardChannelPublic == nil
+        else { return }
+        keyRefusals[yard.name] = yard.token
+    }
+
+    /// Whether the yard refused the registration of the key this
+    /// record holds, since this launch.
+    func keyRefused(_ yard: PairedYard) -> Bool {
+        guard let current = kept.yards.first(where: { $0.name == yard.name }),
+              current.token == yard.token,
+              current.origin.isEmpty,
+              current.sealedHow == "in place",
+              current.channelPrivate != nil,
+              current.channelPrivate == yard.channelPrivate,
+              current.yardChannelPublic == nil
+        else { return false }
+        return keyRefusals[yard.name] == yard.token
     }
 
     /// Whether the notifications permission was asked already: it is
