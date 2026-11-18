@@ -52,22 +52,42 @@ gate() {
     -project Footplate.xcodeproj \
     -scheme Footplate \
     -destination "platform=iOS Simulator,id=$sim" \
-    -only-testing:"FootplateTests${1:+/$1}"
+    -only-testing:"FootplateTests${1:+/$1}" \
+    -resultBundlePath "$bundle"
 }
-if [ "$#" -eq 0 ]; then
-  gate
-else
+# Every run keeps its output and its result bundle in one temp dir: a failure
+# that names no failing test is diagnosed from the bundle instead, so the dir
+# stays behind an xcodebuild failure and goes after anything else.
+tmpdir=$(mktemp -d)
+log=$tmpdir/gate.log
+status=$tmpdir/gate.status
+bundle=$tmpdir/Footplate.xcresult
+trap 'rm -rf "$tmpdir"' EXIT
+# tee shows the output as it comes and keeps it in a file to count from. sh has
+# no pipefail, so the pipe's status is tee's: the subshell writes xcodebuild's to
+# a second file, with set +e so that the set -e above cannot end it before.
+(set +e; gate "$@"; echo $? >"$status") | tee "$log"
+rc=$(cat "$status")
+if [ "$rc" != 0 ]; then
+  trap - EXIT
+  echo "gate: TEST FAILED (exit ${rc:-1}); bundle: $bundle" >&2
+  # A failure that names its failing tests needs nothing more than the bundle's
+  # path; one that names none (a killed test host fails mute) prints what the
+  # bundle holds instead, so the next reader starts from a cause, not a verdict.
+  if ! grep -q "Test Case .* failed" "$log"; then
+    if [ -d "$bundle" ]; then
+      if ! xcrun xcresulttool get test-results summary --path "$bundle" 2>/dev/null | grep -E '"(result|passedTests|failedTests|skippedTests|failureText|testName)"' >&2; then
+        echo "gate: the bundle's summary is unreadable; open the bundle above" >&2
+      fi
+    else
+      echo "gate: no result bundle was written" >&2
+    fi
+  fi
+  exit "${rc:-1}"
+fi
+if [ "$#" -eq 1 ]; then
   # A name that matches nothing runs 0 tests, and xcodebuild still prints TEST
-  # SUCCEEDED and exits 0, so a named run must show it executed some. tee shows
-  # the output as it comes and keeps it in a file to count from. sh has no
-  # pipefail, so the pipe's status is tee's: the subshell writes xcodebuild's to
-  # a second file, with set +e so that the set -e above cannot end it before.
-  log=$(mktemp)
-  status=$(mktemp)
-  trap 'rm -f "$log" "$status"' EXIT
-  (set +e; gate "$1"; echo $? >"$status") | tee "$log"
-  rc=$(cat "$status")
-  [ "$rc" = 0 ] || exit "${rc:-1}"
+  # SUCCEEDED and exits 0, so a named run must show it executed some.
   # XCTest prints its count on stdout, says "Executed 1 test" for one, and
   # counts a skipped test in N ("Executed 3 tests, with 1 test skipped and 0
   # failures"). So a line passes when N is above its M skipped (0 where it has
