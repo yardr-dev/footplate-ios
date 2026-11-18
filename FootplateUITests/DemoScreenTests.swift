@@ -9,7 +9,8 @@ import XCTest
 // the crew's mail, the composer's box (its arrow dim while the field is
 // empty, its plus's menu, three pictures picked at once from the library,
 // each with its own cross, enabling the arrow on their own, taken back
-// one by one, and a letter of three sent),
+// one by one, and a letter of three sent with its pictures under the
+// ceiling),
 // a letter sent, a fenced one whose Copy puts its code
 // alone on the pasteboard, the one question answered and
 // the line are walked; and Pair a real yard leaves for the first screen with
@@ -20,6 +21,9 @@ final class DemoScreenTests: XCTestCase {
     func testTheDemoFromTheFirstScreenAndBack() {
         continueAfterFailure = false
         let app = XCUIApplication()
+        // A launch that finds another test's demo still open in the
+        // app's memory starts there, not at the first screen.
+        app.terminate()
         app.launch()
         let demo = app.buttons["Try a demo"]
         XCTAssertTrue(demo.waitForExistence(timeout: 10), "run on a simulator with no yard paired")
@@ -69,6 +73,7 @@ final class DemoScreenTests: XCTestCase {
         master.tap()
         let field = app.descendants(matching: .any)["conversation-field"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
+        assertTinyDemoPicture(app)
         // The composer is one box: its arrow is dim while the field is
         // empty, and its plus opens the menu that adds a picture (a
         // simulator has no camera, so Photos alone).
@@ -114,6 +119,14 @@ final class DemoScreenTests: XCTestCase {
         app.buttons["Send"].tap()
         XCTAssertTrue(app.staticTexts["Three from the library"].waitForExistence(timeout: 10))
         XCTAssertTrue(waitFor { removes.count == 0 })
+        let sentPictures = app.images.matching(NSPredicate(format: "label ENDSWITH '.jpg'"))
+        XCTAssertTrue(sentPictures.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(waitFor { sentPictures.count == 3 })
+        for index in 0..<sentPictures.count {
+            let frame = sentPictures.element(boundBy: index).frame
+            XCTAssertLessThanOrEqual(frame.height, 321, "a sent picture shrinks into the 320 ceiling")
+            XCTAssertLessThanOrEqual(frame.width, app.frame.width, "a sent picture stands within the window")
+        }
         attach(app, "Demo conversation with a letter of three pictures")
         field.tap()
         field.typeText("Land it today if it is green")
@@ -214,6 +227,49 @@ final class DemoScreenTests: XCTestCase {
         XCTAssertTrue(app.buttons["Try a demo"].waitForExistence(timeout: 10))
     }
 
+    /// The demo conversation's tiny board stands at its natural
+    /// 8x8 point size, centred in the reader's window.
+    @MainActor
+    private func assertTinyDemoPicture(_ app: XCUIApplication) {
+        var found: XCUIElement?
+        for _ in 0..<20 {
+            found = app.images.matching(NSPredicate(format: "label == 'board.png'"))
+                .allElementsBoundByIndex.first { $0.frame.intersects(app.frame) }
+            if found != nil { break }
+            dragToOlder(app)
+        }
+        guard found != nil else {
+            XCTFail("a board.png letter stands near the foot")
+            return
+        }
+        // Centre the picture in the band the reader sees, between
+        // the chrome above and the composer below (the letters run
+        // under both): a full drag while far, a nudge while near,
+        // for the capture below.
+        let field = app.descendants(matching: .any)["conversation-field"]
+        let top = app.frame.minY + 240
+        let bottom = field.frame.minY - 20
+        let middle = (top + bottom) / 2
+        for _ in 0..<20 {
+            guard let near = nearestBoard(app, to: middle) else { break }
+            let mid = near.frame.midY
+            if mid >= top && mid <= bottom { break }
+            let far = abs(mid - middle) > 300
+            if mid < middle {
+                drag(app, from: far ? 0.3 : 0.5, to: far ? 0.8 : 0.55)
+            } else {
+                drag(app, from: far ? 0.8 : 0.5, to: far ? 0.3 : 0.45)
+            }
+        }
+        guard let board = nearestBoard(app, to: middle) else {
+            XCTFail("a board.png picture stands in the window")
+            return
+        }
+        attach(app, "Demo board.png letter")
+        XCTAssertEqual(board.frame.width, 8, accuracy: 1, "the 8x8 picture stands at its natural width")
+        XCTAssertEqual(board.frame.height, 8, accuracy: 1, "the 8x8 picture stands at its natural height")
+    }
+
     /// The yard switch's way out, apart from the banner's.
     @MainActor
     private func yardSwitchLeave(_ app: XCUIApplication) -> XCUIElement {
@@ -235,6 +291,33 @@ final class DemoScreenTests: XCTestCase {
     @MainActor
     private func row(_ app: XCUIApplication, _ name: String) -> XCUIElement {
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", name)).firstMatch
+    }
+
+    /// One drag toward the older letters: from the foot, a drag down
+    /// the screen. (A swipe on the app or on the first scroll view
+    /// lands on a code block's own sideways scroll and never moves
+    /// the conversation.)
+    @MainActor
+    private func dragToOlder(_ app: XCUIApplication) {
+        drag(app, from: 0.3, to: 0.8)
+    }
+
+    /// One vertical drag down the middle of the window, from `start`
+    /// to `end` in normalized height.
+    @MainActor
+    private func drag(_ app: XCUIApplication, from start: CGFloat, to end: CGFloat) {
+        let begin = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: start))
+        let finish = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: end))
+        begin.press(forDuration: 0.05, thenDragTo: finish)
+    }
+
+    /// The board.png picture nearest the height `y`, where one
+    /// stands in the tree and intersects the window.
+    @MainActor
+    private func nearestBoard(_ app: XCUIApplication, to y: CGFloat) -> XCUIElement? {
+        app.images.matching(NSPredicate(format: "label == 'board.png'"))
+            .allElementsBoundByIndex.filter { $0.frame.intersects(app.frame) }
+            .min { abs($0.frame.midY - y) < abs($1.frame.midY - y) }
     }
 
     /// The plus's Photos entry, three photos of the library tapped in the

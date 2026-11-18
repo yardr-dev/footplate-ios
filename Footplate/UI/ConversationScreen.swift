@@ -607,10 +607,11 @@ struct ConversationScreen: View {
         .padding(.top, 8)
     }
 
-    /// One image of a letter under its text, at the
-    /// conversation's width; a tap opens it full. A placeholder
-    /// box while asked for, and with the file's name where
-    /// missed.
+    /// One image of a letter under its text, at no more than its
+    /// natural size: a small picture stands small, and a large one
+    /// shrinks aspect-fit into the 320-point ceiling; a tap opens
+    /// it full. A placeholder box while asked for, and with the
+    /// file's name where missed.
     private func pictureRow(_ image: ShownImage, textAbove: Bool) -> some View {
         let decoded = image.bytes.flatMap { UIImage(data: $0) }
         return Group {
@@ -618,7 +619,7 @@ struct ConversationScreen: View {
                 Image(uiImage: decoded)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: .infinity, maxHeight: 320)
+                    .frame(maxWidth: decoded.size.width, maxHeight: min(decoded.size.height, 320))
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     .onTapGesture { model.openPicture(image.hash) }
                     .accessibilityLabel(image.name.isEmpty ? "Picture" : image.name)
