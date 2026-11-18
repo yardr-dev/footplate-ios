@@ -10,9 +10,13 @@ import Foundation
 // simulator, whose microphone is the Mac's, which may have none, and which
 // may hold no on-device model; the recognizer's prompts and engine are
 // walked by hand in a simulator (FootplateUITests/DictationScreenTests) and
-// its words checked by hand on an iPhone (footplate-ios-txgy). Where the
-// phone cannot hear its locale on the device there is no microphone, never
-// a server in its place.
+// its words checked by hand on an iPhone (footplate-ios-txgy). What dictation
+// hears with is the current locale where it hears on the device, else the
+// same language under another region (footplate-ios-sz3n): a language heard
+// under another region is still that language on this device. Where none of
+// the language hears there is no microphone, never a server in its place,
+// and the composer says so once, naming the language, instead of showing
+// nothing.
 
 /// Where one of the two consents dictation needs stands: speech
 /// recognition and the microphone. Only speech reports a restriction; a
@@ -30,10 +34,15 @@ enum Consent: Equatable, Sendable {
 /// kept across a tap, a launch or a model download, for any of it can
 /// change between two reads.
 struct DictationStanding: Equatable, Sendable {
-    /// The recognizer of the system's current locale hears on the device.
+    /// What dictation hears with hears on the device: the current locale
+    /// where it does, else the same language under another region.
     var onDevice: Bool
     var speech: Consent
     var microphone: Consent
+    /// The current locale's language in words for the person ("English"),
+    /// for the line where none of it hears. Nil where it is not known, and
+    /// the gate then says nothing, as before.
+    var language: String? = nil
 }
 
 /// Which consent a refusal names.
@@ -45,9 +54,14 @@ enum Refusal: Equatable, Sendable {
 
 /// What the composer draws for dictation: the gate.
 enum DictationGate: Equatable, Sendable {
-    /// Nothing: the phone does not hear this locale on the device (no model
-    /// for it, or none installed yet), and says nothing about it.
+    /// Nothing: the phone does not hear on the device (no model for the
+    /// language, or none installed yet), and the language to name is not
+    /// known, so it says nothing about it.
     case absent
+    /// No microphone: none of the phone's language hears on the device, and
+    /// one quiet line says so, naming the language. The model tells it once
+    /// per conversation open; the gate only names it.
+    case unheard(language: String)
     /// The microphone: a tap records, asking first for any consent that is
     /// not decided.
     case offered
@@ -60,7 +74,10 @@ enum DictationGate: Equatable, Sendable {
 /// phone cannot, a refusal would name a consent that makes no difference.
 /// Speech is named before the microphone, as it is asked before it.
 func dictationGate(_ standing: DictationStanding) -> DictationGate {
-    guard standing.onDevice else { return .absent }
+    guard standing.onDevice else {
+        if let language = standing.language { return .unheard(language: language) }
+        return .absent
+    }
     switch standing.speech {
     case .denied: return .refused(.speechDenied)
     case .restricted: return .refused(.speechRestricted)
@@ -75,6 +92,33 @@ func dictationGate(_ standing: DictationStanding) -> DictationGate {
 /// Whether a tap has a prompt to show: a consent that was never asked.
 func dictationAsks(_ standing: DictationStanding) -> Bool {
     standing.speech == .undecided || standing.microphone == .undecided
+}
+
+/// What dictation hears with: the current locale where it hears on the
+/// device, else the first of `hearing` with the same language that does.
+/// `hearing` holds the locales that hear on the device now, in whatever
+/// order the framework's set comes in; the choice is fixed all the same:
+/// the language's likely region first (de_DE, ja_JP), then the US one,
+/// then the rest by identifier. A language heard under another region is
+/// still that language on this device. Nil where none of the language
+/// hears, and the composer says so instead of offering the microphone.
+/// Locales compare by BCP 47 (`en_US` is `en-US`): the framework spells its
+/// own with a hyphen.
+func dictationLocale(current: Locale, hearing: [Locale]) -> Locale? {
+    func tag(_ locale: Locale) -> String { locale.identifier(.bcp47) }
+    if hearing.contains(where: { tag($0) == tag(current) }) { return current }
+    guard let language = current.language.languageCode?.identifier else { return nil }
+    let tags = Set(hearing.filter { $0.language.languageCode?.identifier == language }.map(tag))
+    let likelyRegion = Locale(identifier: Locale.Language(identifier: language).maximalIdentifier)
+        .region?.identifier
+    func rank(_ tag: String) -> Int {
+        let region = Locale(identifier: tag).region?.identifier ?? ""
+        if let likelyRegion, region.compare(likelyRegion, options: .caseInsensitive) == .orderedSame { return 0 }
+        if region.compare("US", options: .caseInsensitive) == .orderedSame { return 1 }
+        return 2
+    }
+    let ranked = tags.map { ($0, rank($0)) }.sorted { ($0.1, $0.0) < ($1.1, $1.0) }
+    return ranked.first.map { Locale(identifier: $0.0) }
 }
 
 /// The line beside the composer at a tap that asks for a consent: what is
@@ -95,6 +139,13 @@ func refusalWords(_ refusal: Refusal) -> String {
     case .microphoneDenied:
         return "The microphone is off for footplate: allow it in Settings to dictate."
     }
+}
+
+/// The line where none of the language hears on the device, naming it and
+/// that the device cannot hear it without a server. No microphone stands
+/// with it, and no link to Settings: no consent would help.
+func unheardWords(_ language: String) -> String {
+    "This device cannot hear \(language) without a server, so dictation stays off."
 }
 
 /// Where a recording stands.

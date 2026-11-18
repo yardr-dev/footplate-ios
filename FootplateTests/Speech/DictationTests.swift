@@ -13,19 +13,23 @@ import XCTest
 // (footplate-ios-txgy), a simulator's being the Mac's.
 @MainActor
 final class DictationTests: XCTestCase {
-    private func standing(_ onDevice: Bool, _ speech: Consent, _ microphone: Consent) -> DictationStanding {
-        DictationStanding(onDevice: onDevice, speech: speech, microphone: microphone)
+    private func standing(_ onDevice: Bool, _ speech: Consent, _ microphone: Consent, _ language: String? = nil) -> DictationStanding {
+        DictationStanding(onDevice: onDevice, speech: speech, microphone: microphone, language: language)
     }
 
     /// The microphone is drawn only where the phone hears on the device, and
     /// not where a consent is refused; where it cannot hear there, no word
-    /// of a refusal is said, as no consent would help. Speech is named
+    /// of a refusal is said, as no consent would help, and the named
+    /// language is told instead (footplate-ios-sz3n). Speech is named
     /// before the microphone, as it is asked first.
     func testTheGateOffersTheMicrophoneOnlyWhereThePhoneHearsOnTheDeviceAndNoConsentIsRefused() {
         let rows: [(DictationStanding, DictationGate)] = [
             (standing(false, .granted, .granted), .absent),
             (standing(false, .denied, .denied), .absent),
             (standing(false, .undecided, .undecided), .absent),
+            (standing(false, .granted, .granted, "English"), .unheard(language: "English")),
+            (standing(false, .denied, .denied, "Deutsch"), .unheard(language: "Deutsch")),
+            (standing(false, .undecided, .undecided, "English"), .unheard(language: "English")),
             (standing(true, .undecided, .undecided), .offered),
             (standing(true, .granted, .undecided), .offered),
             (standing(true, .granted, .granted), .offered),
@@ -43,6 +47,47 @@ final class DictationTests: XCTestCase {
         }
     }
 
+    /// The choice of recognizer (footplate-ios-sz3n): the current locale
+    /// where it hears on the device; else the same language's likely region
+    /// (de_DE, ja_JP), then the US one (en_US), then the rest by identifier;
+    /// none where none of the language hears. The hearing locales come in
+    /// whatever order the framework's set has, and the choice is fixed all
+    /// the same, `en_US` and `en-US` spelling one locale. Another language
+    /// is never chosen.
+    func testDictationHearsWithTheCurrentLocaleElseTheSameLanguageInAFixedOrder() {
+        func choice(_ current: String, _ hearing: [String]) -> String? {
+            dictationLocale(
+                current: Locale(identifier: current),
+                hearing: hearing.map { Locale(identifier: $0) }
+            )?.identifier(.bcp47)
+        }
+        let rows: [(current: String, hearing: [String], chosen: String?)] = [
+            ("en_CH", ["en-US"], "en-US"),
+            ("de_CH", ["de-DE"], "de-DE"),
+            ("en_US", ["en-US", "en-GB"], "en-US"),
+            ("en_CH", ["en-GB", "en-AU", "en-US"], "en-US"),
+            ("en_CH", ["en-US", "en-GB", "en-AU"], "en-US"),
+            ("en_CH", ["en-GB", "en-AU"], "en-AU"),
+            ("de_CH", ["de-AT", "de-DE"], "de-DE"),
+            ("de_CH", ["de-DE", "de-AT"], "de-DE"),
+            ("ja_CA", ["ja-TW", "ja-JP"], "ja-JP"),
+            ("ja_CA", ["ja-JP", "ja-TW"], "ja-JP"),
+            ("en_CH", ["de-DE"], nil),
+            ("rm_CH", ["en-US"], nil),
+            ("rm_CH", [], nil),
+            ("zz_ZZ", ["zz-ZZ"], "zz-ZZ"),
+        ]
+        for row in rows {
+            XCTAssertEqual(choice(row.current, row.hearing), row.chosen, "\(row)")
+        }
+        // The current locale is kept as it stands, not rebuilt from the
+        // hearing list's spelling.
+        XCTAssertEqual(
+            dictationLocale(current: Locale(identifier: "en_US"), hearing: [Locale(identifier: "en-US")]),
+            Locale(identifier: "en_US")
+        )
+    }
+
     /// A tap has prompts to show where a consent was never asked, and only
     /// there: a decided consent is not asked again.
     func testATapAsksOnlyForAConsentThatWasNeverAsked() {
@@ -58,8 +103,9 @@ final class DictationTests: XCTestCase {
     /// device (the app is for the iPhone and the iPad) and with the answer to
     /// the system's speech prompt, whose own paragraph says the speech data
     /// is sent to Apple: ours says that nothing is. Each refusal names which
-    /// consent it is; silence says nothing and every other failure says
-    /// something.
+    /// consent it is, and the unheard line names the language and that the
+    /// device cannot hear it without a server (footplate-ios-sz3n); silence
+    /// says nothing and every other failure says something.
     func testTheWordsAreThePinnedOnesAndEachRefusalSaysWhichConsent() {
         XCTAssertEqual(
             dictationLine,
@@ -68,12 +114,21 @@ final class DictationTests: XCTestCase {
         for device in ["iPhone", "iPad", "tablet", " phone"] {
             XCTAssertFalse(dictationLine.contains(device), device)
         }
+        XCTAssertEqual(
+            unheardWords("English"),
+            "This device cannot hear English without a server, so dictation stays off."
+        )
+        XCTAssertTrue(unheardWords("Deutsch").contains("Deutsch"))
+        XCTAssertTrue(unheardWords("English").contains("server"))
+        for device in ["iPhone", "iPad", "tablet", " phone"] {
+            XCTAssertFalse(unheardWords("English").contains(device), device)
+        }
         XCTAssertTrue(refusalWords(.speechDenied).contains("Speech recognition"))
         XCTAssertTrue(refusalWords(.speechDenied).contains("Settings"))
         XCTAssertTrue(refusalWords(.speechRestricted).contains("speech recognition"))
         XCTAssertTrue(refusalWords(.microphoneDenied).contains("microphone"))
         XCTAssertTrue(refusalWords(.microphoneDenied).contains("Settings"))
-        XCTAssertEqual(Set([Refusal.speechDenied, .speechRestricted, .microphoneDenied].map(refusalWords)).count, 3)
+        XCTAssertEqual(Set([Refusal.speechDenied, .speechRestricted, .microphoneDenied].map(refusalWords) + [unheardWords("English")]).count, 4)
         XCTAssertNil(DictationFailure.notHeard.words)
         for failure in [DictationFailure.couldNotStart, .unavailable, .stopped] {
             XCTAssertFalse(try XCTUnwrap(failure.words).isEmpty, "\(failure)")
@@ -183,7 +238,10 @@ final class DictationTests: XCTestCase {
     /// The gate and the recording read the locale each at its own call, never
     /// one remembered: no call is answered from an earlier read. Where the
     /// locale has no recognizer there is no microphone, and `begin()` opens
-    /// nothing: no server stands in its place.
+    /// nothing: no server stands in its place. The gate, the standing and
+    /// the recording use the one choice (footplate-ios-sz3n): the current
+    /// locale where it hears, else the same language under another region,
+    /// over a stubbed hearing list, without the framework's supported set.
     func testThePhoneReadsTheLocaleAtEachCallAndWhereItHasNoRecognizerThereIsNoMicrophone() {
         let reads = Reads()
         let unsupported = SpeechDictation(locale: {
@@ -205,6 +263,39 @@ final class DictationTests: XCTestCase {
         let said = SFSpeechRecognizer(locale: english)?.supportsOnDeviceRecognition ?? false
         let phone = SpeechDictation(locale: { english })
         XCTAssertEqual(phone.standing().onDevice, said)
+
+        // A region variant falls back to the same language where that hears:
+        // the standing says what the chosen recognizer says, whatever this
+        // simulator holds, and names the current locale's language.
+        let fellBack = SpeechDictation(
+            locale: { Locale(identifier: "en_GB") },
+            hearing: { _ in [Locale(identifier: "en-US")] }
+        )
+        let american = Locale(identifier: "en-US")
+        XCTAssertEqual(
+            fellBack.standing().onDevice,
+            SFSpeechRecognizer(locale: american)?.supportsOnDeviceRecognition ?? false
+        )
+        XCTAssertEqual(fellBack.standing().language, "English")
+
+        // Nothing heard anywhere: no microphone, and `begin()` opens nothing.
+        // The hearing list is read at each call, never kept, as the locale is.
+        let lists = Reads()
+        let unheard = SpeechDictation(
+            locale: { Locale(identifier: "en_US") },
+            hearing: { _ in
+                lists.count += 1
+                return []
+            }
+        )
+        XCTAssertFalse(unheard.standing().onDevice)
+        XCTAssertEqual(lists.count, 1)
+        XCTAssertFalse(unheard.standing().onDevice)
+        XCTAssertEqual(lists.count, 2)
+        XCTAssertThrowsError(try unheard.begin()) { error in
+            XCTAssertEqual(error as? DictationFailure, .unavailable)
+        }
+        XCTAssertEqual(lists.count, 3)
     }
 }
 

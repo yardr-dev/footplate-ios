@@ -3,11 +3,13 @@ import Foundation
 import Speech
 
 // The phone's recognizer behind `Dictation` (footplate-ios-tedd):
-// SFSpeechRecognizer for the system's current locale, asked to hear on the
+// SFSpeechRecognizer for what dictation hears with, asked to hear on the
 // device alone, fed by an AVAudioEngine whose microphone is open only while
-// a recording stands. Nothing here is made before a tap: no recognizer is
-// kept, no engine is prepared, and the audio session is taken at `begin()`
-// and given back where the recording ends, whatever ended it.
+// a recording stands. What it hears with is the system's current locale
+// where that hears on the device, else the same language under another
+// region (footplate-ios-sz3n). Nothing here is made before a tap: no
+// recognizer is kept, no engine is prepared, and the audio session is taken
+// at `begin()` and given back where the recording ends, whatever ended it.
 
 /// The one request the recognizer is ever given: heard on the device
 /// alone, with the words as they come, tuned for dictation. Every request
@@ -60,26 +62,74 @@ func dictationFailure(domain: String, code: Int, stopping: Bool, available: Bool
     return available ? .stopped : .unavailable
 }
 
+/// The locales that hear on the device now among `current`'s language: the
+/// framework's supported ones of that language that do, with `current`
+/// itself where it does (it may hear under the framework's remap, as en_CH
+/// hears as en-US). Read at each call, never kept: a model download changes
+/// the answer. The current locale is asked first, so the common case costs
+/// one recognizer, as before; the supported ones are read only where it does
+/// not hear.
+func hearingLocales(current: Locale) -> [Locale] {
+    if SFSpeechRecognizer(locale: current)?.supportsOnDeviceRecognition == true {
+        return [current]
+    }
+    let language = current.language.languageCode?.identifier
+    return SFSpeechRecognizer.supportedLocales().filter {
+        $0.language.languageCode?.identifier == language
+            && SFSpeechRecognizer(locale: $0)?.supportsOnDeviceRecognition == true
+    }
+}
+
+/// `locale`'s language in words for the person ("English"), for the line
+/// where none of it hears: its localized name, else its code, else the
+/// locale itself, so that there is always a word to name.
+func displayLanguage(_ locale: Locale) -> String {
+    let code = locale.language.languageCode?.identifier
+    if let code, let name = locale.localizedString(forLanguageCode: code) { return name }
+    return code ?? locale.identifier
+}
+
 @MainActor
 final class SpeechDictation: Dictation {
     private let locale: @Sendable () -> Locale
+    private let hearing: @Sendable (Locale) -> [Locale]
 
     /// `locale` is read at each call, never kept: the system's current one.
-    init(locale: @escaping @Sendable () -> Locale = { Locale.current }) {
+    /// `hearing` names the locales that hear on the device for it, read at
+    /// each call too: the framework's supported ones, in the tests a stub.
+    init(
+        locale: @escaping @Sendable () -> Locale = { Locale.current },
+        hearing: (@Sendable (Locale) -> [Locale])? = nil
+    ) {
         self.locale = locale
+        self.hearing = hearing ?? { @Sendable (current: Locale) in hearingLocales(current: current) }
     }
 
-    /// The recognizer of the locale now. The gate reads it and `begin()`
-    /// hands its request to one, each made from the locale as it is then.
+    /// What dictation hears with now, chosen from the locale as it is then:
+    /// the current one where it hears on the device, else the same language
+    /// under another region.
+    private func chosen(current: Locale) -> Locale? {
+        dictationLocale(current: current, hearing: hearing(current))
+    }
+
+    /// The recognizer of what dictation hears with now. The gate reads it
+    /// and `begin()` hands its request to one, each made from the locale as
+    /// it is then.
     private func recognizer() -> SFSpeechRecognizer? {
-        SFSpeechRecognizer(locale: locale())
+        recognizer(current: locale())
+    }
+
+    private func recognizer(current: Locale) -> SFSpeechRecognizer? {
+        chosen(current: current).flatMap { SFSpeechRecognizer(locale: $0) }
     }
 
     func standing() -> DictationStanding {
-        DictationStanding(
-            onDevice: recognizer()?.supportsOnDeviceRecognition ?? false,
+        let current = locale()
+        return DictationStanding(
+            onDevice: recognizer(current: current)?.supportsOnDeviceRecognition ?? false,
             speech: consent(SFSpeechRecognizer.authorizationStatus()),
-            microphone: consent(AVAudioApplication.shared.recordPermission)
+            microphone: consent(AVAudioApplication.shared.recordPermission),
+            language: displayLanguage(current)
         )
     }
 
@@ -98,8 +148,8 @@ final class SpeechDictation: Dictation {
     }
 
     func begin() throws -> any DictationRun {
-        // Hearing on the device, on this very recognizer: the request is
-        // made for it below and never for another.
+        // Hearing on the device, on this very recognizer: the chosen one,
+        // for which the request is made below and never for another.
         guard let recognizer = recognizer(), recognizer.supportsOnDeviceRecognition else {
             throw DictationFailure.unavailable
         }

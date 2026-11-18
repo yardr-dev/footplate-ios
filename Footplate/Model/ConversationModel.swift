@@ -341,6 +341,11 @@ final class ConversationModel {
     /// The gate as last read: as the composer appears, as the app comes
     /// forward and at each tap. Never kept past the model.
     private var gate: DictationGate = .absent
+    /// The unheard line, told once per conversation open: set by the open's
+    /// read of the gate, never on a later read, and taken away where the
+    /// gate leaves the unheard one.
+    private var unheardTold = false
+    private var unheardLine: String? = nil
     /// The first tap's line, standing from the tap until its recording ends.
     private var disclosure: String? = nil
     private var sitting: Sitting? = nil
@@ -456,17 +461,23 @@ final class ConversationModel {
 
     /// The microphone's gate, its recording and its lines as the composer
     /// draws them. A refusal's line is the gate's and stands while the
-    /// consent is refused; the first tap's stands from the tap.
+    /// consent is refused; the first tap's stands from the tap. The unheard
+    /// line is told once per open and stands while the gate is unheard,
+    /// after a recording's own line.
     private var dictationShown: DictationShown {
         var shown = DictationShown(recording: sitting?.phase, written: dictatedWrites)
         switch gate {
         case .absent: break
+        // No microphone; the line is told once per open below, where the
+        // gate stands unheard.
+        case .unheard: break
         case .offered: shown.microphone = true
         case .refused(let refusal):
             shown.line = refusalWords(refusal)
             shown.settings = true
         }
         if shown.line == nil { shown.line = disclosure }
+        if shown.line == nil, case .unheard = gate { shown.line = unheardLine }
         return shown
     }
 
@@ -490,6 +501,9 @@ final class ConversationModel {
         activeRead = nil
         reading = false
         dropPreparing()
+        // A new open is told the unheard line again, once.
+        unheardTold = false
+        unheardLine = nil
         if !same {
             pageLetters = []
             pageMore = false
@@ -696,6 +710,17 @@ final class ConversationModel {
     /// downloaded). The microphone shows only where this says so.
     func readDictationGate() {
         gate = dictationGate(dictation.standing())
+        // Told once per open: the open's read names the unheard language,
+        // and no later read names it again. Told leaves with its gate: the
+        // microphone or a refusal takes the line away.
+        if case .unheard(let language) = gate {
+            if !unheardTold {
+                unheardTold = true
+                unheardLine = unheardWords(language)
+            }
+        } else {
+            unheardLine = nil
+        }
     }
 
     /// The microphone's tap. The gate is read again first, so that a tap on

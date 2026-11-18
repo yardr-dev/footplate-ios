@@ -391,6 +391,29 @@ final class ConversationModelTests: XCTestCase {
         model.readDictationGate()
         XCTAssertEqual(model.state.dictation, DictationShown(microphone: true))
         XCTAssertEqual(dictation.standingReads, 4, "every read asks the phone")
+
+        // Where no locale hears on the device, the composer says so once
+        // per conversation open, naming the language, with no microphone or
+        // Settings link (footplate-ios-sz3n). A later read keeps the line;
+        // it leaves with the gate, and the next open is told again.
+        dictation.current = DictationStanding(onDevice: false, speech: .granted, microphone: .granted, language: "English")
+        model.readDictationGate()
+        XCTAssertEqual(model.state.dictation, DictationShown(line: unheardWords("English"), settings: false))
+        XCTAssertFalse(model.state.dictation.microphone)
+        model.readDictationGate()
+        XCTAssertEqual(model.state.dictation.line, unheardWords("English"))
+        dictation.current.onDevice = true
+        model.readDictationGate()
+        XCTAssertEqual(model.state.dictation, DictationShown(microphone: true))
+        dictation.current.onDevice = false
+        model.readDictationGate()
+        XCTAssertEqual(model.state.dictation, DictationShown())
+        model.leave()
+        try await openConversation([])
+        model.readDictationGate()
+        XCTAssertEqual(model.state.dictation.line, unheardWords("English"))
+        XCTAssertFalse(model.state.dictation.microphone)
+
         // Reading made nothing ready: no prompt, no microphone.
         XCTAssertEqual(dictation.begun, 0)
         XCTAssertTrue(dictation.asked.isEmpty)
