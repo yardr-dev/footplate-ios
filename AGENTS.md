@@ -20,7 +20,9 @@ never by the gate), and `NotifyService` (the notification service
 extension that fills a closed phone's wakes in, over the shared
 core in `Push/` and its neighbours listed in the project). `FootplateTests/Tokens/` vendors the design tokens
 for the theme test. The iPad layout is a readable single column; its
-simulator run is by hand.
+simulator run is by hand. A builder who must kill a simulator process
+scopes the match to their own run's UDID or container, never a bare
+name match: the gate simulator is shared.
 
 Under `Footplate/`:
 
