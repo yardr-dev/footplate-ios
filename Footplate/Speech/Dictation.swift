@@ -175,7 +175,11 @@ enum DictationFailure: Error, Equatable, Sendable {
     /// error's domain and code ride along, so that the line under the field
     /// can name them and a person on a real device can tell us what the
     /// recognizer said (footplate-ios-p2py: a stop at once on an iPad whose
-    /// cause nobody could name, the domain and code dropped).
+    /// cause nobody could name, the domain and code dropped). The line also
+    /// tells what primes a device that has never dictated: one dictation
+    /// from the keyboard's microphone (footplate-ios-f8bt: the iPad's stop
+    /// went away after that first keyboard dictation, and the SDK offers no
+    /// call that asks for the on-device model or says it is missing).
     case stopped(domain: String, code: Int)
 
     /// What is said under the field, none for silence.
@@ -184,7 +188,7 @@ enum DictationFailure: Error, Equatable, Sendable {
         case .notHeard: return nil
         case .couldNotStart: return "The microphone could not start; tap it to try again."
         case .unavailable: return "Speech recognition is not available just now; try again in a little while."
-        case .stopped(let domain, let code): return "Speech recognition stopped (\(domain) \(code)); tap the microphone to try again."
+        case .stopped(let domain, let code): return "Speech recognition stopped (\(domain) \(code)); tap the microphone to try again. If this device has never dictated from the keyboard, dictate once from the keyboard's microphone first."
         }
     }
 }

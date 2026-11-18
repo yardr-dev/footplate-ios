@@ -609,7 +609,9 @@ final class ConversationModelTests: XCTestCase {
     /// A recognizer that fails says so under the field, in words, and the
     /// words it had given stand; the next tap clears the line. A stop names
     /// the domain and code it stopped with, so that a person on a real
-    /// device can tell us what the recognizer said (footplate-ios-p2py).
+    /// device can tell us what the recognizer said (footplate-ios-p2py),
+    /// and what primes a device that has never dictated
+    /// (footplate-ios-f8bt); the other failures say no word of the keyboard.
     func testATaskErrorIsSaidUnderTheFieldAndTheWordsStand() async throws {
         try await openConversation([])
         model.readDictationGate()
@@ -627,6 +629,15 @@ final class ConversationModelTests: XCTestCase {
                 XCTAssertTrue(
                     model.state.error?.contains("(\(domain) \(code))") == true,
                     "the line names the domain and code: \(model.state.error ?? "none")"
+                )
+                XCTAssertTrue(
+                    model.state.error?.contains("dictate once from the keyboard's microphone") == true,
+                    "the line tells what primes the device: \(model.state.error ?? "none")"
+                )
+            } else {
+                XCTAssertFalse(
+                    model.state.error?.contains("keyboard") == true,
+                    "only a stop tells of the keyboard: \(model.state.error ?? "none")"
                 )
             }
             XCTAssertEqual(model.state.draft, "Land it")

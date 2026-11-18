@@ -135,11 +135,26 @@ final class DictationTests: XCTestCase {
         }
         // A stop names the recognizer's domain and code at the end, short
         // and copyable by eye, so that a person on a real device can tell
-        // us what the recognizer said (footplate-ios-p2py).
+        // us what the recognizer said (footplate-ios-p2py), and then what
+        // primes a device that has never dictated: one dictation from the
+        // keyboard's microphone (footplate-ios-f8bt). The other failures
+        // keep their words, with no word of the keyboard: the microphone
+        // and the service are other causes.
         XCTAssertEqual(
             DictationFailure.stopped(domain: "kAFAssistantErrorDomain", code: 203).words,
-            "Speech recognition stopped (kAFAssistantErrorDomain 203); tap the microphone to try again."
+            "Speech recognition stopped (kAFAssistantErrorDomain 203); tap the microphone to try again. If this device has never dictated from the keyboard, dictate once from the keyboard's microphone first."
         )
+        XCTAssertEqual(
+            DictationFailure.couldNotStart.words,
+            "The microphone could not start; tap it to try again."
+        )
+        XCTAssertEqual(
+            DictationFailure.unavailable.words,
+            "Speech recognition is not available just now; try again in a little while."
+        )
+        for failure in [DictationFailure.couldNotStart, .unavailable] {
+            XCTAssertFalse(try XCTUnwrap(failure.words).contains("keyboard"), "\(failure)")
+        }
     }
 
     /// A missing usage string crashes the app at the prompt: both are in the
