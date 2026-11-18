@@ -607,11 +607,13 @@ final class ConversationModelTests: XCTestCase {
     }
 
     /// A recognizer that fails says so under the field, in words, and the
-    /// words it had given stand; the next tap clears the line.
+    /// words it had given stand; the next tap clears the line. A stop names
+    /// the domain and code it stopped with, so that a person on a real
+    /// device can tell us what the recognizer said (footplate-ios-p2py).
     func testATaskErrorIsSaidUnderTheFieldAndTheWordsStand() async throws {
         try await openConversation([])
         model.readDictationGate()
-        for failure in [DictationFailure.stopped, .unavailable, .couldNotStart] {
+        for failure in [DictationFailure.stopped(domain: "kAFAssistantErrorDomain", code: 203), .unavailable, .couldNotStart] {
             model.draft("Land")
             await model.dictate()
             XCTAssertNil(model.state.error, "a tap clears the line before it")
@@ -621,6 +623,12 @@ final class ConversationModelTests: XCTestCase {
             try await waitFor("\(failure)") { [model] in model?.state.dictation.recording == nil }
             XCTAssertEqual(model.state.error, failure.words)
             XCTAssertNotNil(model.state.error)
+            if case .stopped(let domain, let code) = failure {
+                XCTAssertTrue(
+                    model.state.error?.contains("(\(domain) \(code))") == true,
+                    "the line names the domain and code: \(model.state.error ?? "none")"
+                )
+            }
             XCTAssertEqual(model.state.draft, "Land it")
         }
         XCTAssertEqual(dictation.begun, 3)

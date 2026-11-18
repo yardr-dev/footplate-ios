@@ -130,9 +130,16 @@ final class DictationTests: XCTestCase {
         XCTAssertTrue(refusalWords(.microphoneDenied).contains("Settings"))
         XCTAssertEqual(Set([Refusal.speechDenied, .speechRestricted, .microphoneDenied].map(refusalWords) + [unheardWords("English")]).count, 4)
         XCTAssertNil(DictationFailure.notHeard.words)
-        for failure in [DictationFailure.couldNotStart, .unavailable, .stopped] {
+        for failure in [DictationFailure.couldNotStart, .unavailable, .stopped(domain: "kAFAssistantErrorDomain", code: 203)] {
             XCTAssertFalse(try XCTUnwrap(failure.words).isEmpty, "\(failure)")
         }
+        // A stop names the recognizer's domain and code at the end, short
+        // and copyable by eye, so that a person on a real device can tell
+        // us what the recognizer said (footplate-ios-p2py).
+        XCTAssertEqual(
+            DictationFailure.stopped(domain: "kAFAssistantErrorDomain", code: 203).words,
+            "Speech recognition stopped (kAFAssistantErrorDomain 203); tap the microphone to try again."
+        )
     }
 
     /// A missing usage string crashes the app at the prompt: both are in the
@@ -214,7 +221,8 @@ final class DictationTests: XCTestCase {
     /// An error of a recognition task: the app's own cancel is none, silence
     /// is said by nothing, an error that answers the person's stop leaves
     /// their words as they stand, and any other says that the recognizer
-    /// stopped, or that it is not available where it no longer is.
+    /// stopped, naming the domain and code it stopped with, or that it is
+    /// not available where it no longer is.
     func testWhatARecognitionTaskErrorMeans() {
         let rows: [(String, Int, Bool, Bool, DictationFailure?)] = [
             ("kLSRErrorDomain", 301, false, true, nil),
@@ -222,9 +230,9 @@ final class DictationTests: XCTestCase {
             ("kAFAssistantErrorDomain", 1110, false, true, .notHeard),
             ("kAFAssistantErrorDomain", 1110, true, true, .notHeard),
             ("kAFAssistantErrorDomain", 216, true, true, .notHeard),
-            ("kAFAssistantErrorDomain", 203, false, true, .stopped),
+            ("kAFAssistantErrorDomain", 203, false, true, .stopped(domain: "kAFAssistantErrorDomain", code: 203)),
             ("kAFAssistantErrorDomain", 1101, false, false, .unavailable),
-            (SFSpeechErrorDomain, 1, false, true, .stopped),
+            (SFSpeechErrorDomain, 1, false, true, .stopped(domain: SFSpeechErrorDomain, code: 1)),
             (SFSpeechErrorDomain, 1, false, false, .unavailable),
         ]
         for (domain, code, stopping, available, failure) in rows {

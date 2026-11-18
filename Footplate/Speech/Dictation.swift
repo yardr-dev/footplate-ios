@@ -171,8 +171,12 @@ enum DictationFailure: Error, Equatable, Sendable {
     /// The recognizer cannot hear just now: its model is gone, its service
     /// is down, or the phone's limit for it is used.
     case unavailable
-    /// The recognizer stopped for a reason it does not say.
-    case stopped
+    /// The recognizer stopped for a reason this app has no words for: the
+    /// error's domain and code ride along, so that the line under the field
+    /// can name them and a person on a real device can tell us what the
+    /// recognizer said (footplate-ios-p2py: a stop at once on an iPad whose
+    /// cause nobody could name, the domain and code dropped).
+    case stopped(domain: String, code: Int)
 
     /// What is said under the field, none for silence.
     var words: String? {
@@ -180,7 +184,7 @@ enum DictationFailure: Error, Equatable, Sendable {
         case .notHeard: return nil
         case .couldNotStart: return "The microphone could not start; tap it to try again."
         case .unavailable: return "Speech recognition is not available just now; try again in a little while."
-        case .stopped: return "Speech recognition stopped; tap the microphone to try again."
+        case .stopped(let domain, let code): return "Speech recognition stopped (\(domain) \(code)); tap the microphone to try again."
         }
     }
 }

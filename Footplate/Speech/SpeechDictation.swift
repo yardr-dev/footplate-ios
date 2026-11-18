@@ -51,15 +51,15 @@ func consent(_ permission: AVAudioApplication.recordPermission) -> Consent {
 /// What an error of a recognition task means, nil where it is no failure:
 /// the task was cancelled by the app. Silence is the recognizer's 1110, and
 /// any error that answers the person's own stop leaves the words that
-/// stand as they are. Any other says it stopped, or that the recognizer
-/// is not available where it no longer is (a limit of the phone, the
-/// SDK's header says, shows as a request that fails within a second or
-/// two of starting).
+/// stand as they are. Any other says it stopped, naming the domain and
+/// code it stopped with, or that the recognizer is not available where it
+/// no longer is (a limit of the phone, the SDK's header says, shows as a
+/// request that fails within a second or two of starting).
 func dictationFailure(domain: String, code: Int, stopping: Bool, available: Bool) -> DictationFailure? {
     if domain == "kLSRErrorDomain", code == 301 { return nil }
     if domain == "kAFAssistantErrorDomain", code == 1110 { return .notHeard }
     if stopping { return .notHeard }
-    return available ? .stopped : .unavailable
+    return available ? .stopped(domain: domain, code: code) : .unavailable
 }
 
 /// The locales that hear on the device now among `current`'s language: the
