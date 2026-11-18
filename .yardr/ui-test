@@ -1,0 +1,106 @@
+#!/bin/sh
+# One UI test on the gate's simulator, under the gate's lock, with its
+# attachments exported to a printed directory. The gate never runs UI
+# tests, but they install and launch on the same simulator, so a run
+# typed by hand takes no lock and can kill a gate run's test host. One
+# test at a time, as the gate runs one suite at a time:
+# .yardr/ui-test DictationScreenTests/testAllowingBothPromptsRecordsOrSaysWhy
+# The run uninstalls the app and resets its privacy first, so the test
+# starts with neither consent decided and no yard paired. A name that
+# matches nothing fails, as a named gate run does. The lock block below
+# is a copy of .yardr/test's: the same lock file is the whole point.
+# Keep the two in step; the gate itself stays untouched.
+set -e
+# A missing name would run the whole UI suite, and a second name would
+# be dropped without a word, and the pass would hide it.
+if [ "$#" -ne 1 ]; then
+  echo "usage: .yardr/ui-test <Test>: one test at a time" >&2
+  exit 1
+fi
+# Every run installs and launches the same app on the one simulator, so two at
+# once (two worktrees, or a worktree and a landing) kill each other's test host
+# ("Test crashed with signal kill") though no test failed. So hold a lock from
+# before xcodebuild to its end. getconf names the directory, not $TMPDIR, which
+# an environment may move or unset, and a lock split in two is no lock. -o keeps
+# the lock off xcodebuild's children, so a daemon it leaves behind cannot hold
+# it on. Without flock the run fails rather than going unlocked.
+if ! command -v flock >/dev/null; then
+  echo "flock not found: the gate runs one simulator test at a time under it (brew install flock)" >&2
+  exit 1
+fi
+lock="$(getconf DARWIN_USER_TEMP_DIR)footplate-ios-sim.lock"
+sim=7EC91353-EDF5-4E93-B644-46A44BA6CFCB
+# Shared: two runs starting together must not read each other's probe as a run.
+flock -s -n "$lock" true || echo "waiting for another run on the simulator ($lock)" >&2
+# A cold simulator that xcodebuild boots for itself can refuse the app's launch
+# with Busy before any test runs (footplate-ios-ts3d). So under the lock, boot it
+# and wait until it is ready first; bootstatus returns at once for one that is.
+# xcodebuild shuts down only a simulator it booted itself, so this one stays
+# booted after the run: leave it, the next run starts warm. The quoted script is
+# the inner shell's own: its $1 is the simulator, its $@ the xcodebuild arguments.
+run() {
+  flock -o "$lock" sh -ec '
+    xcrun simctl bootstatus "$1" -b
+    # A missing app is already uninstalled: this fails on a fresh
+    # simulator, where the privacy reset still clears the consents.
+    xcrun simctl uninstall "$1" dev.yardr.footplate 2>/dev/null || true
+    xcrun simctl privacy "$1" reset all dev.yardr.footplate
+    shift
+    exec xcodebuild test "$@"
+  ' sh "$sim" \
+    -project Footplate.xcodeproj \
+    -scheme Footplate \
+    -destination "platform=iOS Simulator,id=$sim" \
+    -only-testing:"FootplateUITests/$1" \
+    -resultBundlePath "$bundle"
+}
+# A name that matches nothing runs 0 tests, and xcodebuild still prints TEST
+# SUCCEEDED and exits 0, so a named run must show it executed some. tee shows
+# the output as it comes and keeps it in a file to count from. sh has no
+# pipefail, so the pipe's status is tee's: the subshell writes xcodebuild's to
+# a second file, with set +e so that the set -e above cannot end it before.
+log=$(mktemp)
+status=$(mktemp)
+bundle=$(mktemp -d)/FootplateUI.xcresult
+shots=$(mktemp -d)
+trap 'rm -f "$log" "$status"' EXIT
+(set +e; run "$1"; echo $? >"$status") | tee "$log"
+rc=$(cat "$status")
+# The attachments, exported whether the test passed or failed: a
+# failure's screenshots are what the run is for. The bundle's own path
+# is in the run's output above.
+if [ -d "$bundle" ]; then
+  xcrun xcresulttool export attachments --path "$bundle" --output-path "$shots"
+  echo "attachments: $shots"
+fi
+[ "$rc" = 0 ] || exit "${rc:-1}"
+# XCTest prints its count on stdout, says "Executed 1 test" for one, and
+# counts a skipped test in N ("Executed 3 tests, with 1 test skipped and 0
+# failures"). So a line passes when N is above its M skipped (0 where it has
+# no such clause), which one grep cannot say; one passing line is enough, as
+# a log has a line per suite and a total. A log with none fails, and so does
+# one Apple rewords, a "skipped" in any other shape included: that breaks
+# loud, where a count read loosely would reopen the hole without a word.
+# POSIX awk only: this Mac's has no three-argument match or gensub.
+if ! awk '
+  function num(s) {
+    sub(/^[^0-9]*/, "", s)
+    sub(/[^0-9].*$/, "", s)
+    return s + 0
+  }
+  match($0, /Executed [0-9]+ tests?/) {
+    n = num(substr($0, RSTART, RLENGTH))
+    m = 0
+    if (match($0, /with [0-9]+ tests? skipped/))
+      m = num(substr($0, RSTART, RLENGTH))
+    else if ($0 ~ /skipped/)
+      next
+    if (n > m)
+      ok = 1
+  }
+  END { exit !ok }
+' "$log"; then
+  echo "$1: no tests ran (no \"Executed N tests\" line with N above the tests skipped):" \
+    "is the name right, or is every test skipped?" >&2
+  exit 1
+fi

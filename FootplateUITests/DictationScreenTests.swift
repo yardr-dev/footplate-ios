@@ -1,20 +1,19 @@
 import XCTest
 
-// Run by hand, outside .yardr/test; attachments record the simulator's
-// appearance. Dictation over the phone's own recognizer (footplate-ios-tedd),
-// not the fake the gate's tests drive: the system's prompts, the engine and
-// the recognizer's callbacks, which no unit test reaches. Each test starts
-// with neither consent decided, so run each alone, on the gate's simulator
-// and holding the gate's lock (flock -o on footplate-ios-sim.lock in
-// `getconf DARWIN_USER_TEMP_DIR`, as .yardr/test does), after
-// `xcrun simctl uninstall <udid> dev.yardr.footplate` and
-// `xcrun simctl privacy <udid> reset all dev.yardr.footplate`: the second
-// is what clears the consents. A test that fails with a system prompt up
-// leaves it standing, and the next run's default handler answers it, so the
-// tests refuse any prompt they leave. Run with no yard paired, as
-// DemoScreenTests wants: the demo's conversation with the yardmaster. A
-// simulator whose recognizer does not hear its locale on the device offers
-// no microphone, which the app is meant to do, and the tests skip. A simulator takes its microphone from the Mac, which may have none:
+// Run by hand, outside .yardr/test, one test at a time:
+// .yardr/ui-test DictationScreenTests/<test>
+// The script holds the gate's lock, starts the app with neither consent
+// decided and no yard paired, runs the test on the gate's simulator, and
+// exports its attachments to a printed directory. Attachments record the
+// simulator's appearance. Dictation over the phone's own recognizer
+// (footplate-ios-tedd), not the fake the gate's tests drive: the system's
+// prompts, the engine and the recognizer's callbacks, which no unit test
+// reaches. A test that fails with a system prompt up leaves it standing,
+// and the next run's default handler answers it, so the tests refuse any
+// prompt they leave. The tests open the demo's conversation with the
+// yardmaster. A simulator whose recognizer does not hear its locale on
+// the device offers no microphone, which the app is meant to do, and the
+// tests skip. A simulator takes its microphone from the Mac, which may have none:
 // the recording then says that the microphone could not start, and the test
 // accepts that as readily as the strip. Nobody speaks into a simulator, so
 // no words are heard here; the words, the stop's final, a send and the

@@ -10,7 +10,8 @@ import XCTest
 // this, the card's own bead expanded to its description and notes, one
 // of them carrying a picture, the other bead expanded the same, the
 // conversation Ask about this opens,
-// a weighty card with its own row shut, a harness login's code card
+// a weighty card with its own row shut and a Trojan weight line drawn
+// marked beside the plain one, a harness login's code card
 // with its sign-in link, an API key's card, a sealed two-name secret
 // card with its reach under its line and one field per name, and
 // starter's summary card with the text of one of its files.
@@ -160,6 +161,7 @@ final class DecisionScreenshotTests: XCTestCase {
         // A weighty card about nothing still has its own bead's row, shut,
         // between its context and its options.
         XCTAssertFalse(decision.state.weighty.isEmpty)
+        XCTAssertEqual(decision.state.weighty.count, 2, "the shot's card carries the plain line and the Trojan one")
         XCTAssertEqual(decision.state.details.map(\.id), ["yd-map"])
         XCTAssertEqual(decision.state.details.map(\.expanded), [false])
         decision.leave()
@@ -397,6 +399,13 @@ final class DecisionScreenshotTests: XCTestCase {
         return Bead(id: "yd-bars", asks: [BeadAsk(ask: 63, question: "Update the starter pack in depot yard?", run: run)])
     }
 
+    /// A weight sentence carrying a Trojan pack file name, as the yard
+    /// sends it raw: the weighty card's second line, drawn marked beside
+    /// the plain first.
+    private var trojanWeight: AskWeight {
+        AskWeight(kind: "code", line: "the first install of pack starter into depot yard makes file roles/trojan\u{202E}note\u{2066}.md\u{001B}\u{2028}, and the yard reads its words")
+    }
+
     /// A summary card whose one file is a Trojan: its name hides an
     /// override, its text an override, a zero-width space and a bell.
     private var trojanBeadName: String { "roles/trojan\u{202E}note.md" }
@@ -560,7 +569,7 @@ final class DecisionScreenshotTests: XCTestCase {
             notifications: Notifications(),
             asks: Asks(open: [
                 OpenAsk(bead: "yd-links", beadTitle: "Move the links", ask: 3, question: "Move this yard's links to the declared source now?", asker: "yardmaster", since: "2026-10-08T09:30:00Z"),
-                OpenAsk(bead: "yd-map", beadTitle: "Who wrote in", ask: 7, question: "Who is U024BE7LH on slack?", asker: "yardmaster", since: "2026-10-08T09:30:00Z", identity: Identity(source: "slack", sender: "U024BE7LH", channel: "C1"), weight: [AskWeight(kind: "as-user", line: "writes who a sender is: U024BE7LH on slack becomes a user of the yard")]),
+                OpenAsk(bead: "yd-map", beadTitle: "Who wrote in", ask: 7, question: "Who is U024BE7LH on slack?", asker: "yardmaster", since: "2026-10-08T09:30:00Z", identity: Identity(source: "slack", sender: "U024BE7LH", channel: "C1"), weight: [AskWeight(kind: "as-user", line: "writes who a sender is: U024BE7LH on slack becomes a user of the yard"), trojanWeight]),
                 OpenAsk(bead: "yd-tidy", beadTitle: "Tidy the sidings", ask: 9, question: "Remove the merged worktrees now?", asker: "yardmaster", since: "2026-10-08T09:30:00Z"),
             ], decided: [
                 DecidedAsk(bead: "yd-greet", beadTitle: "The greeting", ask: 5, question: "What should the tone of the greeting be?", state: "declined"),
@@ -660,7 +669,7 @@ final class DecisionScreenshotTests: XCTestCase {
                     ],
                     recommend: 1, why: "jo wrote from this workspace before",
                     identity: Identity(source: "slack", sender: "U024BE7LH", channel: "C1"),
-                    weight: [AskWeight(kind: "as-user", line: "writes who a sender is: U024BE7LH on slack becomes a user of the yard")]
+                    weight: [AskWeight(kind: "as-user", line: "writes who a sender is: U024BE7LH on slack becomes a user of the yard"), trojanWeight]
                 ),
             ]),
         ]

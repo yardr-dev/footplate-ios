@@ -608,6 +608,23 @@ final class DecisionModelTests: XCTestCase {
         XCTAssertEqual(literal.text, "see U+202E here")
         XCTAssertTrue(literal.spans.allSatisfy { !$0.mark }, "a literal code point draws as its neighbours do")
 
+        // The same lens over a weight line, as both card draws draw it: a
+        // Trojan pack file name in the sentence marks each of its
+        // characters, in place, so the line never reorders and nothing
+        // hides; a plain weight line is one plain span, drawn unchanged.
+        let trojanName = "roles/trojan\u{202E}note\u{2066}.md\u{001B}\u{2028}"
+        let trojanLine = weightLine(AskWeight(kind: "code", line: "the first install of pack starter into depot yard makes file \(trojanName), and the yard reads its words"))
+        XCTAssertEqual(
+            markedSpans(of: trojanLine).filter(\.mark).map(\.text),
+            ["U+202E", "U+2066", "U+001B", "U+2028"]
+        )
+        XCTAssertEqual(
+            markedReading(of: trojanLine),
+            "WEIGHTY · code: the first install of pack starter into depot yard makes file roles/trojanU+202EnoteU+2066.mdU+001BU+2028, and the yard reads its words"
+        )
+        let plainLine = weightLine(AskWeight(kind: "as-user", line: "writes who a sender is: U024BE7LH on slack becomes a user of the yard"))
+        XCTAssertEqual(markedSpans(of: plainLine), [MarkedSpan(text: plainLine)])
+
         // End to end: a create's text and a change's diff and new text, a
         // Trojan name and a Trojan command-file program, as the yard sends
         // them.

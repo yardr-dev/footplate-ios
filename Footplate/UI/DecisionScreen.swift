@@ -92,9 +92,8 @@ struct DecisionsScreen: View {
     private func decisionCard(_ card: Card) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(Array(card.weighty.enumerated()), id: \.offset) { _, line in
-                Text(line)
+                markedText(markedSpans(of: line), base: .textPrimary)
                     .themeType(.label)
-                    .foregroundStyle(ThemeColor.textPrimary.color)
             }
             Text(card.title)
                 .themeType(.meta)
@@ -178,9 +177,8 @@ struct DecisionScreen: View {
     @ViewBuilder
     private func card(_ state: DecisionState) -> some View {
         ForEach(Array(state.weighty.enumerated()), id: \.offset) { _, line in
-            Text(line)
+            markedText(markedSpans(of: line), base: .textPrimary)
                 .themeType(.label)
-                .foregroundStyle(ThemeColor.textPrimary.color)
         }
         if let door = state.door {
             Text(door)
