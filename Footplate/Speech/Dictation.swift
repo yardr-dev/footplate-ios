@@ -260,6 +260,80 @@ func barLevel(rms: Float) -> Float {
     return min(1, max(0, (20 * log10(rms) + 50) / 50))
 }
 
+/// What one recording has heard lately of the microphone's sound, in
+/// decibels below full scale: its last readings, oldest first. The level
+/// the tap hears is its own and differs by device, by distance and by
+/// voice: a fixed range draws quiet speech at the floor, so the bars are
+/// ranged by what the recording itself has heard, as Android's `fit` ranges
+/// them (footplate-android's Dictation.kt). Lately, and not over the whole
+/// recording: its lowest and highest are the room and the loudest cough,
+/// and between them a loud word and a quiet one stand alike. The recording
+/// holds this and it goes with the recording.
+struct LevelWindow: Equatable, Sendable {
+    var readings: [Float] = []
+}
+
+/// The level of a sound heard at `rms` against what its recording has heard
+/// lately (`heard`), from 0 to 1 for the strip's bars, and what the
+/// recording has heard once it is counted in.
+///
+/// The range is the window's own: its low is the 20th percentile of the
+/// readings and its high the 95th, each by nearest rank, and a reading is
+/// placed between them. What lies under the low reads 0, so the room and
+/// the gaps between words are short bars, and a word stands as tall as it
+/// is loud among the rest. The percentiles hold out against a cough: a few
+/// readings far over the rest move an end only to the next reading in line,
+/// where a highest would follow them and flatten the words after. A quiet
+/// word stands under two thirds of a loud one's height, and on a straight
+/// line it stands over that, so the place is bent.
+///
+/// The fixed range of `barLevel` reads where the window has too little to
+/// range by: before it holds 10 readings (the first half-second of a
+/// recording), and where its low and high are closer than 3 dB, a quiet
+/// room's own wander, which ranged would be stretched to the bars' full
+/// height.
+///
+/// A reading that is silence, or no number, reads 0, teaches nothing and
+/// takes no place in the window.
+func fit(_ heard: LevelWindow, rms: Float) -> (LevelWindow, Float) {
+    let db = 20 * log10(rms)
+    guard db.isFinite else { return (heard, 0) }
+    let window = LevelWindow(readings: Array((heard.readings + [db]).suffix(levelWindowSize)))
+    guard window.readings.count >= levelWarmup else { return (window, barLevel(rms: rms)) }
+    let sorted = window.readings.sorted()
+    let low = sorted[(levelLowPercent * sorted.count + 99) / 100 - 1]
+    let high = sorted[(levelHighPercent * sorted.count + 99) / 100 - 1]
+    guard high - low >= levelSpan else { return (window, barLevel(rms: rms)) }
+    let place = min(1, max(0, (db - low) / (high - low)))
+    return (window, pow(place, levelBend))
+}
+
+/// "Lately": the readings the window keeps, about three seconds of tap
+/// buffers. It counts readings and not time, so a tap that delivers faster
+/// fills it sooner.
+private let levelWindowSize = 60
+
+/// The readings the window must hold before it ranges anything: the first
+/// half-second at the tap's rate.
+private let levelWarmup = 10
+
+/// The window's low and high, as percentiles. The low falls among the quiet
+/// readings, where the room and the gaps between words are, so they read 0.
+/// The high falls under the loudest few, so a cough stands over it and moves
+/// it no further than the next reading.
+private let levelLowPercent = 20
+private let levelHighPercent = 95
+
+/// "A few decibels": the width under which the low and the high are taken for
+/// a quiet room's wander and not for speech.
+private let levelSpan: Float = 3
+
+/// The exponent of the bend between the low and the high, above 1 so that the
+/// curve lies under the straight line: a reading half way up stands at a
+/// quarter. DictationTests holds the heights it gives a series of loud words,
+/// quiet words and gaps.
+private let levelBend: Float = 2
+
 /// How many levels the strip keeps: more than it draws on the widest phone.
 let barsKept = 64
 

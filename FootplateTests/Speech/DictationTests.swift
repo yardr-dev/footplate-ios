@@ -205,6 +205,77 @@ final class DictationTests: XCTestCase {
         }
     }
 
+    /// The strip moves with a quiet voice: speech far under full scale still
+    /// reads as bars that rise and fall, not a flat line (footplate-ios-05vr).
+    /// A fixed range draws this series at its floor; ranged by what the
+    /// recording has heard, it stands tall.
+    func testTheStripShowsQuietSpeechAsMovingBars() {
+        // A quiet voice in measurement mode, in dB below full scale, and a
+        // loud one: both move once the window ranges them.
+        let quiet: [Float] = [-52, -46, -54, -44, -50, -48, -56, -45, -51, -47, -53, -43, -49, -55, -42, -50]
+        let loud: [Float] = [-28, -18, -30, -16, -26, -20, -32, -17, -27, -19, -29, -15, -25, -31, -18, -24]
+        for heard in [quiet, loud] {
+            let levels = fitted(heard)
+            let range = levels.max()! - levels.min()!
+            XCTAssertGreaterThan(range, 0.5, "\(heard) reads as \(levels)")
+            let settled = levels.suffix(6)
+            XCTAssertGreaterThan(settled.max()! - settled.min()!, 0.3, "after the warmup \(heard) reads as \(levels)")
+        }
+    }
+
+    /// The bars are ranged by what the recording has heard lately: the first
+    /// readings read by the fixed range, silence reads 0 and teaches nothing,
+    /// gaps between words read low and words high, a cough moves the top no
+    /// further than the next reading, and half way up stands at a quarter.
+    func testTheStripRangesItsBarsByWhatTheRecordingHasHeard() {
+        // Before the window holds enough to range by, the fixed range reads.
+        let (first, one) = fit(LevelWindow(), rms: 0.1)
+        XCTAssertEqual(one, 0.6, accuracy: 0.0001)
+        XCTAssertEqual(first.readings.count, 1)
+        XCTAssertEqual(first.readings.first!, -20, accuracy: 0.01)
+        var warming = LevelWindow()
+        for rms in [0.001, 0.01, 0.1, 0.05, 0.002, 0.2, 0.003, 0.15, 0.008] as [Float] {
+            let (next, level) = fit(warming, rms: rms)
+            warming = next
+            XCTAssertEqual(level, barLevel(rms: rms), accuracy: 0.0001, "nine readings are under the warmup")
+        }
+        // Silence, and no number: 0, and no place in the window.
+        for rms in [0, Float.nan] {
+            let (kept, level) = fit(LevelWindow(), rms: rms)
+            XCTAssertTrue(kept.readings.isEmpty)
+            XCTAssertEqual(level, 0)
+        }
+        var silent = LevelWindow()
+        for _ in 0..<5 { (silent, _) = fit(silent, rms: 0) }
+        XCTAssertTrue(silent.readings.isEmpty)
+        // A quiet room's wander, narrower than speech: the fixed range reads
+        // it as 0 throughout, never stretched to full height.
+        let room: [Float] = [-70, -69, -71, -70, -69.5, -70.5, -70, -69, -71, -70, -70, -69.5, -70.5, -70, -69, -71, -70, -69.5, -70.5, -70]
+        XCTAssertTrue(fitted(room).allSatisfy { $0 == 0 }, "the room reads as \(fitted(room))")
+        // Words and the gaps between them: high and low.
+        let talking = (0..<30).map { $0 % 2 == 0 ? Float(-20) : Float(-55) }
+        for (index, level) in fitted(talking).enumerated() where index >= 9 {
+            if index % 2 == 0 {
+                XCTAssertGreaterThan(level, 0.8, "a word reads \(level)")
+            } else {
+                XCTAssertLessThan(level, 0.2, "a gap reads \(level)")
+            }
+        }
+        // Two coughs among a full window of quiet words: the top stays under
+        // them, and the quiet words still range the whole height.
+        let words = (0..<58).map { $0 % 2 == 0 ? Float(-52) : Float(-46) }
+        let after = fitted(words + [-12, -12, -46, -52]).suffix(2)
+        XCTAssertGreaterThan(after.first!, 0.8, "a quiet word after two coughs reads \(after)")
+        XCTAssertLessThan(after.last!, 0.2, "the room after two coughs reads \(after)")
+        // Half way between the low and the high stands at a quarter.
+        let ends = Array(repeating: Float(-50), count: 10) + Array(repeating: Float(-30), count: 10)
+        XCTAssertEqual(fitted(ends + [-40]).last!, 0.25, accuracy: 0.01)
+        // The window keeps the last sixty readings, and no more.
+        var window = LevelWindow()
+        for _ in 0..<70 { (window, _) = fit(window, rms: 0.01) }
+        XCTAssertEqual(window.readings.count, 60)
+    }
+
     /// The bars: nothing is a floor, full scale is the top, the range between
     /// is in decibels; the strip keeps the newest levels and no more.
     func testTheStripsBarsReadTheSoundInDecibelsAndKeepTheNewest() {
@@ -319,6 +390,16 @@ final class DictationTests: XCTestCase {
             XCTAssertEqual(error as? DictationFailure, .unavailable)
         }
         XCTAssertEqual(lists.count, 3)
+    }
+
+    /// The levels a series of dB readings gives through one window.
+    private func fitted(_ heard: [Float]) -> [Float] {
+        var window = LevelWindow()
+        return heard.map { db in
+            let (next, level) = fit(window, rms: pow(10, db / 20))
+            window = next
+            return level
+        }
     }
 }
 

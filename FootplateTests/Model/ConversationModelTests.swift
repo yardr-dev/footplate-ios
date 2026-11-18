@@ -469,7 +469,7 @@ final class ConversationModelTests: XCTestCase {
     /// The words heard are written after the draft as they come, the field
     /// taking each write; a stop shuts the microphone at once and keeps the
     /// words the recognizer ends with, and the strip's bars read the sound
-    /// while it is heard.
+    /// while it is heard, none while it settles.
     func testTheWordsHeardAreWrittenAfterTheDraftAndAStopKeepsThem() async throws {
         try await openConversation([])
         model.readDictationGate()
@@ -489,6 +489,9 @@ final class ConversationModelTests: XCTestCase {
         try await waitFor("the stop") { [model] in model?.state.dictation.recording == .finishing }
         XCTAssertEqual(run.finishes, 1)
         XCTAssertEqual(dictation.stopped, 1, "the microphone is shut at the stop, before the final")
+        run.level(0.9)
+        for _ in 0..<5 { await Task.yield() }
+        XCTAssertEqual(model.levels, [0.4], "the settling recording keeps no new sound")
         run.say("it tonight.", final: true)
         await stop.value
         XCTAssertNil(model.state.dictation.recording)

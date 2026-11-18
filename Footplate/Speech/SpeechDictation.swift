@@ -174,7 +174,7 @@ private func askSpeech() async -> SFSpeechRecognizerAuthorizationStatus {
 /// session, in one stream so that it is handled in the order it happened.
 private enum Heard: Sendable {
     case words(String, final: Bool)
-    case level(Float)
+    case sound(Float)
     case failure(domain: String, code: Int)
     case interrupted
 }
@@ -199,6 +199,7 @@ final class SpeechRun: DictationRun {
     private var stopping = false
     private var over = false
     private var sessionHeld = false
+    private var window = LevelWindow()
 
     init(recognizer: SFSpeechRecognizer, request: SFSpeechAudioBufferRecognitionRequest) {
         self.recognizer = recognizer
@@ -226,7 +227,7 @@ final class SpeechRun: DictationRun {
         do {
             try capture.start(
                 feeding: request,
-                levels: { heardIn.yield(.level($0)) },
+                sound: { heardIn.yield(.sound($0)) },
                 configurationChanged: { heardIn.yield(.interrupted) }
             )
         } catch {
@@ -266,8 +267,12 @@ final class SpeechRun: DictationRun {
     private func receive(_ one: Heard) {
         guard !over else { return }
         switch one {
-        case .level(let level):
-            if !stopping { out.yield(.level(level)) }
+        case .sound(let rms):
+            if !stopping {
+                let (window, level) = fit(window, rms: rms)
+                self.window = window
+                out.yield(.level(level))
+            }
         case .words(let text, let final):
             out.yield(.words(text, final: final))
             if final { end() }
@@ -325,7 +330,7 @@ private final class Capture: @unchecked Sendable {
 
     func start(
         feeding request: SFSpeechAudioBufferRecognitionRequest,
-        levels: @escaping @Sendable (Float) -> Void,
+        sound: @escaping @Sendable (Float) -> Void,
         configurationChanged: @escaping @Sendable () -> Void
     ) throws {
         let input = engine.inputNode
@@ -335,7 +340,7 @@ private final class Capture: @unchecked Sendable {
         guard format.sampleRate > 0, format.channelCount > 0 else { throw DictationFailure.couldNotStart }
         input.installTap(onBus: 0, bufferSize: 2048, format: format) { buffer, _ in
             request.append(buffer)
-            levels(barLevel(rms: Self.rms(buffer)))
+            sound(Self.rms(buffer))
         }
         configuration = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
