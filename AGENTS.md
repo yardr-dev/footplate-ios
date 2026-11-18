@@ -133,8 +133,9 @@ build to App Store Connect, for mckean's iPhone and iPad. A per-build run
 is the yardmaster's or mckean's, never a builder's: on a clean checkout of
 `main`, with the API key's IDs in the environment,
 `ASC_KEY_ID=<key id> ASC_ISSUER_ID=<issuer id> scripts/testflight`. The
-build number is `main`'s commit count, set by the script and never
-committed. `scripts/testflight --no-upload` archives and exports locally
-without uploading. The `.p8` stays in
-`~/.appstoreconnect/private_keys/` and is never copied, committed,
-printed or noted.
+script builds a snapshot of `main`'s commit, exported to a temporary
+directory, so a landing mid-build cannot change the source; the build
+number is that commit's count, set by the script and never committed.
+`scripts/testflight --no-upload` archives and exports locally without
+uploading. The `.p8` stays in `~/.appstoreconnect/private_keys/` and is
+never copied, committed, printed or noted.

@@ -8,10 +8,12 @@
 #   ASC_KEY_ID=<key id> ASC_ISSUER_ID=<issuer id> scripts/testflight
 #
 # The build number is main's commit count, passed to xcodebuild and never
-# committed. The .p8 stays where it was put, ~/.appstoreconnect/private_keys/,
-# and is read in place, never copied or printed. --no-upload archives and
-# exports locally instead, proving the archive and the signing without
-# uploading.
+# committed. The build runs against a snapshot of main's commit, exported
+# to a temporary directory, so a landing during the archive cannot change
+# the source under it; the snapshot is removed on the way out. The .p8
+# stays where it was put, ~/.appstoreconnect/private_keys/, and is read
+# in place, never copied or printed. --no-upload archives and exports
+# locally instead, proving the archive and the signing without uploading.
 set -e
 
 PROG=scripts/testflight
@@ -45,13 +47,28 @@ if [ "$upload" = "yes" ]; then
     branch="$(git symbolic-ref --short HEAD 2>/dev/null || echo detached)"
     [ "$branch" = "main" ] || fail "not on main; uploads run from a clean checkout of main"
 fi
-build="$(git rev-list --count main)" || fail "cannot count main's commits"
+# main is resolved to one commit before the build starts, and the build runs
+# against a snapshot of that commit: a landing while xcodebuild works must
+# not change the source under it (footplate-ios-gdv3). The number is counted
+# from the commit, not the name.
+commit="$(git rev-parse main)" || fail "cannot resolve main to a commit"
+build="$(git rev-list --count "$commit")" || fail "cannot count main's commits"
 
 out="$(mktemp -d)"
+snap="$(mktemp -d)"
+# One trap: a second would replace the first. The snapshot goes on the way
+# out, pass or fail; $out with it on uploads, while --no-upload keeps
+# $out/export as the record of the run.
 if [ "$upload" = "yes" ]; then
-    # Upload runs only need this directory while xcodebuild is working.
-    trap 'rm -rf "$out" 2>/dev/null || true' EXIT
+    trap 'rm -rf "$snap" "$out" 2>/dev/null || true' EXIT
+else
+    trap 'rm -rf "$snap" 2>/dev/null || true' EXIT
 fi
+git archive "$commit" | tar -x -C "$snap" || fail "cannot export $commit"
+# tar reads an empty archive as success, so a failed export would pass
+# through the pipe alone; the project file proves the snapshot landed.
+[ -f "$snap/Footplate.xcodeproj/project.pbxproj" ] || fail "cannot export $commit"
+cd "$snap" || fail "cannot enter the snapshot"
 archive="$out/Footplate.xcarchive"
 plist="$out/ExportOptions.plist"
 if [ "$upload" = "yes" ]; then
@@ -96,7 +113,7 @@ xcodebuild -exportArchive \
     -authenticationKeyIssuerID "$ASC_ISSUER_ID"
 
 if [ "$upload" = "yes" ]; then
-    echo "$PROG: build $build uploaded"
+    echo "$PROG: build $build ($commit) uploaded"
 else
-    echo "$PROG: build $build exported to $out/export (not uploaded)"
+    echo "$PROG: build $build ($commit) exported to $out/export (not uploaded)"
 fi

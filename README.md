@@ -143,6 +143,10 @@ directory that way:
 TEST_RUNNER_LINE_SHOTS_DIR=$(mktemp -d) sh .yardr/test LineScreenshotTests
 ```
 
+Run `python3 scripts/test-testflight.py` to exercise the TestFlight snapshot
+and cleanup with a throwaway repository and a fake `xcodebuild`; it does not
+sign or upload a build.
+
 The theme test compares the catalogue's dark and light appearances and the
 phone type roles with vendored yardr-design tokens, and checks the bundled
 fonts are registered. `FootplateUITests` runs separately by hand, against the
