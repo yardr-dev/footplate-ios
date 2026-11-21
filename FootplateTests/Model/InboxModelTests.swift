@@ -1281,7 +1281,7 @@ final class InboxModelTests: XCTestCase {
                     Notification(seq: 11, at: "2026-10-08T09:31:00Z", kind: "noted", bead: "yd-shed", text: "yd-shed noted (all) by yardmaster note=1", read: false),
                 ], unread: 1, last: 11)
                 : Notifications(),
-            asks: Asks(open: [
+            asks: OpenQueue(open: [
                 OpenAsk(bead: "yd-links", ask: 3, question: "Move the links?", asker: "yardmaster"),
                 OpenAsk(bead: "yd-map", ask: 7, question: "Who is U024BE7LH?", asker: "yardmaster"),
             ], decided: [])
@@ -1389,7 +1389,21 @@ final class FakeFollowed: Followed {
     var gives: [(String, Int64, [String: String], Bool)] = []
     var defers: [(String, Int64)] = []
     var declines: [(String, Int64, String)] = []
-    var asksAgain: Asks = Asks()
+    /// What the queue's reads answer, the loaded state's own where none is
+    /// set: the open asks alone for `openAsks`, the whole queue for `asks`.
+    var openAsksAgain: OpenQueue? = nil
+    var asksAgain: Asks? = nil
+    /// How many reads of each width were made.
+    var openAskReads = 0
+    var wholeAskReads = 0
+    /// Holds the next open-only read until `releaseOpenAsksRead`.
+    var holdNextOpenAsksRead = false
+    private var pendingOpenAsksRead: (continuation: CheckedContinuation<OpenQueue, Never>, answer: OpenQueue)?
+    /// Holds the next whole read, with the answer it had when it was made,
+    /// until `releaseAsksRead`: a yard with a long history answers a whole
+    /// read after an open-only read made later.
+    var holdNextAsksRead = false
+    private var pendingAsksRead: (continuation: CheckedContinuation<Asks, Never>, answer: Asks)?
     /// Refused to the answering calls alone, so a card can be read
     /// and its answer refused.
     var answerRefuse: ApiError? = nil
@@ -1510,8 +1524,36 @@ final class FakeFollowed: Followed {
         pendingCrewRead = nil
     }
 
+    func openAsks() async throws -> OpenQueue {
+        openAskReads += 1
+        let answer = openAsksAgain ?? OpenQueue(open: state.loaded?.asks.open ?? [])
+        guard holdNextOpenAsksRead else { return answer }
+        holdNextOpenAsksRead = false
+        return await withCheckedContinuation { pendingOpenAsksRead = ($0, answer) }
+    }
+
+    var openAsksReadHeld: Bool { pendingOpenAsksRead != nil }
+
+    func releaseOpenAsksRead() {
+        guard let pending = pendingOpenAsksRead else { return }
+        pendingOpenAsksRead = nil
+        pending.continuation.resume(returning: pending.answer)
+    }
+
     func asks() async throws -> Asks {
-        asksAgain
+        wholeAskReads += 1
+        let answer = asksAgain ?? Asks(open: state.loaded?.asks.open ?? [], decided: state.loaded?.asks.decided ?? [])
+        guard holdNextAsksRead else { return answer }
+        holdNextAsksRead = false
+        return await withCheckedContinuation { pendingAsksRead = ($0, answer) }
+    }
+
+    var asksReadHeld: Bool { pendingAsksRead != nil }
+
+    func releaseAsksRead() {
+        guard let pending = pendingAsksRead else { return }
+        pendingAsksRead = nil
+        pending.continuation.resume(returning: pending.answer)
     }
 
     func bead(_ bead: String) async throws -> Bead {

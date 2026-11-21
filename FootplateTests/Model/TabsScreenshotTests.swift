@@ -242,7 +242,7 @@ final class TabsScreenshotTests: XCTestCase {
                 Notification(seq: 10, at: "2026-10-08T09:30:00Z", kind: "created", bead: "yd-shed", text: "yd-shed created (all) by yardmaster", read: true),
                 Notification(seq: 11, at: "2026-10-08T09:31:00Z", kind: "noted", bead: "yd-shed", text: "yd-shed noted (all) by yardmaster note=1", read: false),
             ], unread: 1, last: 11),
-            asks: Asks(open: [
+            asks: OpenQueue(open: [
                 OpenAsk(bead: "yd-links", ask: 3, question: "Move the links?", asker: "yardmaster"),
                 OpenAsk(bead: "yd-map", ask: 7, question: "Who is U024BE7LH?", asker: "yardmaster"),
             ], decided: [])

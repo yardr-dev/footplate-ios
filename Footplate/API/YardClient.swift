@@ -281,6 +281,24 @@ final class YardClient: Sendable {
         try await answer(method: "UserAsks", args: ["name": name], as: Asks.self)
     }
 
+    /// The person's open asks alone, as `UserAsks` has them but with none
+    /// of the decided history, which is nearly all of its answer on a yard
+    /// that has run long. A yard from before the call refuses it as a
+    /// method it does not have (`isNoSuchMethod`); the queue is read whole
+    /// then (`UserAsks`, once) and answered whole, as the edge does it. Any
+    /// other refusal comes back as it stands, with no second read. Nothing
+    /// is remembered of an old yard: it pays the one small refusal on every
+    /// read.
+    func userOpenAsks(name: String) async throws -> OpenQueue {
+        do {
+            let asks = try await answer(method: "UserOpenAsks", args: ["name": name], as: Asks.self)
+            return OpenQueue(open: asks.open)
+        } catch let error as ApiError where error.isNoSuchMethod("UserOpenAsks") {
+            let asks = try await userAsks(name: name)
+            return OpenQueue(open: asks.open, decided: asks.decided)
+        }
+    }
+
     /// One bead whole, with its asks' options, recommendation and
     /// state.
     func bead(_ bead: String) async throws -> Bead {

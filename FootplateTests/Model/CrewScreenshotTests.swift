@@ -668,7 +668,7 @@ final class CrewScreenshotTests: XCTestCase {
         home.up(loaded())
         var ownLoaded = loaded()
         ownLoaded.me = Me(user: "jo", saidBy: "phone", yard: "plantime")
-        ownLoaded.asks = Asks(open: [OpenAsk(bead: "pt-shift", ask: 2, question: "Publish the shift?", asker: "yardmaster")], decided: [])
+        ownLoaded.asks = OpenQueue(open: [OpenAsk(bead: "pt-shift", ask: 2, question: "Publish the shift?", asker: "yardmaster")], decided: [])
         own.up(ownLoaded)
 
         let deadline = ContinuousClock.now + .seconds(10)
@@ -717,7 +717,7 @@ final class CrewScreenshotTests: XCTestCase {
         home.up(loaded())
         var labLoaded = loaded()
         labLoaded.me = Me(user: "joe", saidBy: "phone", yard: "lab")
-        labLoaded.asks = Asks(open: [OpenAsk(bead: "al-shift", ask: 2, question: "Publish the shift?", asker: "yardmaster")], decided: [])
+        labLoaded.asks = OpenQueue(open: [OpenAsk(bead: "al-shift", ask: 2, question: "Publish the shift?", asker: "yardmaster")], decided: [])
         lab.up(labLoaded)
 
         let deadline = ContinuousClock.now + .seconds(10)
@@ -774,7 +774,7 @@ final class CrewScreenshotTests: XCTestCase {
         for (name, follow) in [("laptop", shed), (plantime, own), ("alice/lab", lab)] {
             var one = loaded()
             one.me = Me(user: name == "alice/lab" ? "joe" : "jo", saidBy: "phone", yard: name)
-            one.asks = Asks(open: [OpenAsk(bead: "yd-\(follow === own ? "shift" : "gate")", ask: 2, question: "Land it?", asker: "yardmaster")], decided: [])
+            one.asks = OpenQueue(open: [OpenAsk(bead: "yd-\(follow === own ? "shift" : "gate")", ask: 2, question: "Land it?", asker: "yardmaster")], decided: [])
             follow.up(one)
         }
 
@@ -1000,7 +1000,7 @@ final class CrewScreenshotTests: XCTestCase {
                 Notification(seq: 10, at: "2026-10-08T09:30:00Z", kind: "created", bead: "yd-shed", text: "yd-shed created (all) by yardmaster", read: true),
                 Notification(seq: 11, at: "2026-10-08T09:31:00Z", kind: "noted", bead: "yd-shed", text: "yd-shed noted (all) by yardmaster note=1", read: false),
             ], unread: 1, last: 11),
-            asks: Asks(open: [
+            asks: OpenQueue(open: [
                 OpenAsk(bead: "yd-links", ask: 3, question: "Move the links?", asker: "yardmaster", since: "2026-10-08T11:53:00Z"),
                 OpenAsk(bead: "yd-map", ask: 7, question: "Who is U024BE7LH?", asker: "yardmaster", since: "2026-10-08T11:53:00Z"),
             ], decided: [])

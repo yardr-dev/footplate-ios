@@ -3,9 +3,11 @@ import Foundation
 // The decisions list (design 3.5, after Android's
 // model/DecisionsModel.kt): the selected yard's open asks as cards,
 // the weighty lines first on each, and the decided under them, each as
-// the yard last listed them. The list moves when the `noted` event's
-// re-read says so, never before: a pick, a Later or a Decline is the
-// yard's to record.
+// the yard last listed them. The open cards move when the `noted` event's
+// open-only re-read says so, never before: a pick, a Later or a Decline is
+// the yard's to record. The decided are read whole (`UserAsks`) where the
+// place appears and after the person's own decision, and not on every
+// noted event, which would read the whole history again for each note.
 
 /// One open ask as the Decisions list draws it, a card.
 struct Card: Equatable, Sendable {
@@ -61,6 +63,24 @@ final class DecisionsModel {
 
     var state: DecisionsState {
         decisions(board: records.kept.selected.flatMap { mailroom.boards[$0] })
+    }
+
+    /// The yard whose whole queue the place reads: the selected one, while
+    /// Decide is the place in front and the yard has a board to put the
+    /// history on. A change of it is the reason to read: the place
+    /// appearing, the selected yard changing under it, or the yard's first
+    /// board arriving while it is in front. A card pushed over the list
+    /// changes none, so coming back from it reads nothing.
+    var reading: String? {
+        guard nav.place == .decide, let yard = records.kept.selected, mailroom.boards[yard] != nil else { return nil }
+        return yard
+    }
+
+    /// Reads the whole queue of the yard the place is in front of, the
+    /// decided history with the open asks.
+    func read() async {
+        guard let yard = reading else { return }
+        await mailroom.fetchWhole(yard)
     }
 
     /// Opens one decision's card, pushed onto the decide stack.

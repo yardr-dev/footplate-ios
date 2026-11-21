@@ -470,7 +470,7 @@ final class FollowTests: XCTestCase {
                 "/user/call/UserInbox",
                 "/user/call/UserInbox",
                 "/user/call/UserNotifications",
-                "/user/call/UserAsks",
+                "/user/call/UserOpenAsks",
                 "/user/events?after=151",
             ]
         )

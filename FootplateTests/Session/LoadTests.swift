@@ -9,7 +9,8 @@ final class LoadTests: XCTestCase {
         let fake = FakeYard()
         let session = fake.session()
         let laptopToken = fake.token(yardName: "laptop")
-        let loaded = try await fake.edge().yard(device: laptopToken, session: session, name: "laptop").load()
+        let client = try fake.edge().yard(device: laptopToken, session: session, name: "laptop")
+        let loaded = try await client.load()
         XCTAssertEqual(loaded.me.user, "jo")
         XCTAssertEqual(loaded.me.saidBy, "pixel")
         XCTAssertEqual(loaded.me.yard, "laptop")
@@ -24,7 +25,7 @@ final class LoadTests: XCTestCase {
         XCTAssertEqual(loaded.notifications.notifications.count, 2)
         XCTAssertEqual(loaded.notifications.last, 11)
         XCTAssertEqual(loaded.asks.open.map(\.ask), [3, 7, 9])
-        XCTAssertEqual(loaded.asks.decided.count, 1)
+        XCTAssertNil(loaded.asks.decided, "the load reads the open asks alone, and says nothing of the history")
         let calls = (1...10).map { _ in fake.taken() }
         XCTAssertEqual(
             calls.map(\.path),
@@ -38,14 +39,42 @@ final class LoadTests: XCTestCase {
                 "/user/call/UserInbox",
                 "/user/call/UserInbox",
                 "/user/call/UserNotifications",
-                "/user/call/UserAsks",
+                "/user/call/UserOpenAsks",
             ]
         )
+        // Never the whole queue, on a yard that answers the open one; and
+        // the open cards are the ones a whole read lists.
+        let whole = try await client.userAsks(name: "jo")
+        XCTAssertEqual(loaded.asks.open, whole.open)
+        XCTAssertEqual(fake.allRequests.filter { $0.path == "/user/call/UserAsks" }.count, 1, "the one read made just now")
         // The inbox is counted first, then read with the unread and the
         // newest read, for the rows' first lines.
         XCTAssertEqual(limit(calls[6]), 1)
         XCTAssertEqual(limit(calls[7]), 2 + readLetters)
         XCTAssertEqual(limit(calls[8]), 0)
+    }
+
+    // A yard from before UserOpenAsks refuses it as a call it does not
+    // have: the load reads the whole queue instead, once, and holds the
+    // history it sent. Any other refusal is the load's, with no second read.
+    func testLoadReadsTheWholeQueueFromAYardWithNoUserOpenAsks() async throws {
+        let fake = FakeYard()
+        let session = fake.session()
+        let laptopToken = fake.token(yardName: "laptop")
+        let client = try fake.edge().yard(device: laptopToken, session: session, name: "laptop")
+        fake.nextFor(yard: "laptop", path: "/user/call/UserOpenAsks", .refused("no such method UserOpenAsks"))
+        let loaded = try await client.load()
+        XCTAssertEqual(loaded.asks.open.map(\.ask), [3, 7, 9])
+        XCTAssertEqual(loaded.asks.decided?.map(\.state), ["declined"])
+        XCTAssertEqual(Array(fake.allRequests.map(\.path).suffix(2)), ["/user/call/UserOpenAsks", "/user/call/UserAsks"])
+
+        // Any other refusal: the load fails as a refused UserAsks failed it,
+        // and no whole queue is read in its place.
+        fake.nextFor(yard: "laptop", path: "/user/call/UserOpenAsks", .refused("the queue is not readable"))
+        let before = fake.allRequests.count
+        let error = await raisedApiError { _ = try await client.load() }
+        XCTAssertEqual(error, .refused(code: "error", message: "the queue is not readable"))
+        XCTAssertEqual(fake.allRequests.dropFirst(before).filter { $0.path.hasSuffix("Asks") }.map(\.path), ["/user/call/UserOpenAsks"])
     }
 
     func testAWildUnreadCountNeitherTrapsNorReadsAll() async throws {

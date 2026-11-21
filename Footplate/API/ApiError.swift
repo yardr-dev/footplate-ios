@@ -85,6 +85,19 @@ extension ApiError: LocalizedError {
     var errorDescription: String? { message }
 }
 
+extension ApiError {
+    /// Whether this is a yard saying it has no call `method`: yardr's
+    /// `noSuchMethod` (internal/rpc/server.go) answers an older yard asked
+    /// for a newer call with code `error` and the message `no such method
+    /// <method>`. The code is the generic one, so the whole message is what
+    /// tells it from any other refusal, as the edge matches it
+    /// (`mcpNoSuchMethod`); a prefix, or another call's name, is not it.
+    func isNoSuchMethod(_ method: String) -> Bool {
+        guard case .refused(let code, let message) = self else { return false }
+        return code == "error" && message == "no such method \(method)"
+    }
+}
+
 /// The yard's code for a server about to start a newer build of itself:
 /// the call did not run, and is made again.
 let replacingCode = "replacing"

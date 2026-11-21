@@ -860,6 +860,7 @@ final class DecisionModel {
         defer { sending = false }
         do {
             let opened = try await body(followed)
+            readQueue(of: target.yard)
             guard active, self.activation == activation, screen() == target else { return }
             if let run, opened != nil || isDevicePairRun(run) {
                 seat(opened, of: run, target: target)
@@ -895,6 +896,7 @@ final class DecisionModel {
         defer { sending = false }
         do {
             try await body(followed)
+            readQueue(of: target.yard)
             guard active, self.activation == activation, screen() == target else { return }
             nav.closeDecision(yard: target.yard, bead: target.bead, ask: target.ask)
         } catch let error as ApiError {
@@ -904,6 +906,16 @@ final class DecisionModel {
             guard active, self.activation == activation, screen() == target else { return }
             errorText = "\(failed): \(refusalWords(ApiError.down(why: "an unexpected error")))"
         }
+    }
+
+    /// The yard took the person's decision: its whole queue is read, so the
+    /// list moves the ask to Decided at once and does not wait for the
+    /// next appearance of the place. Left running, even where the card has
+    /// left meanwhile: the decision stands, and nothing the card shows
+    /// waits on the history.
+    private func readQueue(of yard: String) {
+        let mailroom = self.mailroom
+        Task { @MainActor in await mailroom.fetchWhole(yard) }
     }
 
     /// Seats the pairing an approval opened as the card's QR screen, held

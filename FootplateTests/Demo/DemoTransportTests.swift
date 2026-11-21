@@ -45,11 +45,13 @@ final class DemoTransportTests: XCTestCase {
         XCTAssertEqual(loaded.inbox.unread, 2)
         XCTAssertEqual(loaded.notifications.unread, 1)
         XCTAssertEqual(loaded.asks.open.map(\.bead), ["yd-4k2m"])
+        XCTAssertNil(loaded.asks.decided, "the demo yard answers UserOpenAsks, so the load reads no history")
         // A load is /user/me and the calls of design 3.3, to a yard.
         let asked = transport.requests
         XCTAssertEqual(asked.first, "GET /user/me")
         XCTAssertTrue(asked.dropFirst().allSatisfy { $0.hasPrefix("POST /user/call/") }, "\(asked)")
         XCTAssertEqual(asked.count, 10)
+        XCTAssertEqual(asked.last, "POST /user/call/UserOpenAsks")
     }
 
     func testTheCallsAScreenMakesAreAnswered() async throws {
@@ -102,6 +104,10 @@ final class DemoTransportTests: XCTestCase {
         XCTAssertEqual(asks.open, [])
         XCTAssertEqual(asks.decided.first?.optionLabel, "After Friday")
         XCTAssertEqual(asks.decided.first?.words, "after the release")
+        // The open asks alone are the open half of that queue, with no
+        // decided key to read.
+        let open = try await client.userOpenAsks(name: "guest")
+        XCTAssertEqual(open, OpenQueue(open: asks.open))
     }
 
     func testTheStreamKeepsItsLinesWholeThroughItsHeartbeats() async throws {

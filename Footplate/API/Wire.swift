@@ -520,6 +520,17 @@ struct Asks: Equatable, Sendable {
     var decided: [DecidedAsk] = []
 }
 
+/// The queue as `userOpenAsks` read it: the open asks always, oldest
+/// first, and the decided only where the yard sent them. `decided` is nil
+/// on the open-only path, which says nothing of the history (an empty
+/// history and an unread one are not the same), and set where the yard
+/// answered the whole queue instead (one from before `UserOpenAsks`), so a
+/// caller applies exactly what the yard sent.
+struct OpenQueue: Equatable, Sendable {
+    var open: [OpenAsk] = []
+    var decided: [DecidedAsk]? = nil
+}
+
 /// One option of an ask, in order, `you decide` last.
 struct AskOption: Equatable, Sendable {
     var label: String = ""

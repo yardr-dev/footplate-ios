@@ -583,6 +583,10 @@ extension Follower: Followed {
         try await client.crew()
     }
 
+    func openAsks() async throws -> OpenQueue {
+        try await client.userOpenAsks(name: me())
+    }
+
     func asks() async throws -> Asks {
         try await client.userAsks(name: me())
     }

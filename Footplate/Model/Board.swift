@@ -63,7 +63,9 @@ struct Board: Equatable, Sendable {
     var noticeCursor: Int64 = 0
     /// The person's open asks, oldest first.
     var open: [OpenAsk] = []
-    /// What became of the asks open no more, newest first.
+    /// What became of the asks open no more, newest first, as the last
+    /// whole read of the queue left it: the Decide place reads the history,
+    /// and an open-only answer leaves it as it was.
     var decided: [DecidedAsk] = []
     /// The latest stream event for each bead, so its open card can be
     /// re-read even when the user's ask queue did not change.
@@ -118,6 +120,15 @@ struct Board: Equatable, Sendable {
             board = moved
         }
         return (board, rereads)
+    }
+
+    /// Lets go of the held decided that the board has open. The yard's
+    /// queue lists an ask once, open or decided, so one a read found open
+    /// that the history still holds (a put-aside ask that came back, an
+    /// answer the yard did not take) is held stale, and a whole read would
+    /// not list it.
+    mutating func dropStaleDecided() {
+        decided.removeAll { held in open.contains { $0.bead == held.bead && $0.ask == held.ask } }
     }
 
     private func withCrewStatus(name: String, status: String) -> Board {
@@ -336,7 +347,9 @@ struct Board: Equatable, Sendable {
         board.cursor = cursor
         board.noticeCursor = loaded.user.notificationCursor
         board.open = loaded.asks.open
-        board.decided = loaded.asks.decided
+        // None where the load read the open asks alone: the history is
+        // unread, and the Mailroom keeps what it held of it.
+        board.decided = loaded.asks.decided ?? []
         return board.notices(loaded.notifications.notifications)
     }
 }

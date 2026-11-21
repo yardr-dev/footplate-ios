@@ -11,7 +11,9 @@ struct Loaded: Equatable, Sendable {
     var users: [User]
     var inbox: Inbox
     var notifications: Notifications
-    var asks: Asks
+    /// The queue as the load read it: the open asks, and the decided only
+    /// where the yard answered the whole queue (`OpenQueue`).
+    var asks: OpenQueue
 }
 
 /// How many read letters the inbox is read with, beside the unread.
@@ -45,7 +47,9 @@ extension YardClient {
             inbox = try await userInbox(name: me.user, limit: inboxLimit(unread: inbox.unread))
         }
         let notifications = try await userNotifications(name: me.user, limit: 0)
-        let asks = try await userAsks(name: me.user)
+        // The open asks alone: the decided history is read where the
+        // Decide place shows it (`Mailroom.fetchWhole`), not on every load.
+        let asks = try await userOpenAsks(name: me.user)
         return Loaded(
             me: me, head: head, settings: settings, user: user, crew: crew,
             users: users, inbox: inbox, notifications: notifications, asks: asks

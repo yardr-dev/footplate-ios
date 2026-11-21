@@ -106,9 +106,14 @@ final class DemoTests: XCTestCase {
         XCTAssertTrue(demo.records.notificationsAsked)
         try await until("the notifier is allowed") { !demo.notifier.muted }
 
-        // Decide: the one question, and what was decided before it.
+        // Decide: the one question, and what was decided before it. The
+        // history is read where the place shows it, not with the load.
         XCTAssertEqual(demo.decisions.state.open.map(\.bead), ["yd-4k2m"])
         XCTAssertEqual(demo.decisions.state.open.first?.weighty, [])
+        XCTAssertEqual(demo.decisions.state.decided, [])
+        demo.nav.place = .decide
+        await demo.decisions.read()
+        XCTAssertEqual(demo.decisions.state.open.map(\.bead), ["yd-4k2m"])
         XCTAssertEqual(demo.decisions.state.decided.map(\.what), ["answered: In minutes"])
 
         // Lines: the line with its beads, and no page for any of them.
@@ -158,7 +163,9 @@ final class DemoTests: XCTestCase {
         demo.decision.choose(1)
         await demo.decision.pick()
         try await until("the question is answered") { demo.decisions.state.open.isEmpty }
-        XCTAssertEqual(demo.decisions.state.decided.first?.what, "answered: Land it today")
+        // The person's own answer reads the whole queue, so the list moves
+        // the question to Decided at once.
+        try await until("the answer is listed as decided") { demo.decisions.state.decided.first?.what == "answered: Land it today" }
         XCTAssertEqual(demo.decisions.state.decided.count, 2)
         // The card leaves for the list, the count clears, and the line
         // moves with the bead no longer waiting.
@@ -318,6 +325,8 @@ final class DemoTests: XCTestCase {
         let second = try XCTUnwrap(services.demo)
         XCTAssertFalse(second === first)
         try await until("the demo yard is read again") { second.decisions.state.open.count == 1 }
+        second.nav.place = .decide
+        await second.decisions.read()
         XCTAssertEqual(second.decisions.state.decided.count, 1)
         services.leaveDemo()
         XCTAssertNil(services.demo)

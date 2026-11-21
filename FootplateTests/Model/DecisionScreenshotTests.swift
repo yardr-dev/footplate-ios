@@ -82,6 +82,15 @@ final class DecisionScreenshotTests: XCTestCase {
         XCTAssertEqual(decisions.state.decided.map(\.what), ["declined"])
 
         try await render(DecisionsScreen(inbox: inbox, model: decisions, decision: decision, nav: nav), scene: scene, to: dir.appendingPathComponent("decisions.png"))
+        // The list appearing is what reads the whole queue, once: the
+        // decided lines of a yard that read the open asks alone.
+        let reading = ContinuousClock.now + .seconds(10)
+        while home.wholeAskReads == 0, ContinuousClock.now <= reading {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(home.wholeAskReads, 1)
+        XCTAssertEqual(laptop.wholeAskReads, 0)
+        XCTAssertEqual(home.openAskReads, 0)
         // The context is on the card with nothing tapped, and Ask about
         // this stands under Later and Decline.
         try await render(
@@ -567,7 +576,7 @@ final class DecisionScreenshotTests: XCTestCase {
             users: [User(name: "jo")],
             inbox: Inbox(),
             notifications: Notifications(),
-            asks: Asks(open: [
+            asks: OpenQueue(open: [
                 OpenAsk(bead: "yd-links", beadTitle: "Move the links", ask: 3, question: "Move this yard's links to the declared source now?", asker: "yardmaster", since: "2026-10-08T09:30:00Z"),
                 OpenAsk(bead: "yd-map", beadTitle: "Who wrote in", ask: 7, question: "Who is U024BE7LH on slack?", asker: "yardmaster", since: "2026-10-08T09:30:00Z", identity: Identity(source: "slack", sender: "U024BE7LH", channel: "C1"), weight: [AskWeight(kind: "as-user", line: "writes who a sender is: U024BE7LH on slack becomes a user of the yard"), trojanWeight]),
                 OpenAsk(bead: "yd-tidy", beadTitle: "Tidy the sidings", ask: 9, question: "Remove the merged worktrees now?", asker: "yardmaster", since: "2026-10-08T09:30:00Z"),

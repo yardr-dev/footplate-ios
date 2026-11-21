@@ -371,7 +371,7 @@ final class LineScreenshotTests: XCTestCase {
             users: [User(name: "jo")],
             inbox: Inbox(),
             notifications: Notifications(),
-            asks: Asks(open: [
+            asks: OpenQueue(open: [
                 OpenAsk(bead: "yd-links", ask: 3, question: "Move the links?", asker: "yardmaster"),
                 OpenAsk(bead: "yd-map", ask: 7, question: "Who is U024BE7LH?", asker: "yardmaster"),
             ], decided: [])

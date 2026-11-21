@@ -44,7 +44,7 @@ final class NotifierTests: XCTestCase {
         Loaded(
             me: Me(user: "jo"), head: head, settings: Settings(), user: User(name: "jo"),
             crew: [], users: [], inbox: Inbox(mail: letters),
-            notifications: Notifications(), asks: Asks(open: open, decided: [])
+            notifications: Notifications(), asks: OpenQueue(open: open, decided: [])
         )
     }
 

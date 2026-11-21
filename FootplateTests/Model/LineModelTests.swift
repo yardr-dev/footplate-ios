@@ -1305,7 +1305,7 @@ final class LineModelTests: XCTestCase {
             users: [],
             inbox: Inbox(),
             notifications: Notifications(),
-            asks: Asks()
+            asks: OpenQueue()
         )
     }
 

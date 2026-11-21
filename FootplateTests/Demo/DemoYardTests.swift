@@ -17,7 +17,7 @@ final class DemoYardTests: XCTestCase {
         Loaded(
             me: yard.me, head: yard.head, settings: yard.settings, user: yard.user(DemoYard.user),
             crew: yard.crew, users: yard.users, inbox: yard.inbox(limit: 0),
-            notifications: yard.notifications, asks: yard.asks
+            notifications: yard.notifications, asks: OpenQueue(open: yard.asks.open)
         )
     }
 

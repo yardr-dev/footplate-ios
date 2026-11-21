@@ -152,6 +152,8 @@ final class DemoTransport: HTTPTransport, @unchecked Sendable {
             return done
         case "UserAsks":
             return result(withYard { $0.asks })
+        case "UserOpenAsks":
+            return result(withYard { OpenAsksAnswer(open: $0.asks.open) })
         case "Bead":
             let id = args.text("bead")
             guard let bead = withYard({ $0.bead(id) }) else {
@@ -249,6 +251,11 @@ final class DemoTransport: HTTPTransport, @unchecked Sendable {
             continuation.yield(byte)
         }
     }
+}
+
+/// What `UserOpenAsks` answers: the open asks, and no `decided` key.
+private struct OpenAsksAnswer: Encodable {
+    var open: [OpenAsk]
 }
 
 private extension Dictionary where Key == String, Value == Any {

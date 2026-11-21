@@ -49,7 +49,9 @@ Under `Footplate/`:
 - `Model/`: screen models and navigation (`Nav`, `PairModel`,
   `SignInModel`, `InboxModel`, `ConversationModel`, `DecisionsModel`,
   `DecisionModel`, `LineModel`), the inbox board (`Board`) and the
-  boards' keeping (`Mailroom`). `PairingSitting` holds the types and words
+  boards' keeping (`Mailroom`, which reads each yard's queue open-only,
+  and whole only where the Decide place shows the decided history).
+  `PairingSitting` holds the types and words
   of the QR screen of a pairing an approval opened (the door a pairing card
   says, the minutes left, why none is shown), and `DecisionModel` holds that
   pairing in memory alone. `LineModel` holds the Lines place: the

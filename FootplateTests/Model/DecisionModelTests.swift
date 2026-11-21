@@ -11,8 +11,10 @@ import XCTest
 // secret where the yard is reached sealed — is given behind the unlock,
 // and a refused answer shows the yard's sentence with the per-type
 // command;
-// Later and Decline move the card to Decided when the yard's `noted`
-// event comes, and not before; the ask's context is on the card from
+// the queue is read open-only on the load and on each `noted` event, and
+// whole where the Decide place appears and after the person's own
+// decision the yard took, so Later, Decline and a pick move the card to
+// Decided at once; the ask's context is on the card from
 // the read, a details row for the card's own bead stands first on every
 // card and one for each bead the ask is about after it, each opening to
 // the bead's description and notes, and Ask about this opens the
@@ -112,11 +114,14 @@ final class DecisionModelTests: XCTestCase {
             .map { $0.bodyObject() }
     }
 
-    /// The yard notes `bead`, and the queue then reads `asks`: the
-    /// ended stream is opened again as the clock moves, and carries
-    /// the event.
-    private func noted(_ seq: Int64, _ bead: String, _ asks: String) async {
-        fake.nextFor(yard: "laptop", path: "/user/call/UserAsks", FakeResponse.json(200, asks))
+    /// The yard notes `bead`, and the open asks then read `open`, where
+    /// the test says (it scripts the yard's answer itself where not): the
+    /// ended stream is opened again as the clock moves, and carries the
+    /// event. A noted event reads the open asks alone.
+    private func noted(_ seq: Int64, _ bead: String, open: [String]? = nil) async {
+        if let open {
+            fake.nextFor(yard: "laptop", path: "/user/call/UserOpenAsks", FakeResponse.json(200, Self.openAsks(open: open)))
+        }
         fake.stream(lines: [#"{"seq": \#(seq), "kind": "noted", "actor": "jo", "bead": "\#(bead)", "at": "2026-10-08T11:30:00Z", "data": {"note": 4}}"#])
         for _ in 0..<30 {
             clock.advance(.seconds(3))
@@ -161,7 +166,7 @@ final class DecisionModelTests: XCTestCase {
         XCTAssertNotNil(card.state.unlocking)
         await card.pick()
         XCTAssertEqual(unlock.reasons.count, 2, "a second prompt cannot start")
-        await noted(152, "yd-map", Self.asks(open: [Self.links, Self.map, Self.tidy], decided: [Self.greetDeclined]))
+        await noted(152, "yd-map", open: [Self.links, Self.map, Self.tidy])
         await unlock.resumePrompt(true)
         await heldPick.value
         XCTAssertTrue(calls("AnswerAsk").isEmpty, "a card changed while its unlock was open")
@@ -812,7 +817,7 @@ final class DecisionModelTests: XCTestCase {
         XCTAssertNotNil(card.state.unlocking)
         await card.give(values: ["INPUT": "the-code"])
         XCTAssertEqual(unlock.reasons.count, 2, "a second prompt cannot start")
-        await noted(152, "yd-login", Self.asks(open: [Self.links, Self.map, Self.tidy, Self.login], decided: [Self.greetDeclined]))
+        await noted(152, "yd-login", open: [Self.links, Self.map, Self.tidy, Self.login])
         await unlock.resumePrompt(true)
         await held.value
         XCTAssertTrue(calls("GiveSecret").isEmpty, "a card changed while its unlock was open")
@@ -1055,50 +1060,70 @@ final class DecisionModelTests: XCTestCase {
         XCTAssertNil(calls("AnswerAsk")[1]["weighed"])
     }
 
-    func testLaterAndDeclineMoveTheCardToDecidedWhenTheirEventComes() async {
+    func testLaterAndDeclineMoveTheCardToDecidedAtOnceAndTheEventAfterReadsTheOpenAsksAlone() async {
         let list = decisions()
         let first = await waitFor("the open asks", state: { list.state }) { $0.open.count == 3 }
         XCTAssertEqual(first.open.map(\.bead), ["yd-links", "yd-map", "yd-tidy"])
         XCTAssertEqual(first.open[1].title, "Who wrote in")
         XCTAssertEqual(first.open[1].meta, "yardmaster · 2 h")
         XCTAssertEqual(first.open[1].weighty.count, 1)
-        XCTAssertEqual(first.decided.map(\.what), ["declined"])
+        // The load read the open asks alone; the Decide place appearing
+        // reads the history.
+        XCTAssertEqual(first.decided, [])
+        await list.read()
+        XCTAssertEqual(list.state.decided.map(\.what), ["declined"])
+        XCTAssertEqual(calls("UserAsks").count, 1)
 
-        // Later: the call goes, and the card stays open until the event.
+        // Later: once the yard took it, its whole queue is read and the card
+        // moves to Decided at once, in the list the person stands in. The
+        // `noted` event that follows reads the open asks alone, and leaves
+        // the history as it is.
         let links = await opened("yd-links", 3)
+        fake.nextFor(yard: "laptop", path: "/user/call/UserAsks", FakeResponse.json(200, Self.asks(
+            open: [Self.map, Self.tidy], decided: [Self.linksAside, Self.greetDeclined]
+        )))
         await links.later()
         XCTAssertEqual(calls("DeferAsk").count, 1)
-        XCTAssertTrue(list.state.open.contains { $0.bead == "yd-links" }, "not moved before its event")
-        await noted(152, "yd-links", Self.asks(open: [Self.map, Self.tidy], decided: [Self.linksAside, Self.greetDeclined]))
         let aside = await waitFor("yd-links put aside", state: { list.state }) { s in !s.open.contains { $0.bead == "yd-links" } }
         XCTAssertEqual(aside.decided.first { $0.bead == "yd-links" }?.what, "put aside until 12:00")
+        XCTAssertEqual(calls("UserAsks").count, 2)
+        await noted(152, "yd-links", open: [Self.map, Self.tidy])
+        XCTAssertEqual(calls("UserAsks").count, 2, "a noted event is no reason to read the history again")
+        XCTAssertEqual(list.state.decided.map(\.what), ["put aside until 12:00", "declined"])
         links.leave()
 
-        // Decline: the field for why first, then the call; the card
-        // moves when the event comes.
+        // Decline: the field for why first, then the call; the card moves
+        // when the yard has taken it.
         let map = await opened("yd-map", 7)
         await map.decline()
         XCTAssertTrue(map.state.declining)
         await map.decline()
         XCTAssertTrue(calls("DeclineAsk").isEmpty, "no words, no decline")
         map.declineWords("ask me on Monday")
+        fake.nextFor(yard: "laptop", path: "/user/call/UserAsks", FakeResponse.json(200, Self.asks(
+            open: [Self.tidy], decided: [Self.mapDeclined, Self.linksAside, Self.greetDeclined]
+        )))
         await map.decline()
         XCTAssertEqual(calls("DeclineAsk").count, 1)
         XCTAssertEqual(calls("DeclineAsk")[0]["words"] as? String, "ask me on Monday")
-        XCTAssertTrue(list.state.open.contains { $0.bead == "yd-map" }, "not moved before its event")
-        // The yard asks for a secret meanwhile.
-        await noted(153, "yd-map", Self.asks(open: [Self.links, Self.tidy, Self.token], decided: [Self.mapDeclined, Self.greetDeclined]))
         let declined = await waitFor("yd-map declined", state: { list.state }) { s in !s.open.contains { $0.bead == "yd-map" } }
         XCTAssertEqual(declined.decided.first { $0.bead == "yd-map" }?.what, "declined")
         XCTAssertEqual(map.state.done, "declined")
         map.leave()
 
+        // The yard asks for a secret meanwhile: the open asks, read on the
+        // event, carry it, with the history as it was.
+        await noted(153, "yd-map", open: [Self.tidy, Self.token])
+        let asked = await waitFor("yd-token open", state: { list.state }) { s in s.open.contains { $0.bead == "yd-token" } }
+        XCTAssertEqual(asked.decided.map(\.what), ["declined", "put aside until 12:00", "declined"])
+
         // A secret card is declined at the first press, with no words and
         // no field for why: the yard refuses words on a secret ask, since
-        // they may be the secret. It moves when the event comes, as the
-        // others do.
-        XCTAssertTrue(declined.open.contains { $0.bead == "yd-token" })
+        // they may be the secret. It moves as the others do.
         let token = await opened("yd-token", 18)
+        fake.nextFor(yard: "laptop", path: "/user/call/UserAsks", FakeResponse.json(200, Self.asks(
+            open: [Self.tidy], decided: [Self.tokenDeclined, Self.mapDeclined, Self.linksAside, Self.greetDeclined]
+        )))
         await token.decline()
         XCTAssertFalse(token.state.declining, "no field for why")
         let declines = calls("DeclineAsk")
@@ -1107,11 +1132,199 @@ final class DecisionModelTests: XCTestCase {
         XCTAssertEqual(declines.last?["ask"] as? Int, 18)
         XCTAssertEqual(declines.last?["words"] as? String, "")
         XCTAssertNil(token.state.error)
-        XCTAssertTrue(list.state.open.contains { $0.bead == "yd-token" }, "not moved before its event")
-        await noted(154, "yd-token", Self.asks(open: [Self.links, Self.tidy], decided: [Self.tokenDeclined, Self.mapDeclined, Self.greetDeclined]))
         let tokenDeclined = await waitFor("yd-token declined", state: { list.state }) { s in !s.open.contains { $0.bead == "yd-token" } }
         XCTAssertEqual(tokenDeclined.decided.first { $0.bead == "yd-token" }?.what, "declined")
         XCTAssertEqual(token.state.done, "declined")
+        XCTAssertEqual(calls("UserAsks").count, 4, "the history was read at appearing and after each decision the yard took, and no other time")
+    }
+
+    // The queue is read open-only on the hot path and whole only where
+    // the Decide place shows the history: the load and each noted event
+    // read the open asks, the place appearing reads the whole queue once,
+    // and a noted event with the place in front reads the open asks again
+    // and leaves the history held.
+    func testTheQueueIsReadOpenAloneAndWholeOnlyWhereTheDecidePlaceShowsIt() async {
+        let list = decisions()
+        _ = await waitFor("the open asks", state: { list.state }) { $0.open.count == 3 }
+        XCTAssertEqual(calls("UserOpenAsks").count, 1, "the load")
+        XCTAssertTrue(calls("UserAsks").isEmpty)
+        XCTAssertEqual(list.reading, "laptop")
+
+        // A card arrives on a noted event: the open asks are read, the
+        // history is not asked for.
+        await noted(152, "yd-token", open: [Self.links, Self.map, Self.tidy, Self.token])
+        let moved = await waitFor("yd-token open", state: { list.state }) { s in s.open.contains { $0.bead == "yd-token" } }
+        XCTAssertEqual(calls("UserOpenAsks").count, 2)
+        XCTAssertTrue(calls("UserAsks").isEmpty, "a noted event never reads the history")
+        XCTAssertEqual(moved.decided, [])
+
+        // The place appears: the whole queue, once, which lists the Decided
+        // lines and the same open cards the open asks did.
+        fake.nextFor(yard: "laptop", path: "/user/call/UserAsks", FakeResponse.json(200, Self.asks(
+            open: [Self.links, Self.map, Self.tidy, Self.token], decided: [Self.greetDeclined]
+        )))
+        await list.read()
+        XCTAssertEqual(calls("UserAsks").count, 1)
+        let whole = list.state
+        XCTAssertEqual(whole.open, moved.open, "open cards match a full read")
+        XCTAssertEqual(whole.decided.map(\.what), ["declined"])
+
+        // With it in front, a noted event still reads the open asks alone:
+        // every note would cost the whole history again. The open cards
+        // move at once, and the answer never wipes the history held.
+        await noted(153, "yd-token", open: [Self.links, Self.map, Self.tidy])
+        let after = await waitFor("yd-token gone", state: { list.state }) { s in !s.open.contains { $0.bead == "yd-token" } }
+        XCTAssertEqual(calls("UserOpenAsks").count, 3)
+        XCTAssertEqual(calls("UserAsks").count, 1)
+        XCTAssertEqual(after.decided, whole.decided)
+
+        // The place is read where it is in front, for the yard it is in
+        // front of; a card pushed over the list, and the way back to it,
+        // are no new appearing.
+        nav.place = .lines
+        XCTAssertNil(list.reading)
+        await list.read()
+        XCTAssertEqual(calls("UserAsks").count, 1, "nothing is read where the place is not in front")
+        nav.place = .decide
+        XCTAssertEqual(list.reading, "laptop")
+        nav.openDecision(yard: "laptop", bead: "yd-links", ask: 3)
+        XCTAssertEqual(list.reading, "laptop")
+    }
+
+    // A put-aside ask returns on its time with no event: the whole read
+    // that listed it armed that, and the read at its time is of the open
+    // asks, which show it open again.
+    func testAPutAsideAskReturnsOnItsTimeFromAnOpenOnlyReadTheWholeReadArmed() async {
+        let list = decisions()
+        _ = await waitFor("the open asks", state: { list.state }) { $0.open.count == 3 }
+        // Nothing is armed while the history is unread.
+        XCTAssertTrue(clock.pending().allSatisfy { $0 < .seconds(1800) })
+
+        // It is 11:30; the ask comes back at 12:00.
+        fake.nextFor(yard: "laptop", path: "/user/call/UserAsks", FakeResponse.json(200, Self.asks(
+            open: [Self.map, Self.tidy], decided: [Self.linksAside, Self.greetDeclined]
+        )))
+        await list.read()
+        XCTAssertEqual(list.state.decided.map(\.what), ["put aside until 12:00", "declined"])
+        _ = await waitFor("its return waited for", state: { self.clock.pending() }) { $0.contains(.seconds(1800)) }
+
+        fake.nextFor(yard: "laptop", path: "/user/call/UserOpenAsks", FakeResponse.json(200, Self.openAsks(open: [Self.links, Self.map, Self.tidy])))
+        clock.advance(.seconds(1800))
+        let back = await waitFor("yd-links open again", state: { list.state }) { s in s.open.contains { $0.bead == "yd-links" } }
+        XCTAssertEqual(calls("UserOpenAsks").count, 2, "the load and the one read at its time")
+        XCTAssertEqual(calls("UserAsks").count, 1, "the return reads the open asks, never the whole queue")
+        XCTAssertEqual(back.decided.map(\.what), ["declined"], "an ask open again is not held decided any more")
+    }
+
+    // A yard from before UserOpenAsks refuses it as a call it does not
+    // have: each read of the queue is then the whole one, applied whole,
+    // and the refusal is paid again by the next read. Any other refusal
+    // is read once, with no second read, and changes nothing.
+    func testAnOldYardReadsTheWholeQueueOnEveryReadAndAnyOtherRefusalReadsOnce() async {
+        let list = decisions()
+        _ = await waitFor("the open asks", state: { list.state }) { $0.open.count == 3 }
+        fake.setAlways(yard: "laptop", path: "/user/call/UserOpenAsks") { .refused("no such method UserOpenAsks") }
+
+        fake.nextFor(yard: "laptop", path: "/user/call/UserAsks", FakeResponse.json(200, Self.asks(
+            open: [Self.map, Self.tidy], decided: [Self.linksAside, Self.greetDeclined]
+        )))
+        await noted(152, "yd-links")
+        let first = await waitFor("yd-links put aside", state: { list.state }) { s in !s.open.contains { $0.bead == "yd-links" } }
+        XCTAssertEqual(first.decided.map(\.what), ["put aside until 12:00", "declined"], "the whole queue is applied whole, the history with it")
+        XCTAssertEqual(calls("UserOpenAsks").count, 2)
+        XCTAssertEqual(calls("UserAsks").count, 1)
+
+        fake.nextFor(yard: "laptop", path: "/user/call/UserAsks", FakeResponse.json(200, Self.asks(
+            open: [Self.map, Self.tidy, Self.token], decided: [Self.linksAside, Self.greetDeclined]
+        )))
+        await noted(153, "yd-token")
+        _ = await waitFor("yd-token open", state: { list.state }) { s in s.open.contains { $0.bead == "yd-token" } }
+        XCTAssertEqual(calls("UserOpenAsks").count, 3, "nothing is remembered of an old yard")
+        XCTAssertEqual(calls("UserAsks").count, 2)
+
+        // Any other refusal: the one call, and the board as it was.
+        let held = list.state
+        fake.setAlways(yard: "laptop", path: "/user/call/UserOpenAsks") { .refused("the queue is not readable") }
+        await noted(154, "yd-token")
+        _ = await waitFor("the refused read", state: { self.calls("UserOpenAsks").count }) { $0 == 4 }
+        try? await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(calls("UserOpenAsks").count, 4)
+        XCTAssertEqual(calls("UserAsks").count, 2, "no second read")
+        XCTAssertEqual(list.state, held)
+    }
+
+    // What the yard took of the person's own decision is read at once: the
+    // whole queue, once per decision, however it was made; a decision the
+    // yard refused reads nothing.
+    func testEachOwnDecisionTheYardTookReadsTheWholeQueueOnceAndARefusedOneReadsNone() async {
+        func whole(_ count: Int) async {
+            _ = await waitFor("\(count) whole reads", state: { self.calls("UserAsks").count }) { $0 == count }
+        }
+        // A pick, past the unlock where the pick is weighty: the card goes
+        // back to the list, which holds the ask as decided at once.
+        let list = decisions()
+        _ = await waitFor("the open asks", state: { list.state }) { $0.open.count == 3 }
+        let map = await opened("yd-map", 7)
+        map.choose(1)
+        unlock.promptResults = [true]
+        fake.nextFor(yard: "laptop", path: "/user/call/UserAsks", FakeResponse.json(200, Self.asks(
+            open: [Self.links, Self.tidy], decided: [Self.mapAnswered, Self.greetDeclined]
+        )))
+        await map.pick()
+        XCTAssertEqual(calls("AnswerAsk").count, 1)
+        let picked = await waitFor("yd-map decided", state: { list.state }) { s in !s.open.contains { $0.bead == "yd-map" } }
+        XCTAssertEqual(picked.decided.map(\.what), ["answered: jo", "declined"])
+        XCTAssertEqual(nav.place, .decide)
+        XCTAssertEqual(nav.decidePath, [])
+        await whole(1)
+        map.leave()
+
+        // An approval of a run ask, and of a setup with its preset.
+        let tidy = await opened("yd-tidy", 9)
+        unlock.promptResults = [true]
+        await tidy.approve()
+        XCTAssertEqual(calls("ApproveAsk").count, 1)
+        await whole(2)
+        tidy.leave()
+        let setup = await opened("yd-courier", 44)
+        setup.choose(1)
+        unlock.promptResults = [true]
+        await setup.approve()
+        XCTAssertEqual(calls("ApproveSetup").count, 1)
+        await whole(3)
+        setup.leave()
+
+        // The giving of a secret.
+        let login = await opened("yd-login", 34)
+        unlock.promptResults = [true]
+        await login.give(values: ["INPUT": "the-code"])
+        XCTAssertEqual(calls("GiveSecret").count, 1)
+        await whole(4)
+        login.leave()
+
+        // Later and Decline.
+        let links = await opened("yd-links", 3)
+        await links.later()
+        XCTAssertEqual(calls("DeferAsk").count, 1)
+        await whole(5)
+        links.leave()
+        let greet = await opened("yd-map", 7)
+        greet.declineWords("not now")
+        await greet.decline()
+        await greet.decline()
+        XCTAssertEqual(calls("DeclineAsk").count, 1)
+        await whole(6)
+        greet.leave()
+
+        // A pick the yard refuses is none of the yard's: nothing is read.
+        let refused = await opened("yd-map", 7)
+        refused.choose(2)
+        unlock.promptResults = [true]
+        fake.nextFor(yard: "laptop", path: "/user/call/AnswerAsk", FakeResponse.json(200, #"{"error": {"code": "error", "message": "that ask is not open"}}"#))
+        await refused.pick()
+        XCTAssertEqual(refused.state.refusal, "that ask is not open")
+        try? await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(calls("UserAsks").count, 6)
     }
 
     func testTheContextIsOnTheCardFromTheReadAndEveryAskHasItsOwn() async {
@@ -1454,12 +1667,17 @@ final class DecisionModelTests: XCTestCase {
             users: [],
             inbox: Inbox(),
             notifications: Notifications(),
-            asks: Asks()
+            asks: OpenQueue()
         )
     }
 
     private static func asks(open: [String], decided: [String]) -> String {
         #"{"result": {"open": [\#(open.joined(separator: ","))], "decided": [\#(decided.joined(separator: ","))]}}"#
+    }
+
+    /// What `UserOpenAsks` answers: the open asks and no `decided` key.
+    private static func openAsks(open: [String]) -> String {
+        #"{"result": {"open": [\#(open.joined(separator: ","))]}}"#
     }
 
     private static let map = #"{"bead": "yd-map", "bead_title": "Who wrote in", "ask": 7, "question": "Who is U024BE7LH on slack?", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "identity": {"source": "slack", "sender": "U024BE7LH"}, "weight": [{"class": "as-user", "line": "writes who a sender is"}]}"#
@@ -1468,6 +1686,7 @@ final class DecisionModelTests: XCTestCase {
     private static let login = #"{"bead": "yd-login", "bead_title": "Claude Code sign-in", "ask": 34, "question": "Paste what Claude Code's sign-in page gave you", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "secret": {"source": "", "env": ["INPUT"], "login": "claude-ab12", "line": "a secret: INPUT, for the waiting login claude-ab12"}, "weight": [{"class": "credential", "line": "INPUT, for the waiting login claude-ab12"}]}"#
     private static let token = #"{"bead": "yd-token", "bead_title": "The callback token", "ask": 18, "question": "What is the callback token?", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "secret": {"source": "crm", "env": ["CRM_UPDATE_TOKEN"], "line": "the token the yard calls back with"}, "weight": [{"class": "credential", "line": "gives a credential or an address to the yard"}]}"#
     private static let linksAside = #"{"bead": "yd-links", "bead_title": "Move the links", "ask": 3, "question": "Move this yard's links to the declared source now?", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "state": "put aside", "return_at": "2026-10-08T12:00:00Z"}"#
+    private static let mapAnswered = #"{"bead": "yd-map", "bead_title": "Who wrote in", "ask": 7, "question": "Who is U024BE7LH on slack?", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "state": "answered", "option": 1, "option_label": "jo"}"#
     private static let mapDeclined = #"{"bead": "yd-map", "bead_title": "Who wrote in", "ask": 7, "question": "Who is U024BE7LH on slack?", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "state": "declined", "words": "ask me on Monday", "identity": {"source": "slack", "sender": "U024BE7LH"}, "weight": [{"class": "as-user", "line": "writes who a sender is"}]}"#
     private static let tokenDeclined = #"{"bead": "yd-token", "bead_title": "The callback token", "ask": 18, "question": "What is the callback token?", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "state": "declined", "secret": {"source": "crm", "env": ["CRM_UPDATE_TOKEN"], "line": "the token the yard calls back with"}, "weight": [{"class": "credential", "line": "gives a credential or an address to the yard"}]}"#
     private static let greetDeclined = #"{"bead": "yd-greet", "bead_title": "The greeting", "ask": 5, "question": "What should the tone of the greeting be?", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "state": "declined", "words": "the greeting can wait"}"#

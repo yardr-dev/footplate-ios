@@ -5,7 +5,11 @@ import Foundation
 // model/Mailroom.kt): each board is made from the state its follower
 // read and moved on by the events after it; what an event says too
 // little of is read again; and what is on the screen is acknowledged
-// (`AckUserInbox`, `AckUserNotifications`) as it is shown.
+// (`AckUserInbox`, `AckUserNotifications`) as it is shown. The person's
+// queue is read open-only wherever it is read again, and whole, the
+// decided history with it, only where the Decide place shows the history
+// (`fetchWhole`): a long-lived yard's history is nearly all of the whole
+// answer, so the board holds the history as the last whole read left it.
 
 /// What is on the screen: the conversation with `party` in the yard
 /// `yard`, or that yard's notices where `party` is `yardRow`.
@@ -13,6 +17,18 @@ struct OnScreen: Equatable, Sendable {
     var yard: String
     var party: String
     var visible: Set<Int64> = []
+}
+
+/// A yard's queue reads, numbered as they begin, and the newest read each
+/// half of its board's queue has been moved by. An answer comes when it
+/// comes: a whole read takes seconds on a yard with a long history, and an
+/// open-only read begun after it, on a noted event, answers first. Each
+/// half applies only where no later-begun read applied it already, or the
+/// slow answer would put an older queue back over a newer one.
+private struct QueueReads {
+    var begun = 0
+    var open = 0
+    var decided = 0
 }
 
 @MainActor
@@ -30,6 +46,7 @@ final class Mailroom {
     private var boardObservers: [UUID: @MainActor () -> Void] = [:]
     private var revisitTasks: [String: Task<Void, Never>] = [:]
     private var revisitAt: [String: Date] = [:]
+    private var queueReads: [String: QueueReads] = [:]
 
     init(clock: any Clock = SystemClock(), now: @escaping @Sendable () -> Date = { Date() }) {
         self.clock = clock
@@ -47,6 +64,7 @@ final class Mailroom {
             revisitTasks[name]?.cancel()
             revisitTasks.removeValue(forKey: name)
             revisitAt.removeValue(forKey: name)
+            queueReads.removeValue(forKey: name)
         }
         for (name, followed) in followers where watched[name] == nil {
             let id = followed.observe { [weak self] _ in
@@ -91,7 +109,15 @@ final class Mailroom {
         var rereads: Set<Reread> = []
         var changed = false
         if lastLoaded[name] != loaded {
-            boards[name] = Board.of(loaded)
+            var fresh = Board.of(loaded)
+            // A load that read the open asks alone says nothing of the
+            // history: what the board held of it stays, as long as it is
+            // the same person's.
+            if loaded.asks.decided == nil, let held = boards[name], held.me == fresh.me {
+                fresh.decided = held.decided
+                fresh.dropStaleDecided()
+            }
+            boards[name] = fresh
             lastLoaded[name] = loaded
             changed = true
         }
@@ -128,12 +154,18 @@ final class Mailroom {
                 guard isCurrent(name, followed) else { return }
                 update(name) { $0 = $0?.notices(fresh.notifications) }
             case .asks:
-                let asks = try await followed.asks()
+                let loaded = followed.state.loaded
+                let read = beginQueueRead(name)
+                let queue = try await followed.openAsks()
                 guard isCurrent(name, followed) else { return }
-                update(name) {
-                    $0?.open = asks.open
-                    $0?.decided = asks.decided
+                // A follower can reload while this read is in flight. Its
+                // load is the newer open queue, so retry after it rather
+                // than letting this answer put the old queue back.
+                guard followed.state.loaded == loaded else {
+                    await reread(name, what)
+                    return
                 }
+                apply(queue, read: read, to: name)
             }
         } catch {
             // The follower says why the yard is not reached; the next
@@ -144,14 +176,73 @@ final class Mailroom {
         scheduleRevisit(name)
     }
 
+    /// Reads the whole queue of the yard `name`, the decided history with
+    /// the open asks, and applies it. The reads that want the history are
+    /// the Decide place appearing, the selected yard changing under it, and
+    /// the person's own decision (so the list moves the ask to Decided at
+    /// once); every other read of the queue is open-only (`reread`), since
+    /// a noted event is no reason to read the whole history again. An
+    /// answer that does not come leaves the board as it was: the next of
+    /// those reads reads again.
+    func fetchWhole(_ name: String) async {
+        guard let followed = watched[name]?.followed else { return }
+        let loaded = followed.state.loaded
+        let read = beginQueueRead(name)
+        do {
+            let asks = try await followed.asks()
+            guard isCurrent(name, followed) else { return }
+            // A load that finished during this read has a newer open half.
+            // Retry whole so the Decide place still gets current history.
+            guard followed.state.loaded == loaded else {
+                await fetchWhole(name)
+                return
+            }
+            apply(OpenQueue(open: asks.open, decided: asks.decided), read: read, to: name)
+        } catch {
+            // The follower says why the yard is not reached.
+        }
+        guard isCurrent(name, followed) else { return }
+        scheduleRevisit(name)
+    }
+
+    private func beginQueueRead(_ name: String) -> Int {
+        var reads = queueReads[name] ?? QueueReads()
+        reads.begun += 1
+        queueReads[name] = reads
+        return reads.begun
+    }
+
+    /// Applies an answer of queue read number `read`: the open asks where
+    /// no later read applied its own, and likewise the decided, which only
+    /// an answer that carries them moves (an open-only answer leaves the
+    /// history held). An ask the board has open is not held decided any
+    /// more (`Board.dropStaleDecided`).
+    private func apply(_ queue: OpenQueue, read: Int, to name: String) {
+        var reads = queueReads[name] ?? QueueReads()
+        let opens = read > reads.open
+        let decides = queue.decided != nil && read > reads.decided
+        if opens { reads.open = read }
+        if decides { reads.decided = read }
+        queueReads[name] = reads
+        update(name) { board in
+            guard var next = board else { return }
+            if opens { next.open = queue.open }
+            if decides, let decided = queue.decided { next.decided = decided }
+            next.dropStaleDecided()
+            board = next
+        }
+    }
+
     private func isCurrent(_ name: String, _ followed: any Followed) -> Bool {
         guard let current = watched[name]?.followed else { return false }
         return (current as AnyObject) === (followed as AnyObject)
     }
 
-    /// Reads the queue again at a put-aside ask's return time: that is
-    /// the one change to `UserAsks` the stream does not announce with
-    /// an event.
+    /// Reads the queue's open asks again at a put-aside ask's return time:
+    /// that is the one change to the queue the stream does not announce
+    /// with an event, and a returned ask is open, so the history is not
+    /// needed to show it. The time is read from the held history, so it is
+    /// armed once the history was read whole.
     private func scheduleRevisit(_ name: String) {
         let next = boards[name]?.decided
             .filter { $0.state == "put aside" }

@@ -128,6 +128,15 @@ final class YardClientTests: XCTestCase {
                 XCTAssertEqual(asks.open[2].run?.command, "yardr depot tidy --merged")
                 XCTAssertEqual(asks.decided.map(\.state), ["declined"])
             }),
+            // The open asks alone: the rows UserAsks has, and no decided key,
+            // so nothing of the history is read or told of.
+            ("UserOpenAsks", #"{"name":"jo"}"#, {
+                let queue = try await laptop.userOpenAsks(name: "jo")
+                XCTAssertEqual(queue.open.map(\.ask), [3, 7, 9])
+                XCTAssertEqual(queue.open[1].weight.map(\.kind), ["as-user"])
+                XCTAssertEqual(queue.open[2].run?.command, "yardr depot tidy --merged")
+                XCTAssertNil(queue.decided, "the open-only path says nothing of the history")
+            }),
             // No viewer is sent: the yard reads a device's viewer from its
             // token.
             ("Flows", "{}", {
@@ -311,6 +320,58 @@ final class YardClientTests: XCTestCase {
         let older = try await laptop.flows()
         XCTAssertEqual(older.depots.map(\.name), ["yard", "drafts"])
         assertBody(fake.taken(), "{}")
+    }
+
+    // The open asks are read alone, and the whole queue only from a yard
+    // that answers UserOpenAsks as a call it does not have, in the yard's
+    // whole words; any other refusal is the caller's, with no second read.
+    func testTheOpenQueueFallsBackToTheWholeOneOnTheOldYardsWordsAlone() async throws {
+        let f = try fixtures()
+        let laptop = f.laptop
+        let path = "/user/call/UserOpenAsks"
+
+        // A current yard: one call, the open asks, no history, and the
+        // same cards a whole read lists.
+        let current = try await laptop.userOpenAsks(name: "jo")
+        let whole = try await laptop.userAsks(name: "jo")
+        XCTAssertEqual(fake.allRequests.map(\.path), [path, "/user/call/UserAsks"])
+        XCTAssertNil(current.decided)
+        XCTAssertEqual(current.open, whole.open, "open cards match a full read")
+
+        // An old yard, which remembers nothing between reads: each read is
+        // the small refusal and then the whole queue, applied whole.
+        fake.setAlways(yard: "laptop", path: path) { .refused("no such method UserOpenAsks") }
+        for _ in 0..<2 {
+            let old = try await laptop.userOpenAsks(name: "jo")
+            XCTAssertEqual(old.open, whole.open)
+            XCTAssertEqual(old.decided, whole.decided)
+            XCTAssertEqual(old.decided?.map(\.state), ["declined"])
+        }
+        XCTAssertEqual(
+            fake.allRequests.dropFirst(2).map(\.path),
+            [path, "/user/call/UserAsks", path, "/user/call/UserAsks"]
+        )
+        for request in fake.allRequests.dropFirst(2) {
+            assertBody(request, #"{"name":"jo"}"#)
+        }
+
+        // Anything else the yard says comes back as it stands, from the one
+        // call: another code, the words with more after them, another
+        // call's words, a plain refusal, and a yard that is not there.
+        let others: [(FakeResponse, ApiError)] = [
+            (.refused("no such method UserOpenAsks", code: "not_found"), .refused(code: "not_found", message: "no such method UserOpenAsks")),
+            (.refused("no such method UserOpenAsks (try UserAsks)"), .refused(code: "error", message: "no such method UserOpenAsks (try UserAsks)")),
+            (.refused("no such method UserAsks"), .refused(code: "error", message: "no such method UserAsks")),
+            (.refused("the yard is busy"), .refused(code: "error", message: "the yard is busy")),
+            (.away(), .away),
+        ]
+        for (answer, expected) in others {
+            fake.setAlways(yard: "laptop", path: path) { answer }
+            let before = fake.allRequests.count
+            let error = await raisedApiError { _ = try await laptop.userOpenAsks(name: "jo") }
+            XCTAssertEqual(error, expected)
+            XCTAssertEqual(fake.allRequests.dropFirst(before).map(\.path), [path], "\(expected): no second read")
+        }
     }
 
     // An answer whose pairing cannot be shown (no code, no QR or no time it

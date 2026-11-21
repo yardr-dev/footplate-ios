@@ -193,7 +193,7 @@ final class ConversationModelTests: XCTestCase {
             notifications: Notifications(),
             // An open ask the letters name: each reading finds and
             // previews it in thirty of them.
-            asks: Asks(open: [OpenAsk(bead: "yd-links", ask: 3, question: "Move the links?", asker: "yardmaster", since: "2026-10-08T09:00:00Z")])
+            asks: OpenQueue(open: [OpenAsk(bead: "yd-links", ask: 3, question: "Move the links?", asker: "yardmaster", since: "2026-10-08T09:00:00Z")])
         ))
         func page(before: Int64) -> Page {
             let older = before > 0 ? all.filter { $0.seq < before } : all
@@ -851,7 +851,7 @@ final class ConversationModelTests: XCTestCase {
             users: [],
             inbox: Inbox(),
             notifications: Notifications(notifications: notices),
-            asks: Asks(open: open, decided: decided)
+            asks: OpenQueue(open: open, decided: decided)
         )
     }
 }

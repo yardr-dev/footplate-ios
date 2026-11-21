@@ -44,7 +44,14 @@ protocol Followed: AnyObject {
     /// The crew again, on an event that says less than what changed.
     func crew() async throws -> [CrewMember]
 
-    /// The user's decisions again, on a `noted` event.
+    /// The user's open decisions again, on a `noted` event and at a
+    /// put-aside ask's return: the open asks, and the decided only where
+    /// the yard answered the whole queue (a yard from before
+    /// `UserOpenAsks`).
+    func openAsks() async throws -> OpenQueue
+
+    /// The user's whole queue, the decided history with the open asks:
+    /// read where the Decide place shows it (`Mailroom.fetchWhole`).
     func asks() async throws -> Asks
 
     /// One bead whole, with its asks' options, recommendation and state.

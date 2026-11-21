@@ -20,7 +20,8 @@ enum Canned {
         "AckUserInbox": "{}",
         "UserNotifications": #"{"result": {"notifications": [{"seq": 10, "at": "2026-10-08T09:30:00Z", "kind": "created", "bead": "yd-shed", "text": "yd-shed created (all) by yardmaster originator=jo stage=new title=Paint the shed type=task", "read": false}, {"seq": 11, "at": "2026-10-08T09:30:00Z", "kind": "noted", "bead": "yd-shed", "text": "yd-shed noted (all) by yardmaster note=1 on \"Paint the shed\"", "read": false}], "unread": 2, "last": 11}}"#,
         "AckUserNotifications": "{}",
-        "UserAsks": #"{"result": {"open": [{"bead": "yd-links", "bead_title": "Move the links", "topic": "topic:linear-out", "ask": 3, "question": "Move this yard's links to the declared source now?", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z"}, {"bead": "yd-map", "bead_title": "Who wrote in", "topic": "", "ask": 7, "question": "Who is U024BE7LH on slack?", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "identity": {"source": "slack", "sender": "U024BE7LH", "channel": "C1"}, "weight": [{"class": "as-user", "line": "writes who a sender is: U024BE7LH on slack becomes a user of the yard"}]}, {"bead": "yd-tidy", "bead_title": "Tidy the sidings", "topic": "", "ask": 9, "question": "Remove the merged worktrees now?", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "run": {"argv": ["yardr", "depot", "tidy", "--merged"], "command": "yardr depot tidy --merged", "description": "removes the worktrees of landed beads"}}], "decided": [{"bead": "yd-greet", "bead_title": "The greeting", "ask": 5, "question": "What should the tone of the greeting be?", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "state": "declined", "words": "the greeting can wait"}]}}"#,
+        "UserAsks": userAsks,
+        "UserOpenAsks": openOnly(userAsks),
         "Bead": #"{"result": {"id": "yd-links", "title": "Move the links", "body": "The links file declares the new source.", "stage": "new", "topic": "topic:linear-out", "labels": ["topic:linear-out"], "notes": [{"seq": 2, "kind": "note", "author": "yardmaster", "text": "the test passed on a copy", "at": "2026-10-08T09:30:00Z"}], "asks": [{"ask": 3, "to": "jo", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "question": "Move this yard's links to the declared source now?", "context": ["The links file declares the new source; 64 links still point at the old one."], "options": [{"label": "Move them now", "consequence": "all 64 links point at the new source tonight"}, {"label": "After Friday", "consequence": "keep the old source until the release is out"}, {"label": "You decide", "consequence": "leave it to yardmaster"}], "recommend": 1, "why": "the test passed", "about": [{"id": "yd-train", "title": "Release train", "stage": "new"}], "state": "open"}]}}"#,
         "AnswerAsk": "{}",
         "ApproveAsk": "{}",
@@ -31,6 +32,20 @@ enum Canned {
         "DeclineAsk": "{}",
         "Flows": flowsJSON,
     ]
+
+    /// What `UserAsks` answers: three open asks and one decided.
+    static let userAsks = #"{"result": {"open": [{"bead": "yd-links", "bead_title": "Move the links", "topic": "topic:linear-out", "ask": 3, "question": "Move this yard's links to the declared source now?", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z"}, {"bead": "yd-map", "bead_title": "Who wrote in", "topic": "", "ask": 7, "question": "Who is U024BE7LH on slack?", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "identity": {"source": "slack", "sender": "U024BE7LH", "channel": "C1"}, "weight": [{"class": "as-user", "line": "writes who a sender is: U024BE7LH on slack becomes a user of the yard"}]}, {"bead": "yd-tidy", "bead_title": "Tidy the sidings", "topic": "", "ask": 9, "question": "Remove the merged worktrees now?", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "run": {"argv": ["yardr", "depot", "tidy", "--merged"], "command": "yardr depot tidy --merged", "description": "removes the worktrees of landed beads"}}], "decided": [{"bead": "yd-greet", "bead_title": "The greeting", "ask": 5, "question": "What should the tone of the greeting be?", "asker": "yardmaster", "since": "2026-10-08T09:30:00Z", "state": "declined", "words": "the greeting can wait"}]}}"#
+
+    /// What `UserOpenAsks` answers of that queue: the same open rows, and
+    /// no `decided` key, as the yard words it. Derived, so the two cannot
+    /// drift: the open cards of the two reads are one set.
+    static func openOnly(_ reply: String) -> String {
+        var whole = try! JSONSerialization.jsonObject(with: Data(reply.utf8)) as! [String: Any]
+        var result = whole["result"] as! [String: Any]
+        result["decided"] = nil
+        whole["result"] = result
+        return String(decoding: try! JSONSerialization.data(withJSONObject: whole, options: [.sortedKeys]), as: UTF8.self)
+    }
 
     /// The hashes of the files `yd-shots`' note carries.
     static let shotHash = String(repeating: "5a", count: 32)
