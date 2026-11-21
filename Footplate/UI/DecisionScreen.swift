@@ -39,8 +39,9 @@ struct DecisionsScreen: View {
                 }
         }
         // The Decided lines are the whole queue's: read when the place
-        // appears and when the yard changes under it, not on each return
-        // from a card (`DecisionsModel.reading`).
+        // appears, when the yard changes under it and when the yard
+        // reloads under it, not on each return from a card
+        // (`DecisionsModel.reading`).
         .onChange(of: model.reading, initial: true) {
             Task { await model.read() }
         }

@@ -42,6 +42,9 @@ final class Mailroom {
     private let now: @Sendable () -> Date
     private var watched: [String: (followed: any Followed, observer: UUID)] = [:]
     private var lastLoaded: [String: Loaded] = [:]
+    /// How many loads of each yard have applied, first board onward: the
+    /// load identity the Decide place watches for a reload under it.
+    private var loadGenerations: [String: Int] = [:]
     private var onScreen: OnScreen? = nil
     private var boardObservers: [UUID: @MainActor () -> Void] = [:]
     private var revisitTasks: [String: Task<Void, Never>] = [:]
@@ -61,6 +64,7 @@ final class Mailroom {
             watched.removeValue(forKey: name)
             boards.removeValue(forKey: name)
             lastLoaded.removeValue(forKey: name)
+            loadGenerations.removeValue(forKey: name)
             revisitTasks[name]?.cancel()
             revisitTasks.removeValue(forKey: name)
             revisitAt.removeValue(forKey: name)
@@ -79,6 +83,14 @@ final class Mailroom {
     /// The follower of the yard named `name`, for a screen's calls.
     func followed(_ name: String) -> (any Followed)? {
         watched[name]?.followed
+    }
+
+    /// How many loads of the yard `name` have applied, 0 where none has:
+    /// the load identity a screen watches for a reload under it. The
+    /// event head is not it: the head advances on events, and a reload is
+    /// a load.
+    func loadGeneration(of name: String) -> Int {
+        loadGenerations[name] ?? 0
     }
 
     func observeBoards(_ observer: @escaping @MainActor () -> Void) -> UUID {
@@ -119,6 +131,7 @@ final class Mailroom {
             }
             boards[name] = fresh
             lastLoaded[name] = loaded
+            loadGenerations[name, default: 0] += 1
             changed = true
         }
         guard var board = boards[name] else { return }
@@ -178,12 +191,13 @@ final class Mailroom {
 
     /// Reads the whole queue of the yard `name`, the decided history with
     /// the open asks, and applies it. The reads that want the history are
-    /// the Decide place appearing, the selected yard changing under it, and
-    /// the person's own decision (so the list moves the ask to Decided at
-    /// once); every other read of the queue is open-only (`reread`), since
-    /// a noted event is no reason to read the whole history again. An
-    /// answer that does not come leaves the board as it was: the next of
-    /// those reads reads again.
+    /// the Decide place appearing, the selected yard changing under it, a
+    /// reload of the front yard while it shows, and the person's own
+    /// decision (so the list moves the ask to Decided at once); every
+    /// other read of the queue is open-only (`reread`), since a noted
+    /// event is no reason to read the whole history again. An answer that
+    /// does not come leaves the board as it was: the next of those reads
+    /// reads again.
     func fetchWhole(_ name: String) async {
         guard let followed = watched[name]?.followed else { return }
         let loaded = followed.state.loaded

@@ -171,7 +171,7 @@ final class MailroomQueueTests: XCTestCase {
         XCTAssertEqual(board?.decided, [])
     }
 
-    func testTheDecidePlaceReadsTheYardSelectedWhileItIsInFrontAndOnceItHasABoard() async throws {
+    func testTheDecidePlaceReadsTheYardSelectedWhileItIsInFrontOnReloadAndOnceItHasABoard() async throws {
         let edge = FakeYard()
         let records = Records(secret: MemoryShelf(), plain: MemoryShelf(), origin: edge.origin)
         records.keepSession(account: edge.email, session: edge.session())
@@ -197,13 +197,13 @@ final class MailroomQueueTests: XCTestCase {
         // The place appears: the selected yard's whole queue is read, and
         // another's is not.
         nav.place = .decide
-        XCTAssertEqual(list.reading, "north")
+        XCTAssertEqual(list.reading, DecisionsReading(yard: "north", generation: 1))
         await list.read()
         XCTAssertEqual([north.wholeAskReads, south.wholeAskReads], [1, 0])
 
         // The yard selected changing under it is a new key: the new yard's.
         records.select("south")
-        XCTAssertEqual(list.reading, "south")
+        XCTAssertEqual(list.reading, DecisionsReading(yard: "south", generation: 1))
         await list.read()
         XCTAssertEqual([north.wholeAskReads, south.wholeAskReads], [1, 1])
 
@@ -214,6 +214,33 @@ final class MailroomQueueTests: XCTestCase {
         await list.read()
         XCTAssertEqual(late.wholeAskReads, 0)
         late.up(loaded(asks: OpenQueue(open: [Self.token])))
-        XCTAssertEqual(list.reading, "late")
+        XCTAssertEqual(list.reading, DecisionsReading(yard: "late", generation: 1))
+
+        // A reload of the front yard is a new key too: its generation
+        // advances, and its whole queue is read once more.
+        records.select("north")
+        XCTAssertEqual(list.reading, DecisionsReading(yard: "north", generation: 1))
+        north.up(loaded(head: 160, asks: OpenQueue(open: [Self.links])))
+        XCTAssertEqual(list.reading, DecisionsReading(yard: "north", generation: 2))
+        await list.read()
+        XCTAssertEqual([north.wholeAskReads, south.wholeAskReads], [2, 1])
+
+        // A load that reads the same state applies nothing: the key is
+        // unchanged, so the place watching it reads nothing.
+        north.up(loaded(head: 160, asks: OpenQueue(open: [Self.links])))
+        XCTAssertEqual(list.reading, DecisionsReading(yard: "north", generation: 2))
+        XCTAssertEqual(north.wholeAskReads, 2)
+
+        // A reload with Decide elsewhere is no key at all: nothing is
+        // read until the place is back in front, and then once.
+        nav.place = .crew
+        north.up(loaded(head: 170, asks: OpenQueue(open: [Self.links])))
+        XCTAssertNil(list.reading)
+        await list.read()
+        XCTAssertEqual(north.wholeAskReads, 2)
+        nav.place = .decide
+        XCTAssertEqual(list.reading, DecisionsReading(yard: "north", generation: 3))
+        await list.read()
+        XCTAssertEqual(north.wholeAskReads, 3)
     }
 }

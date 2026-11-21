@@ -365,6 +365,14 @@ final class DecisionModel {
     private var boardsObserver: UUID? = nil
     private var readTask: Task<Void, Never>? = nil
     private var lastReadKey: String? = nil
+    /// Whether the opened ask was last seen in the board's open, nil
+    /// where no board has been seen for this card yet: an ask seen open
+    /// and then gone was decided elsewhere, and its history is read.
+    private var lastSeenOpen: Bool? = nil
+    /// The card whose departure a whole read already covers: the person's
+    /// own decision reads the queue, so the ask leaving the open list
+    /// after it reads nothing more. Cleared when the card is left.
+    private var answered: ScreenRef? = nil
     private var active = false
     /// Invalidates work that finishes after this card leaves the screen,
     /// including when the same card is opened again.
@@ -484,6 +492,8 @@ final class DecisionModel {
             refusal = nil
             errorText = nil
             lastReadKey = nil
+            lastSeenOpen = nil
+            answered = nil
         }
         active = true
         boardChanged()
@@ -498,6 +508,11 @@ final class DecisionModel {
         active = false
         readTask?.cancel()
         readTask = nil
+        // Any departure the ask makes from now on is another client's:
+        // what the person decided here is covered already. What the card
+        // last saw of the open list stays, so reopening it still sees the
+        // departure.
+        answered = nil
         unlocking = nil
         shownText = nil
         dropSitting()
@@ -860,7 +875,7 @@ final class DecisionModel {
         defer { sending = false }
         do {
             let opened = try await body(followed)
-            readQueue(of: target.yard)
+            readQueue(of: target.yard, covering: target)
             guard active, self.activation == activation, screen() == target else { return }
             if let run, opened != nil || isDevicePairRun(run) {
                 seat(opened, of: run, target: target)
@@ -896,7 +911,7 @@ final class DecisionModel {
         defer { sending = false }
         do {
             try await body(followed)
-            readQueue(of: target.yard)
+            readQueue(of: target.yard, covering: target)
             guard active, self.activation == activation, screen() == target else { return }
             nav.closeDecision(yard: target.yard, bead: target.bead, ask: target.ask)
         } catch let error as ApiError {
@@ -908,12 +923,16 @@ final class DecisionModel {
         }
     }
 
-    /// The yard took the person's decision: its whole queue is read, so the
-    /// list moves the ask to Decided at once and does not wait for the
-    /// next appearance of the place. Left running, even where the card has
-    /// left meanwhile: the decision stands, and nothing the card shows
-    /// waits on the history.
-    private func readQueue(of yard: String) {
+    /// The yard took the person's decision on `covering`, or another
+    /// client decided the open card and `covering` is nil: the yard's
+    /// whole queue is read, so the list moves the ask to Decided at once
+    /// and the card's done-line is drawn from the fresh history. Left
+    /// running, even where the card has left meanwhile: the decision
+    /// stands, and nothing the card shows waits on the history. An own
+    /// decision marks its card covered, so the ask leaving the open list
+    /// after it reads nothing more.
+    private func readQueue(of yard: String, covering: ScreenRef? = nil) {
+        if let covering { answered = covering }
         let mailroom = self.mailroom
         Task { @MainActor in await mailroom.fetchWhole(yard) }
     }
@@ -995,6 +1014,16 @@ final class DecisionModel {
     private func boardChanged() {
         guard active, let screen = screen() else { return }
         let board = mailroom.boards[screen.yard]
+        // The ask was open and is gone: another client decided it while
+        // the card stood open, so its whole queue is read once and the
+        // fresh decided draws the done-line. An ask the person decided
+        // here is covered by that decision's own read; one never seen
+        // open needs no read to say it is gone.
+        let open = board?.open.contains { $0.bead == screen.bead && $0.ask == screen.ask } == true
+        if lastSeenOpen == true, !open, answered != screen {
+            readQueue(of: screen.yard)
+        }
+        lastSeenOpen = open
         let key = [
             board.map { String($0.head) } ?? "-",
             board?.beadEvents[screen.bead].map(String.init) ?? "-",

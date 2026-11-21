@@ -12,8 +12,9 @@ import XCTest
 // and a refused answer shows the yard's sentence with the per-type
 // command;
 // the queue is read open-only on the load and on each `noted` event, and
-// whole where the Decide place appears and after the person's own
-// decision the yard took, so Later, Decline and a pick move the card to
+// whole where the Decide place appears or reloads, after the person's own
+// decision, and when an open card's ask leaves the open list, so Later,
+// Decline and a pick move the card to
 // Decided at once; the ask's context is on the card from
 // the read, a details row for the card's own bead stands first on every
 // card and one for each bead the ask is about after it, each opening to
@@ -1148,7 +1149,7 @@ final class DecisionModelTests: XCTestCase {
         _ = await waitFor("the open asks", state: { list.state }) { $0.open.count == 3 }
         XCTAssertEqual(calls("UserOpenAsks").count, 1, "the load")
         XCTAssertTrue(calls("UserAsks").isEmpty)
-        XCTAssertEqual(list.reading, "laptop")
+        XCTAssertEqual(list.reading, DecisionsReading(yard: "laptop", generation: 1))
 
         // A card arrives on a noted event: the open asks are read, the
         // history is not asked for.
@@ -1186,9 +1187,9 @@ final class DecisionModelTests: XCTestCase {
         await list.read()
         XCTAssertEqual(calls("UserAsks").count, 1, "nothing is read where the place is not in front")
         nav.place = .decide
-        XCTAssertEqual(list.reading, "laptop")
+        XCTAssertEqual(list.reading, DecisionsReading(yard: "laptop", generation: 1))
         nav.openDecision(yard: "laptop", bead: "yd-links", ask: 3)
-        XCTAssertEqual(list.reading, "laptop")
+        XCTAssertEqual(list.reading, DecisionsReading(yard: "laptop", generation: 1))
     }
 
     // A put-aside ask returns on its time with no event: the whole read
@@ -1325,6 +1326,48 @@ final class DecisionModelTests: XCTestCase {
         XCTAssertEqual(refused.state.refusal, "that ask is not open")
         try? await Task.sleep(for: .milliseconds(100))
         XCTAssertEqual(calls("UserAsks").count, 6)
+    }
+
+    // Another client decides the open card's ask: the card reads the
+    // whole queue once, and its done-line is drawn from the fresh
+    // history. A card whose ask stays open reads nothing.
+    func testACardWhoseAskLeavesTheOpenListReadsTheWholeQueueOnceForItsDoneLine() async {
+        let list = decisions()
+        _ = await waitFor("the open asks", state: { list.state }) { $0.open.count == 3 }
+        fake.nextFor(yard: "laptop", path: "/user/call/UserAsks", FakeResponse.json(200, Self.asks(
+            open: [Self.links, Self.map, Self.tidy], decided: [Self.greetDeclined]
+        )))
+        await list.read()
+        XCTAssertEqual(calls("UserAsks").count, 1)
+
+        // yd-map is answered elsewhere: the noted event's open-only read
+        // drops it from the open list, and the open card reads the whole
+        // queue once for the history the event does not carry.
+        let map = await opened("yd-map", 7)
+        XCTAssertNil(map.state.done)
+        fake.nextFor(yard: "laptop", path: "/user/call/UserAsks", FakeResponse.json(200, Self.asks(
+            open: [Self.links, Self.tidy], decided: [Self.mapAnswered, Self.greetDeclined]
+        )))
+        await noted(152, "yd-map", open: [Self.links, Self.tidy])
+        let answered = await waitFor("yd-map answered elsewhere", state: { map.state }) { $0.done != nil }
+        XCTAssertEqual(answered.done, "answered: jo")
+        XCTAssertEqual(calls("UserAsks").count, 2)
+        XCTAssertFalse(list.state.open.contains { $0.bead == "yd-map" })
+        XCTAssertEqual(list.state.decided.first { $0.bead == "yd-map" }?.what, "answered: jo")
+        map.leave()
+
+        // yd-links stays open through its note: its card reads nothing,
+        // though the open-only read went.
+        let links = await opened("yd-links", 3)
+        await noted(153, "yd-tidy", open: [Self.links, Self.map])
+        _ = await waitFor("the open-only read to leave this card open", state: { list.state }) {
+            $0.open.map(\.bead) == ["yd-links", "yd-map"]
+        }
+        await Task.yield()
+        XCTAssertEqual(calls("UserOpenAsks").count, 3)
+        XCTAssertEqual(calls("UserAsks").count, 2)
+        XCTAssertNil(links.state.done)
+        links.leave()
     }
 
     func testTheContextIsOnTheCardFromTheReadAndEveryAskHasItsOwn() async {

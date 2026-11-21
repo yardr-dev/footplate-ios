@@ -5,9 +5,10 @@ import Foundation
 // the weighty lines first on each, and the decided under them, each as
 // the yard last listed them. The open cards move when the `noted` event's
 // open-only re-read says so, never before: a pick, a Later or a Decline is
-// the yard's to record. The decided are read whole (`UserAsks`) where the
-// place appears and after the person's own decision, and not on every
-// noted event, which would read the whole history again for each note.
+// the yard's to record. The decided are read whole (`UserAsks`) when the
+// place appears or reloads in front, after the person's own decision, and
+// when an open card's ask leaves the open list. A noted event alone never
+// reads the whole history again.
 
 /// One open ask as the Decisions list draws it, a card.
 struct Card: Equatable, Sendable {
@@ -38,6 +39,15 @@ struct DecisionsState: Equatable, Sendable {
     var decided: [DecidedLine] = []
 }
 
+/// What the Decide place reads whole: the yard it is in front of, and
+/// how many of its loads have applied. A change of either is the reason
+/// to read, so a yard change and a reload share the one trigger path and
+/// its dedupe.
+struct DecisionsReading: Equatable, Sendable {
+    var yard: String
+    var generation: Int
+}
+
 @MainActor
 @Observable
 final class DecisionsModel {
@@ -65,21 +75,24 @@ final class DecisionsModel {
         decisions(board: records.kept.selected.flatMap { mailroom.boards[$0] })
     }
 
-    /// The yard whose whole queue the place reads: the selected one, while
-    /// Decide is the place in front and the yard has a board to put the
-    /// history on. A change of it is the reason to read: the place
-    /// appearing, the selected yard changing under it, or the yard's first
-    /// board arriving while it is in front. A card pushed over the list
-    /// changes none, so coming back from it reads nothing.
-    var reading: String? {
+    /// The yard whose whole queue the place reads, and how many of its
+    /// loads have applied: the selected one, while Decide is the place in
+    /// front and the yard has a board to put the history on. A change of
+    /// it is the reason to read: the place appearing, the selected yard
+    /// changing under it, the yard's first board arriving while it is in
+    /// front, or the yard reloading under it (one whole read per
+    /// foreground with Decide in front, the same order as the appear
+    /// trigger). A card pushed over the list changes none, so coming back
+    /// from it reads nothing.
+    var reading: DecisionsReading? {
         guard nav.place == .decide, let yard = records.kept.selected, mailroom.boards[yard] != nil else { return nil }
-        return yard
+        return DecisionsReading(yard: yard, generation: mailroom.loadGeneration(of: yard))
     }
 
     /// Reads the whole queue of the yard the place is in front of, the
     /// decided history with the open asks.
     func read() async {
-        guard let yard = reading else { return }
+        guard let yard = reading?.yard else { return }
         await mailroom.fetchWhole(yard)
     }
 
