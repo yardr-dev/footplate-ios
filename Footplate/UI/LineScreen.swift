@@ -4,8 +4,9 @@ import SwiftUI
 // filters, a card per moving line and the quiet lines' chips, the
 // Elsewhere rows and the beads with no line, in the place's own
 // stack. Read-only: a card or a quiet chip pushes its line's route
-// map, and a bead id on a card or a row pushes the bead's card. Pull
-// to refresh reads the board again.
+// map, a bead id on a card or a row pushes the bead's card, and a
+// route map's line opens the depot's line. Pull to refresh reads the
+// board again.
 struct LinesScreen: View {
     @Bindable var inbox: InboxModel
     @Bindable var records: Records
@@ -20,6 +21,7 @@ struct LinesScreen: View {
                     switch route {
                     case .line(let line): RouteMapScreen(model: model, route: line)
                     case .bead(let bead): BeadCardScreen(model: model, route: bead)
+                    case .depot(let depot): DepotLineScreen(model: model, route: depot)
                     }
                 }
         }

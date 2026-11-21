@@ -314,6 +314,13 @@ final class YardClient: Sendable {
         try await answer(method: "Flows", args: [:], as: Flows.self)
     }
 
+    /// One depot's line, whole: its flows with their stages, who serves
+    /// each stage, the stage files and the prompts. The operator's to
+    /// read: a device that is none is refused in the yard's words.
+    func line(depot: String) async throws -> DepotLine {
+        try await answer(method: "Line", args: ["depot": depot], as: DepotLine.self)
+    }
+
     /// Picks `option` with `words` beside it (left out where empty).
     /// `weighed` is the phone's word that its person saw the card's
     /// weight and passed the unlock: sent only where it is true, and

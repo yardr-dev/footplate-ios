@@ -162,6 +162,8 @@ final class DemoTransport: HTTPTransport, @unchecked Sendable {
             return result(bead)
         case "Flows":
             return result(withYard { $0.flows })
+        case "Line":
+            return result(withYard { $0.line(args.text("depot")) })
         case "AnswerAsk":
             let (bead, ask) = (args.text("bead"), args.number("ask"))
             return withYard({ $0.answer(bead: bead, ask: ask, option: args.number("option"), words: args.text("words")) })

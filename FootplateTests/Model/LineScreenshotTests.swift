@@ -11,7 +11,10 @@ import XCTest
 // Ask naming a renamed coordinator, the card of a bead whose note
 // carries a picture and a page, and that of a bead with three pictures
 // over two notes: its Media row, the Media grid and a picture opened full
-// size. Hand-run for the
+// size. One depot's line with a stage file, a group prompt and a crew
+// prompt opened behind their Reads and the unreadable prompt's error in
+// its text's place, the refused line, and a route map's toolbar entry
+// with a long depot name. Hand-run for the
 // bead note; the gate runs it too, and it only asserts that the screens
 // render non-empty at phone size. The PNGs land in
 // `TEST_RUNNER_LINE_SHOTS_DIR`, or the temporary directory's `line-shots`
@@ -197,6 +200,52 @@ final class LineScreenshotTests: XCTestCase {
         try await render(NavigationStack { BeadCardScreen(model: line, route: route) }, scene: scene, to: dir.appendingPathComponent("bead-card-media.png"))
         try await render(NavigationStack { MediaGridScreen(model: line, route: route) }, scene: scene, to: dir.appendingPathComponent("media-grid.png"))
         try await render(MediaViewer(media: pictures(), start: pictures()[1].id) {}, scene: scene, to: dir.appendingPathComponent("media-viewer.png"))
+        // One depot's line: its flows in order with their stages and
+        // who serves each, a stage file, a group prompt and a crew
+        // prompt opened behind their Reads, and the unreadable prompt's
+        // error in its text's place, with no Read.
+        home.depotLines = ["yard": try cannedLine()]
+        line.openDepotLine(depot: "yard")
+        let depotRoute = DepotRoute(yard: "", depot: "yard")
+        let lineDeadline = ContinuousClock.now + .seconds(10)
+        while line.detail(for: depotRoute)?.line == nil, ContinuousClock.now <= lineDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let detail = try XCTUnwrap(line.detail(for: depotRoute))
+        XCTAssertFalse(detail.reading)
+        XCTAssertNil(detail.error)
+        XCTAssertEqual(detail.line?.flows.map(\.name), ["default", "default"])
+        XCTAssertEqual(detail.line?.crew.map(\.name), ["yardmaster", "signalman"])
+        line.toggleDetail(detailFileKey(depot: "yard", flow: 0, stage: "new"))
+        line.toggleDetail(detailPromptKey(depot: "yard", flow: 0, stage: "new", group: "muse-builders"))
+        line.toggleDetail(detailCrewKey(depot: "yard", name: "yardmaster"))
+        let depotWindow = try await renderWindow(
+            NavigationStack { DepotLineScreen(model: line, route: depotRoute) },
+            scene: scene, to: dir.appendingPathComponent("depot-line.png"), height: 950
+        )
+        depotWindow.isHidden = true
+        try await Task.sleep(for: .milliseconds(200))
+        // The refused line says why, whole.
+        home.lineRefuse = .away
+        line.openDepotLine(depot: "drafts")
+        let refusedRoute = DepotRoute(yard: "", depot: "drafts")
+        while line.detail(for: refusedRoute)?.error == nil, ContinuousClock.now <= lineDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(line.detail(for: refusedRoute)?.error, "Not read: The yard is away: the edge cannot reach it.")
+        try await render(NavigationStack { DepotLineScreen(model: line, route: refusedRoute) }, scene: scene, to: dir.appendingPathComponent("depot-line-refused.png"))
+        home.lineRefuse = nil
+        // A route map's toolbar entry with a long depot name: the Read
+        // keeps its words beside the head at iPhone width.
+        var longDepot = try cannedBoard()
+        longDepot.depots[1].name = "footplate-ios"
+        home.board = longDepot
+        await line.refresh()
+        line.openLine(depot: "footplate-ios", flow: "default")
+        let longRoute = LineRoute(yard: "", depot: "footplate-ios", flow: "default")
+        let longMap = try XCTUnwrap(line.routeMap(for: longRoute))
+        XCTAssertEqual(longMap.title, "footplate-ios · default")
+        try await render(NavigationStack { RouteMapScreen(model: line, route: longRoute) }, scene: scene, to: dir.appendingPathComponent("route-map-long-depot.png"))
         line.leave()
     }
 
@@ -282,6 +331,16 @@ final class LineScreenshotTests: XCTestCase {
             var result: Flows
         }
         let canned = try XCTUnwrap(Canned.replies["Flows"])
+        return try JSONDecoder().decode(Result.self, from: Data(canned.utf8)).result
+    }
+
+    /// The fake yard's line, as Canned serves it: two flows, a stage
+    /// file, a group prompt, an unreadable prompt and the crew.
+    private func cannedLine() throws -> DepotLine {
+        struct Result: Decodable {
+            var result: DepotLine
+        }
+        let canned = try XCTUnwrap(Canned.replies["Line"])
         return try JSONDecoder().decode(Result.self, from: Data(canned.utf8)).result
     }
 

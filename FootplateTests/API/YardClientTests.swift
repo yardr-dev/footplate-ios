@@ -1,4 +1,5 @@
 @testable import Footplate
+import Foundation
 import XCTest
 
 // The calls of design 3.1 against the fake yard: what each sends (its
@@ -162,6 +163,75 @@ final class YardClientTests: XCTestCase {
                 XCTAssertNil(backlog.taken)
                 XCTAssertEqual(flows.depots[0].elsewhere.map(\.bead), ["yd-fence"])
                 XCTAssertEqual(flows.unassigned.map(\.bead), ["yd-crm"])
+            }),
+            // One depot's line, whole: its flows with their stages, who
+            // serves each, the stage files and the prompts.
+            ("Line", #"{"depot":"yard"}"#, {
+                let line = try await laptop.line(depot: "yard")
+                XCTAssertEqual(line.depot, "yard")
+                XCTAssertEqual(line.kind, "git")
+                XCTAssertEqual(line.flows.count, 2)
+                XCTAssertEqual(line.flows[1].type, "release")
+                // A dir depot's directory flow names its directory
+                // beside its source; the canned depot is git, so its
+                // flows carry none, and a fragment pins the key.
+                XCTAssertEqual(line.flows[0].directory, "")
+                let dirFlow = try JSONDecoder().decode(
+                    DepotLineFlow.self,
+                    from: Data(#"{"name": "default", "source": "repo (directory)", "directory": "flows", "stages": []}"#.utf8)
+                )
+                XCTAssertEqual(dirFlow.directory, "flows")
+                XCTAssertEqual(line.flows[0].warnings, ["bead yd-stray: it is not routed and waits until someone advances it (yardr bead advance yd-stray --to <stage>)"])
+                let stages = line.flows[0].stages
+                XCTAssertEqual(stages.map(\.stage), ["new", "review", "merged"])
+                XCTAssertEqual(stages[0].next, ["review"])
+                XCTAssertEqual(stages[0].open, 2)
+                XCTAssertEqual(stages[0].warnings, [])
+                XCTAssertEqual(stages[0].route?.id, "yard default new")
+                XCTAssertEqual(stages[0].route?.scope, "this depot's own")
+                XCTAssertEqual(stages[0].route?.filters, DepotLineFilters())
+                XCTAssertEqual(stages[0].route?.limit, 4)
+                XCTAssertEqual(
+                    stages[0].otherRoutes,
+                    [DepotLineOtherRoute(
+                        id: "yard P0 new",
+                        scope: "yard-wide",
+                        filters: DepotLineFilters(type: "task", labels: ["topic:trains"], priority: "P0", originator: "jo"),
+                        group: "muse-builders"
+                    )]
+                )
+                XCTAssertEqual(stages[0].stageFile?.path, "flows/default/new.md")
+                XCTAssertEqual(stages[0].stageFile?.text, "A builder implements the bead here.")
+                let builders = stages[0].route?.chain.first
+                XCTAssertEqual(builders?.condition, "Weekly<80")
+                XCTAssertEqual(builders?.runner, "herdr")
+                XCTAssertEqual(builders?.kind, "claude")
+                XCTAssertEqual(builders?.model, "opus")
+                XCTAssertEqual(builders?.prompt?.source, "depot")
+                XCTAssertEqual(builders?.prompt?.found, "roles/builder.9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08.md")
+                XCTAssertEqual(builders?.prompt?.commit, "da39a3ee5e6b4b0d3255bfef95601890afd80709")
+                XCTAssertEqual(builders?.prompt?.digest, "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08")
+                XCTAssertEqual(builders?.prompt?.carriable, true)
+                XCTAssertEqual(builders?.prompt?.why, "")
+                XCTAssertEqual(stages[1].next, ["new", "merged"])
+                XCTAssertEqual(stages[1].open, 1)
+                XCTAssertEqual(
+                    stages[1].outcomes,
+                    [
+                        DepotLineOutcome(name: "done", to: "merged"),
+                        DepotLineOutcome(name: "changes", to: "new", max: 3, then: "merged"),
+                    ]
+                )
+                XCTAssertEqual(stages[1].route?.chain.first?.prompt?.error, "open roles/reviewer.md: no such file")
+                XCTAssertEqual(stages[1].route?.chain.first?.prompt?.tried.count, 2)
+                XCTAssertTrue(stages[2].terminal)
+                XCTAssertEqual(line.flows[1].stages[0].route?.chain.first?.members, ["mckean"])
+                XCTAssertEqual(line.crew.map(\.name), ["yardmaster", "signalman"])
+                XCTAssertEqual(line.crew[0].prompt?.text, "You keep the yard.")
+                XCTAssertEqual(line.crew[0].prompt?.found, "/home/jo/.yardr/prompts/yardmaster.md")
+                XCTAssertEqual(line.crew[0].prompt?.carriable, false)
+                XCTAssertEqual(line.crew[0].prompt?.why, "it is a relative path, read against each depot")
+                XCTAssertNil(line.crew[1].prompt)
             }),
             ("Bead", #"{"bead":"yd-links"}"#, {
                 let bead = try await laptop.bead("yd-links")

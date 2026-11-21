@@ -599,6 +599,10 @@ extension Follower: Followed {
         try await client.flows()
     }
 
+    func line(depot: String) async throws -> DepotLine {
+        try await client.line(depot: depot)
+    }
+
     func answer(bead: String, ask: Int64, option: Int64, words: String, weighed: Bool) async throws {
         try await client.answerAsk(bead: bead, ask: ask, option: option, words: words, actor: me(), weighed: weighed)
     }

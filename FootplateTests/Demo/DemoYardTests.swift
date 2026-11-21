@@ -61,6 +61,7 @@ final class DemoYardTests: XCTestCase {
         var texts = [
             try encoder.encode(yard.me), try encoder.encode(yard.crew), try encoder.encode(yard.inbox(limit: 0)),
             try encoder.encode(yard.notifications), try encoder.encode(yard.asks), try encoder.encode(yard.flows),
+            try encoder.encode(yard.line("timetable")),
         ]
         for id in ["yd-4k2m", "yd-7h9q", "yd-2c5d", "yd-9w1x"] {
             texts.append(try encoder.encode(try XCTUnwrap(yard.bead(id))))
@@ -87,6 +88,23 @@ final class DemoYardTests: XCTestCase {
                 XCTAssertNotNil(yard.bead(id), "\(id) in \(letter.text)")
             }
         }
+    }
+
+    func testTheDepotLineHoldsTwoFlowsAFileAndPrompts() {
+        let yard = demoYard()
+        let line = yard.line("timetable")
+        XCTAssertEqual(line.kind, "git")
+        XCTAssertEqual(line.flows.count, 2)
+        let stages = line.flows[0].stages
+        XCTAssertEqual(stages.map(\.stage), ["new", "review", "merged"])
+        XCTAssertEqual(stages[0].stageFile?.text, "A builder implements the bead here.")
+        XCTAssertEqual(stages[0].route?.chain.first?.prompt?.text, "You build the bead.")
+        XCTAssertEqual(stages[1].route?.chain.first?.prompt?.error, "open roles/reviewer.md: no such file")
+        XCTAssertEqual(line.crew.map(\.name), ["yardmaster", "signalman"])
+        XCTAssertEqual(line.crew[0].prompt?.text, "You keep the yard.")
+        XCTAssertNil(line.crew[1].prompt)
+        // Any other depot reads as one with no flows.
+        XCTAssertEqual(yard.line("nope"), DepotLine(depot: "nope"))
     }
 
     func testAConversationPagesBackwardsOldestFirst() {

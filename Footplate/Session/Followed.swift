@@ -61,6 +61,11 @@ protocol Followed: AnyObject {
     /// beads on each, as the device's user may see them.
     func flows() async throws -> Flows
 
+    /// One depot's line, whole: its flows with their stages, who serves
+    /// each stage, the stage files and the prompts. The operator's to
+    /// read, and the yard's own words where it is not.
+    func line(depot: String) async throws -> DepotLine
+
     /// Picks `option` with `words` beside it; `weighed` only after a
     /// passed gate on a weighty pick.
     func answer(bead: String, ask: Int64, option: Int64, words: String, weighed: Bool) async throws

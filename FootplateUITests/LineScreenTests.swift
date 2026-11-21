@@ -6,7 +6,8 @@ import XCTest
 // stand-in's counts stand on the overview; the filter removes bead ids from
 // the cards, and the transit count clears the filter; a line card pushes its
 // route map, whose backlog station opens and shuts, whose bead card pushes the
-// bead's card, and the back returns; a bead id on a card or a row pushes the
+// bead's card, whose line opens the depot's line with its stages, files and
+// prompts, and the back returns; a bead id on a card or a row pushes the
 // bead's card too, where Ask yardmaster lands in the yardmaster's conversation
 // with the id first in the field and Open in web view leaves for the browser.
 // The gate never runs them.
@@ -256,6 +257,72 @@ final class LineScreenTests: XCTestCase {
         XCTAssertTrue(app.buttons["quiet/drafts/default"].exists)
         XCTAssertTrue(app.buttons["bead-row/yd-fence"].exists)
         XCTAssertTrue(app.buttons["bead-row/yd-crm"].exists)
+    }
+
+    // After AAPairForHand against scripts/fake-edge: a route map's
+    // line opens the depot's line through the app's edge client, with
+    // its stages, who serves each, a stage file, a group prompt and
+    // the crew, each text behind Read.
+    @MainActor
+    func testADepotLineReadsFromTheStandIn() {
+        let app = XCUIApplication()
+        app.launch()
+
+        let lines = app.tabBars.buttons["Lines"]
+        XCTAssertTrue(lines.waitForExistence(timeout: 10))
+        lines.tap()
+
+        let transit = app.buttons["filter-all"]
+        XCTAssertTrue(transit.waitForExistence(timeout: 30))
+        app.buttons["line/yard/default"].tap()
+        XCTAssertTrue(app.navigationBars["yard · default"].waitForExistence(timeout: 5))
+
+        // The toolbar's entry pushes the depot's line under its own title.
+        app.buttons["Depot-line-open"].tap()
+        XCTAssertTrue(app.navigationBars["yard · line"].waitForExistence(timeout: 5))
+
+        // Stages with who serves each, in the read's order.
+        let detail = app.descendants(matching: .any)
+        XCTAssertTrue(detail["Detail-stage/0/new"].waitForExistence(timeout: 5))
+        XCTAssertTrue(detail["Detail-stage/0/merged"].exists)
+        XCTAssertTrue(detail["Detail-stage/1/ship"].exists)
+
+        // The stage file's text opens behind its Read.
+        XCTAssertFalse(detail["Detail-text/file:yard:0:new"].exists)
+        detail["Detail-read/file:yard:0:new"].tap()
+        let file = detail["Detail-text/file:yard:0:new"]
+        XCTAssertTrue(file.waitForExistence(timeout: 5))
+        XCTAssertEqual(file.label, "A builder implements the bead here.")
+
+        // The group prompt's head names its group and shortens the
+        // yard-written digest; its text opens behind its Read.
+        XCTAssertTrue(app.staticTexts["Prompt · muse-builders · roles/builder.9f86d081884c….md (depot)"].exists)
+        detail["Detail-read/prompt:yard:0:new:muse-builders"].tap()
+        let prompt = detail["Detail-text/prompt:yard:0:new:muse-builders"]
+        XCTAssertTrue(prompt.waitForExistence(timeout: 5))
+        XCTAssertEqual(prompt.label, "You build the bead.")
+
+        // The unreadable prompt shows why in the text's place, with
+        // the tried paths, and no Read.
+        let unread = detail["Detail-unread/prompt:yard:0:review:muse-reviewers"]
+        XCTAssertTrue(unread.exists)
+        XCTAssertEqual(
+            unread.label,
+            "open roles/reviewer.md: no such file (tried roles/reviewer.md, /home/jo/.yardr/prompts/reviewer.md)"
+        )
+        XCTAssertFalse(detail["Detail-read/prompt:yard:0:review:muse-reviewers"].exists)
+
+        // The crew below: one's prompt behind Read, the other with none.
+        XCTAssertTrue(detail["Detail-crew/yardmaster"].exists)
+        XCTAssertTrue(detail["Detail-crew/signalman"].exists)
+        detail["Detail-read/crew:yard:yardmaster"].tap()
+        let kept = detail["Detail-text/crew:yard:yardmaster"]
+        XCTAssertTrue(kept.waitForExistence(timeout: 5))
+        XCTAssertEqual(kept.label, "You keep the yard.")
+
+        // The system's back returns to the route map.
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["yard · default"].waitForExistence(timeout: 5))
     }
 
     /// The beads on the route map's bead cards.

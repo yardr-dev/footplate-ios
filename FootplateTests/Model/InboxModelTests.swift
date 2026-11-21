@@ -1372,6 +1372,9 @@ final class FakeFollowed: Followed {
     private var pendingBeadReads: [String: [CheckedContinuation<Bead, Never>]] = [:]
     /// The board its `flows` reads serve.
     var board: Flows = Flows()
+    /// The lines its `line` reads serve, by depot.
+    var depotLines: [String: DepotLine] = [:]
+    var lineCalls: [String] = []
     var flowCalls = 0
     var holdNextFlowRead = false
     private var pendingFlowRead: CheckedContinuation<Flows, Never>?
@@ -1414,6 +1417,15 @@ final class FakeFollowed: Followed {
     /// Refused to the whole-bead call alone, so a board can be read
     /// while a card's details are not.
     var beadRefuse: ApiError? = nil
+    /// Refused to the whole-line call alone, so a board can be read
+    /// while a depot's line is not.
+    var lineRefuse: ApiError? = nil
+    /// Refused to the board call alone, so a depot's line is read
+    /// again while the board is not.
+    var flowRefuse: ApiError? = nil
+    /// Thrown by the whole-line call, of whatever kind, so a read
+    /// cancelled elsewhere is answered here.
+    var lineThrow: (any Error)? = nil
     var holdNextCrewRead = false
     private var heldPageCalls: Set<Int> = []
     private var pendingPageCalls: [Int: CheckedContinuation<Page, Never>] = [:]
@@ -1588,11 +1600,20 @@ final class FakeFollowed: Followed {
     func flows() async throws -> Flows {
         flowCalls += 1
         if let refuse { throw refuse }
+        if let flowRefuse { throw flowRefuse }
         if holdNextFlowRead {
             holdNextFlowRead = false
             return await withCheckedContinuation { pendingFlowRead = $0 }
         }
         return board
+    }
+
+    func line(depot: String) async throws -> DepotLine {
+        lineCalls.append(depot)
+        if let refuse { throw refuse }
+        if let lineRefuse { throw lineRefuse }
+        if let lineThrow { throw lineThrow }
+        return depotLines[depot] ?? DepotLine(depot: depot)
     }
 
     var pendingFlowReadCount: Int { pendingFlowRead == nil ? 0 : 1 }

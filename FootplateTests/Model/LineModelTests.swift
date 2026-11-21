@@ -8,7 +8,8 @@ import XCTest
 // read said and cleared, an unreadable depot in the yard's own words,
 // the place following a yard switch, the backlog opening and
 // shutting, a line pushed as its route map with its landings under
-// the landed station, a bead pushed as its card with its Ask, its
+// the landed station, a route map's line opening the depot's line with
+// its stages, files and prompts, a bead pushed as its card with its Ask, its
 // details read with `Bead` and its web view, and a closed bead opened
 // from mail standing on its read, and a mail's chip reading its card
 // for the sheet over the chat without pushing.
@@ -524,6 +525,7 @@ final class LineModelTests: XCTestCase {
         // No yard shown yet: a tap has nowhere to push.
         model.openLine(depot: "yard", flow: "default")
         model.openBead("yd-gate")
+        model.openDepotLine(depot: "yard")
         XCTAssertEqual(nav.linesPath, [])
         model.open(yard: "")
         try await waitRead()
@@ -545,6 +547,14 @@ final class LineModelTests: XCTestCase {
         home.board = without
         await model.refresh()
         XCTAssertEqual(pushedDepots, ["yard"])
+
+        // A depot's line leaves when the board no longer holds the
+        // depot, and stays while it does.
+        model.openDepotLine(depot: "yard")
+        model.openDepotLine(depot: "drafts")
+        XCTAssertEqual(pushedLines, ["yard", "drafts"])
+        await model.refresh()
+        XCTAssertEqual(pushedLines, ["yard"])
 
         // The other yard's line is none of the yard switched to.
         model.open(yard: "laptop")
@@ -1252,6 +1262,223 @@ final class LineModelTests: XCTestCase {
         )
     }
 
+    func testADepotLineOpensAndReadsItsStagesFilesAndPrompts() async throws {
+        home.up(loaded())
+        home.board = board()
+        home.depotLines = ["yard": depotLine()]
+        model.open(yard: "")
+        try await waitRead()
+        let route = DepotRoute(yard: "", depot: "yard")
+
+        model.openDepotLine(depot: "yard")
+        try await waitFor("the depot's line") { [model] in model?.detail(for: route)?.line != nil }
+
+        XCTAssertEqual(nav.linesPath, [.depot(route)])
+        XCTAssertEqual(home.lineCalls, ["yard"])
+        let detail = try XCTUnwrap(model.detail(for: route))
+        XCTAssertFalse(detail.reading)
+        XCTAssertNil(detail.error)
+        let line = try XCTUnwrap(detail.line)
+        XCTAssertEqual(lineFlowWords(line.flows[0]), "default (store)")
+        XCTAssertEqual(lineFlowWords(line.flows[1]), "release · default (pack starter)")
+        let stages = line.flows[0].stages
+        XCTAssertEqual(stages.map(\.stage), ["new", "review", "merged"])
+        XCTAssertEqual(lineServed(stages[0]), "served by muse-builders (agents)")
+        XCTAssertEqual(lineServed(stages[2]), "entering it closes the bead")
+        XCTAssertEqual(stages[0].stageFile?.path, "flows/default/new.md")
+        XCTAssertEqual(stages[0].stageFile?.text, "A builder implements the bead here.")
+        let prompt = try XCTUnwrap(stages[0].route?.chain.first?.prompt)
+        XCTAssertEqual(
+            linePromptHead(prompt, group: "muse-builders"),
+            "Prompt · muse-builders · roles/builder.9f86d081884c….md (depot)"
+        )
+        let unread = try XCTUnwrap(stages[1].route?.chain.first?.prompt)
+        XCTAssertEqual(
+            linePromptError(unread),
+            "open roles/reviewer.md: no such file (tried roles/reviewer.md, /home/jo/.yardr/prompts/reviewer.md)"
+        )
+        XCTAssertEqual(line.crew.map(\.name), ["yardmaster", "signalman"])
+        XCTAssertEqual(line.crew[0].prompt?.text, "You keep the yard.")
+        XCTAssertNil(line.crew[1].prompt)
+        // Nothing is a line where the yard shown is another's.
+        XCTAssertNil(model.detail(for: DepotRoute(yard: "laptop", depot: "yard")))
+    }
+
+    func testAReadsTextOpensAndShuts() async throws {
+        home.up(loaded())
+        home.board = board()
+        home.depotLines = ["yard": depotLine()]
+        model.open(yard: "")
+        try await waitRead()
+        let route = DepotRoute(yard: "", depot: "yard")
+        model.openDepotLine(depot: "yard")
+        try await waitFor("the depot's line") { [model] in model?.detail(for: route)?.line != nil }
+
+        let file = detailFileKey(depot: "yard", flow: 0, stage: "new")
+        let prompt = detailPromptKey(depot: "yard", flow: 0, stage: "new", group: "muse-builders")
+        XCTAssertEqual(model.detail(for: route)?.open, [])
+        model.toggleDetail(file)
+        model.toggleDetail(prompt)
+        XCTAssertEqual(model.detail(for: route)?.open, [file, prompt])
+        model.toggleDetail(file)
+        XCTAssertEqual(model.detail(for: route)?.open, [prompt])
+    }
+
+    func testADepotsLineIsReadAgainWithTheBoard() async throws {
+        home.up(loaded())
+        home.board = board()
+        home.depotLines = ["yard": depotLine()]
+        model.open(yard: "")
+        try await waitRead()
+        let route = DepotRoute(yard: "", depot: "yard")
+        model.openDepotLine(depot: "yard")
+        try await waitFor("the depot's line") { [model] in model?.detail(for: route)?.line != nil }
+
+        var reread = depotLine()
+        reread.crew = []
+        home.depotLines = ["yard": reread]
+        await model.refresh()
+        XCTAssertEqual(home.lineCalls, ["yard", "yard"])
+        XCTAssertEqual(model.detail(for: route)?.line?.crew, [])
+
+        // And where the board's read fails, the standing line reads
+        // again all the same: the pull says why on the overview, and
+        // the line lands on the detail, which stands.
+        home.depotLines = ["yard": depotLine()]
+        home.flowRefuse = .slow
+        await model.refresh()
+        XCTAssertEqual(model.state.error, "The yard took too long to answer.")
+        XCTAssertEqual(home.lineCalls, ["yard", "yard", "yard"])
+        XCTAssertFalse(model.detail(for: route)?.reading ?? true)
+        XCTAssertNil(model.detail(for: route)?.error)
+        XCTAssertEqual(model.detail(for: route)?.line?.crew.map(\.name), ["yardmaster", "signalman"])
+        XCTAssertEqual(pushedLines, ["yard"])
+    }
+
+    func testADepotsLineSaysWhyItIsNotRead() async throws {
+        home.up(loaded())
+        home.board = board()
+        model.open(yard: "")
+        try await waitRead()
+        let route = DepotRoute(yard: "", depot: "yard")
+
+        // A refusal is the yard's own words.
+        home.lineRefuse = .refused(code: "not_operator", message: "the line is an operator's to read")
+        model.openDepotLine(depot: "yard")
+        try await waitFor("the refused line") { [model] in model?.detail(for: route)?.error != nil }
+        XCTAssertEqual(model.detail(for: route)?.error, "Not read: the line is an operator's to read")
+        XCTAssertNil(model.detail(for: route)?.line)
+
+        // A pull reads it again, and clears it.
+        home.lineRefuse = nil
+        home.depotLines = ["yard": depotLine()]
+        await model.refresh()
+        XCTAssertNil(model.detail(for: route)?.error)
+        XCTAssertEqual(model.detail(for: route)?.line?.flows.count, 2)
+
+        // A refusal after a read keeps what the read gave, and says why.
+        home.lineRefuse = .slow
+        await model.refresh()
+        XCTAssertEqual(model.detail(for: route)?.error, "Not read: The yard took too long to answer.")
+        XCTAssertEqual(model.detail(for: route)?.line?.flows.count, 2)
+
+        // A read cancelled elsewhere keeps what the read gave, clears
+        // the old error, and reads no longer.
+        home.lineRefuse = nil
+        home.lineThrow = CancellationError()
+        await model.refresh()
+        XCTAssertFalse(model.detail(for: route)?.reading ?? true)
+        XCTAssertNil(model.detail(for: route)?.error)
+        XCTAssertEqual(model.detail(for: route)?.line?.flows.count, 2)
+    }
+
+    func testADepotsLineWithNoFollowerDoesNotReadForever() async throws {
+        // The yard shown has no follower: the depot opens, its read
+        // starts nowhere, and the detail reads no longer.
+        let now = parseInstant("2026-10-08T10:11:00Z")!
+        model = LineModel(
+            followers: { [:] }, records: records, pairer: pairer, nav: nav, conversation: conversation,
+            notePictures: NotePictures(pictures: Pictures(directory: picturesDir)),
+            origins: { _ in "https://edge.example" },
+            now: { now }, zone: { TimeZone(secondsFromGMT: 0)! }
+        )
+        model.open(yard: "")
+        let route = DepotRoute(yard: "", depot: "yard")
+        model.openDepotLine(depot: "yard")
+        try await waitFor("the unreadable line") { [model] in model?.detail(for: route)?.reading == false }
+        XCTAssertFalse(model.detail(for: route)?.reading ?? true)
+        XCTAssertNil(model.detail(for: route)?.error)
+        XCTAssertNil(model.detail(for: route)?.line)
+    }
+
+    func testDepotLineWordsNameHeadsReasonsAndErrors() {
+        let prompt = DepotLinePrompt(path: "roles/builder.md", source: "depot", text: "You build.")
+        XCTAssertEqual(linePromptHead(prompt, group: "muse-builders"), "Prompt · muse-builders · roles/builder.md (depot)")
+        XCTAssertEqual(linePromptHead(prompt), "Prompt · roles/builder.md (depot)")
+        let sourceless = DepotLinePrompt(path: "roles/reviewer.md")
+        XCTAssertEqual(linePromptHead(sourceless, group: "muse-reviewers"), "Prompt · muse-reviewers · roles/reviewer.md")
+        // A yard-written digest is said by its first twelve.
+        XCTAssertEqual(
+            linePathWords("roles/builder.9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08.md"),
+            "roles/builder.9f86d081884c….md"
+        )
+        XCTAssertEqual(linePathWords("roles/builder.md"), "roles/builder.md")
+        XCTAssertEqual(
+            lineNoPromptWords(DepotLineGroup(name: "run", runner: "exec")),
+            "none, since a script serves this stage"
+        )
+        XCTAssertEqual(
+            lineNoPromptWords(DepotLineGroup(name: "elders", runner: "manual")),
+            "none, since people serve this stage"
+        )
+        XCTAssertEqual(
+            lineNoPromptWords(DepotLineGroup(name: "north", runner: "peer")),
+            "none here, since another yard serves this stage"
+        )
+        XCTAssertEqual(
+            lineNoPromptWords(DepotLineGroup(name: "muse-builders", runner: "herdr")),
+            "none, since the group's config names no prompt"
+        )
+        XCTAssertEqual(lineNoPromptWords(DepotLineGroup(name: "odd", runner: "engine")), "none")
+        // A text shown has no error; an unread one its error with the
+        // paths the lookup tried.
+        XCTAssertNil(linePromptError(prompt))
+        XCTAssertNil(linePromptError(sourceless))
+        XCTAssertEqual(
+            linePromptError(DepotLinePrompt(path: "roles/reviewer.md", error: "no such file")),
+            "no such file"
+        )
+        XCTAssertEqual(
+            linePromptError(DepotLinePrompt(path: "roles/reviewer.md", tried: ["a.md", "b.md"], error: "no such file")),
+            "no such file (tried a.md, b.md)"
+        )
+        func staged(_ group: DepotLineGroup?) -> DepotLineStage {
+            DepotLineStage(stage: "new", route: group.map {
+                DepotLineRoute(id: "yard default new", chain: [$0])
+            })
+        }
+        XCTAssertEqual(lineServed(staged(DepotLineGroup(name: "g", runner: "exec"))), "served by g (script)")
+        XCTAssertEqual(lineServed(staged(DepotLineGroup(name: "g", runner: "manual"))), "served by g (people)")
+        XCTAssertEqual(lineServed(staged(DepotLineGroup(name: "g", runner: "peer"))), "served by g (peer)")
+        XCTAssertEqual(lineServed(staged(nil)), "served by nobody (nobody)")
+        XCTAssertEqual(lineServed(DepotLineStage(stage: "merged", terminal: true)), "entering it closes the bead")
+        XCTAssertEqual(lineFlowWords(DepotLineFlow(name: "default", source: "store")), "default (store)")
+        XCTAssertEqual(
+            lineFlowWords(DepotLineFlow(name: "default", type: "release", source: "pack starter")),
+            "release · default (pack starter)"
+        )
+        XCTAssertEqual(
+            lineFlowWords(DepotLineFlow(name: "default", source: "repo (directory)", directory: "flows")),
+            "default (repo (directory) flows)"
+        )
+        XCTAssertEqual(detailFileKey(depot: "yard", flow: 0, stage: "new"), "file:yard:0:new")
+        XCTAssertEqual(
+            detailPromptKey(depot: "yard", flow: 1, stage: "ship", group: "elders"),
+            "prompt:yard:1:ship:elders"
+        )
+        XCTAssertEqual(detailCrewKey(depot: "yard", name: "yardmaster"), "crew:yard:yardmaster")
+    }
+
     // MARK: - Helpers
 
     /// The depots of the lines pushed, in order.
@@ -1266,6 +1493,14 @@ final class LineModelTests: XCTestCase {
     private var pushedBeads: [String] {
         nav.linesPath.compactMap { route -> String? in
             if case .bead(let bead) = route { return bead.bead }
+            return nil
+        }
+    }
+
+    /// The depots pushed as their lines, in order.
+    private var pushedLines: [String] {
+        nav.linesPath.compactMap { route -> String? in
+            if case .depot(let depot) = route { return depot.depot }
             return nil
         }
     }
@@ -1454,5 +1689,98 @@ final class LineModelTests: XCTestCase {
             )
         )
         return rich
+    }
+
+    /// The fake yard's line as `Line` serves it: two flows, a stage
+    /// file, a group prompt under a yard-written digest, an unreadable
+    /// prompt, and a crew prompt beside a member with none.
+    private func depotLine() -> DepotLine {
+        DepotLine(
+            depot: "yard",
+            kind: "git",
+            flows: [
+                DepotLineFlow(
+                    name: "default",
+                    source: "store",
+                    stages: [
+                        DepotLineStage(
+                            stage: "new",
+                            route: DepotLineRoute(
+                                id: "yard default new",
+                                scope: "this depot's own",
+                                chain: [
+                                    DepotLineGroup(
+                                        name: "muse-builders",
+                                        runner: "herdr",
+                                        kind: "claude",
+                                        model: "opus",
+                                        prompt: DepotLinePrompt(
+                                            path: "roles/builder.9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08.md",
+                                            source: "depot",
+                                            text: "You build the bead.",
+                                            carriable: true
+                                        )
+                                    ),
+                                ],
+                                limit: 4
+                            ),
+                            stageFile: DepotLineStageFile(
+                                path: "flows/default/new.md",
+                                text: "A builder implements the bead here."
+                            )
+                        ),
+                        DepotLineStage(
+                            stage: "review",
+                            route: DepotLineRoute(
+                                id: "yard default review",
+                                scope: "this depot's own",
+                                chain: [
+                                    DepotLineGroup(
+                                        name: "muse-reviewers",
+                                        runner: "herdr",
+                                        kind: "claude",
+                                        model: "sonnet",
+                                        prompt: DepotLinePrompt(
+                                            path: "roles/reviewer.md",
+                                            tried: ["roles/reviewer.md", "/home/jo/.yardr/prompts/reviewer.md"],
+                                            error: "open roles/reviewer.md: no such file"
+                                        )
+                                    ),
+                                ],
+                                limit: 2
+                            )
+                        ),
+                        DepotLineStage(stage: "merged", terminal: true),
+                    ]
+                ),
+                DepotLineFlow(
+                    name: "default",
+                    type: "release",
+                    source: "pack starter",
+                    stages: [
+                        DepotLineStage(
+                            stage: "ship",
+                            route: DepotLineRoute(
+                                id: "yard release ship",
+                                scope: "yard-wide",
+                                chain: [DepotLineGroup(name: "elders", runner: "manual", members: ["mckean"])]
+                            )
+                        ),
+                    ]
+                ),
+            ],
+            crew: [
+                DepotLineCrew(
+                    name: "yardmaster",
+                    prompt: DepotLinePrompt(
+                        path: "prompts/yardmaster.md",
+                        source: "home",
+                        text: "You keep the yard.",
+                        carriable: true
+                    )
+                ),
+                DepotLineCrew(name: "signalman"),
+            ]
+        )
     }
 }

@@ -5,8 +5,8 @@ import Foundation
 // the Pair and Sign in covers. The views read it through TabView
 // selection and NavigationStack paths, so the tab bar, the titles,
 // the back button and the swipe back are the system's own. The Lines
-// stack pushes a route map per line and a card per bead, which design
-// 3.5 first left out.
+// stack pushes a route map per line, a card per bead and a depot's
+// line, which design 3.5 first left out.
 
 /// The three places of the tab bar.
 enum Place: Hashable, Sendable {
@@ -45,22 +45,32 @@ struct BeadRoute: Hashable, Sendable {
     var bead: String
 }
 
+/// A depot pushed onto the lines stack as its line: the depot
+/// `depot` of the yard named `yard`, read whole with `Line`.
+struct DepotRoute: Hashable, Sendable {
+    var yard: String
+    var depot: String
+}
+
 extension BeadRoute: Identifiable {
     /// The yard and the bead, told apart where an address holds a colon.
     var id: String { "\(yard)\u{1F}\(bead)" }
 }
 
-/// What the lines stack holds: a line as its route map, or a bead as its
-/// card, pushed from the overview or from a route map.
+/// What the lines stack holds: a line as its route map, a bead as its
+/// card, or a depot as its line, pushed from the overview, from a
+/// route map, or from a route map's line.
 enum LinesRoute: Hashable, Sendable {
     case line(LineRoute)
     case bead(BeadRoute)
+    case depot(DepotRoute)
 
-    /// The yard named at the edge whose line or bead this is.
+    /// The yard named at the edge whose line, bead or depot this is.
     var yard: String {
         switch self {
         case .line(let line): line.yard
         case .bead(let bead): bead.yard
+        case .depot(let depot): depot.yard
         }
     }
 }
@@ -147,6 +157,13 @@ final class Nav {
     /// Pushes the bead's card, unless it is the one pushed already.
     func openBead(yard: String, bead: String) {
         let route = LinesRoute.bead(BeadRoute(yard: yard, bead: bead))
+        guard linesPath.last != route else { return }
+        linesPath.append(route)
+    }
+
+    /// Pushes the depot's line, unless it is the one pushed already.
+    func openDepotLine(yard: String, depot: String) {
+        let route = LinesRoute.depot(DepotRoute(yard: yard, depot: depot))
         guard linesPath.last != route else { return }
         linesPath.append(route)
     }

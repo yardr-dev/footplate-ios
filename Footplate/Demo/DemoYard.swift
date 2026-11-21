@@ -340,6 +340,100 @@ struct DemoYard: Sendable {
 
     var flows: Flows { board }
 
+    /// The depot's line, whole: two flows, a stage file, a group
+    /// prompt, a crew prompt, and an unreadable prompt with its tried
+    /// paths and error. Any other depot reads as one with no flows.
+    func line(_ depot: String) -> DepotLine {
+        guard depot == "timetable" else { return DepotLine(depot: depot) }
+        return DepotLine(
+            depot: depot,
+            kind: "git",
+            flows: [
+                DepotLineFlow(
+                    name: "default",
+                    source: "store",
+                    stages: [
+                        DepotLineStage(
+                            stage: "new",
+                            route: DepotLineRoute(
+                                id: "timetable default new",
+                                scope: "this depot's own",
+                                chain: [
+                                    DepotLineGroup(
+                                        name: "builders",
+                                        runner: "herdr",
+                                        kind: "claude",
+                                        model: "sonnet",
+                                        prompt: DepotLinePrompt(
+                                            path: "roles/builder.9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08.md",
+                                            source: "depot",
+                                            text: "You build the bead.",
+                                            carriable: true
+                                        )
+                                    ),
+                                ],
+                                limit: 2
+                            ),
+                            stageFile: DepotLineStageFile(
+                                path: "flows/default/new.md",
+                                text: "A builder implements the bead here."
+                            )
+                        ),
+                        DepotLineStage(
+                            stage: "review",
+                            route: DepotLineRoute(
+                                id: "timetable default review",
+                                scope: "this depot's own",
+                                chain: [
+                                    DepotLineGroup(
+                                        name: "reviewers",
+                                        runner: "herdr",
+                                        kind: "claude",
+                                        model: "sonnet",
+                                        prompt: DepotLinePrompt(
+                                            path: "roles/reviewer.md",
+                                            tried: ["roles/reviewer.md", "/home/guest/.yardr/prompts/reviewer.md"],
+                                            error: "open roles/reviewer.md: no such file"
+                                        )
+                                    ),
+                                ],
+                                limit: 1
+                            )
+                        ),
+                        DepotLineStage(stage: "merged", terminal: true),
+                    ]
+                ),
+                DepotLineFlow(
+                    name: "default",
+                    type: "release",
+                    source: "pack starter",
+                    stages: [
+                        DepotLineStage(
+                            stage: "ship",
+                            route: DepotLineRoute(
+                                id: "timetable release ship",
+                                scope: "yard-wide",
+                                chain: [DepotLineGroup(name: "elders", runner: "manual", members: ["guest"])]
+                            )
+                        ),
+                    ]
+                ),
+            ],
+            crew: [
+                DepotLineCrew(
+                    name: "yardmaster",
+                    prompt: DepotLinePrompt(
+                        path: "prompts/yardmaster.md",
+                        source: "home",
+                        text: "You keep the yard.",
+                        carriable: true
+                    )
+                ),
+                DepotLineCrew(name: "signalman"),
+            ]
+        )
+    }
+
     /// The bytes a letter's file names, where this demo was given them.
     func blob(hash: String) -> Data? {
         blobs[hash]

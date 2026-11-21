@@ -37,6 +37,19 @@ struct RouteMapScreen: View {
         .toolbar {
             if let map {
                 ToolbarItem(placement: .topBarTrailing) {
+                    // The title names the depot and the flow, so the
+                    // entry says only what it opens: a depot's name
+                    // beside the head truncates it at iPhone width.
+                    Button {
+                        model.openDepotLine(depot: map.depot)
+                    } label: {
+                        Text("Read the line")
+                            .themeType(.label)
+                            .foregroundStyle(ThemeColor.textAccent.color)
+                    }
+                    .accessibilityIdentifier("Depot-line-open")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     Text(map.head)
                         .themeType(.meta)
                         .foregroundStyle(ThemeColor.textSecondary.color)

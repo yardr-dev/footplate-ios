@@ -8,7 +8,9 @@ import Foundation
 // that moves it, the way footplate reads Flows again; no polling.
 // A line tap pushes its route map: the whole line as stations from
 // top to bottom, whatever filter the overview holds, with the landings
-// of the last 24 hours under its landed station. A bead tap, from a
+// of the last 24 hours under its landed station. A route map's line
+// opens the depot's line: its flows with their stages, who serves
+// each, the stage files and the prompts, each text behind Read. A bead tap, from a
 // card, a row, a station or a landing, pushes its card: the strip with its
 // stage marked, what is happening now, Ask the coordinator, the
 // bead's details (its labels, body and notes, read with `Bead` when
@@ -266,6 +268,18 @@ struct BeadCard: Equatable, Sendable {
     var knownBeads: Set<String> = []
 }
 
+/// One depot's line opened from the route map: its flows with their
+/// stages, who serves each, the stage files and the prompts, read whole
+/// with `Line`. A place to check, not to change. `open` are the texts
+/// opened behind their Read, by key.
+struct LineDetail: Equatable, Sendable {
+    var depot: String
+    var reading: Bool = false
+    var error: String? = nil
+    var line: DepotLine? = nil
+    var open: Set<String> = []
+}
+
 struct LineState: Equatable, Sendable {
     /// `7 travelling · 1 working`: words, never badges.
     var head: String = ""
@@ -318,6 +332,14 @@ final class LineModel {
     /// The read each card waits on: one that is not its latest lands
     /// nowhere.
     private var cardReading: [String: UUID] = [:]
+    /// What the `Line` call last answered for each depot opened as
+    /// its line, and why its last read said something.
+    private var lineReads: [String: LineRead] = [:]
+    /// The read each depot's line waits on: one that is not its
+    /// latest lands nowhere.
+    private var lineReading: [String: UUID] = [:]
+    /// The line texts opened behind their Read, by key.
+    private var lineOpen: Set<String> = []
     /// The pushed beads standing on their `Bead` reads: ids the board
     /// holds none of, opened from mail. Their cards stay across board
     /// reads, which hold no closed bead.
@@ -406,6 +428,9 @@ final class LineModel {
             applied = 0
             cardReads = [:]
             cardReading = [:]
+            lineReads = [:]
+            lineReading = [:]
+            lineOpen = []
             closedCards = []
             // A line pushed for the yard before is none of this one's.
             nav.closeLines { $0.yard != yard }
@@ -467,6 +492,37 @@ final class LineModel {
         guard let yard = openedYard else { return }
         peekBead(id)
         nav.openBead(yard: yard, bead: id)
+    }
+
+    /// A route map's line tapped: the depot's line is read and pushed
+    /// onto the lines stack.
+    func openDepotLine(depot: String) {
+        guard let yard = openedYard else { return }
+        // Set before the detail opens, so no frame draws it with the
+        // line of another depot.
+        lineReads[depot, default: LineRead()].reading = true
+        lineReads[depot]?.error = nil
+        nav.openDepotLine(yard: yard, depot: depot)
+        Task { @MainActor in await readLine(depot: depot) }
+    }
+
+    /// The pushed depot as its line: its flows with their stages, who
+    /// serves each, the stage files and the prompts; nil where the
+    /// yard shown is another one's. Its texts are what the last read
+    /// of the depot gave.
+    func detail(for route: DepotRoute) -> LineDetail? {
+        guard openedYard == route.yard else { return nil }
+        let read = lineReads[route.depot] ?? LineRead()
+        return LineDetail(depot: route.depot, reading: read.reading, error: read.error, line: read.line, open: lineOpen)
+    }
+
+    /// A Read tapped: the text opens where shut, shuts where open.
+    func toggleDetail(_ key: String) {
+        if lineOpen.contains(key) {
+            lineOpen.remove(key)
+        } else {
+            lineOpen.insert(key)
+        }
     }
 
     /// A mail's chip tapped: its card is read for the sheet over the
@@ -686,11 +742,26 @@ final class LineModel {
                     await readDetails(of: bead.bead)
                 }
             }
+            // And the depot lines that stand read again with it.
+            for route in nav.linesPath {
+                if case .depot(let depot) = route, depot.yard == yard {
+                    await readLine(depot: depot.depot)
+                }
+            }
         } catch is CancellationError {
             return
         } catch let error as ApiError {
             guard current(yard: yard, followed: followed, gen: gen, read: read) else { return }
             errorText = words(error)
+            // And the depot lines that stand read again with it, as
+            // they do where the board answered: a pull on the detail
+            // whose board read failed still reads the line, and says
+            // why there where it fails too.
+            for route in nav.linesPath {
+                if case .depot(let depot) = route, depot.yard == yard {
+                    await readLine(depot: depot.depot)
+                }
+            }
         } catch {
             guard current(yard: yard, followed: followed, gen: gen, read: read) else { return }
             errorText = words(ApiError.down(why: "an unexpected error"))
@@ -733,6 +804,59 @@ final class LineModel {
         }
     }
 
+    /// Reads the depot whole for its line. What it answers lands while
+    /// this is the depot's latest read and the yard is still the one
+    /// shown; a failure keeps what an earlier read gave and says why on
+    /// the detail, which stays whole.
+    private func readLine(depot: String) async {
+        guard let yard = openedYard, let followed = followers()[yard] else {
+            // No read starts, so none lands to clear it: a depot read
+            // while its yard is gone must not read forever.
+            lineReads[depot]?.reading = false
+            return
+        }
+        let gen = generation
+        let token = UUID()
+        lineReading[depot] = token
+        // What was read before stays on the detail while it is read
+        // again; the old error does not, and the read says so where
+        // nothing was read yet.
+        lineReads[depot, default: LineRead()].reading = true
+        lineReads[depot]?.error = nil
+        defer {
+            if lineReading[depot] == token {
+                lineReading.removeValue(forKey: depot)
+            }
+        }
+        func landed() -> Bool {
+            guard active, openedYard == yard, generation == gen, lineReading[depot] == token,
+                  let current = followers()[yard]
+            else { return false }
+            return (current as AnyObject) === (followed as AnyObject)
+        }
+        do {
+            let line = try await followed.line(depot: depot)
+            guard landed() else { return }
+            lineReads[depot] = LineRead(line: line)
+        } catch is CancellationError {
+            // A read a newer one overtook leaves the depot to it;
+            // where this is still the latest, nothing lands after it,
+            // so it must not read forever.
+            if lineReading[depot] == token {
+                lineReads[depot, default: LineRead()].reading = false
+            }
+            return
+        } catch let error as ApiError {
+            guard landed() else { return }
+            lineReads[depot, default: LineRead()].reading = false
+            lineReads[depot]?.error = "Not read: \(words(error))"
+        } catch {
+            guard landed() else { return }
+            lineReads[depot, default: LineRead()].reading = false
+            lineReads[depot]?.error = "Not read: \(words(ApiError.down(why: "an unexpected error")))"
+        }
+    }
+
     /// An older request or the previous yard's late reply cannot replace
     /// the board a newer screen read is drawing.
     private func current(yard: String, followed: any Followed, gen: Int, read: Int) -> Bool {
@@ -747,6 +871,14 @@ final class LineModel {
 /// last read said something.
 private struct CardRead {
     var bead: Bead? = nil
+    var error: String? = nil
+}
+
+/// What the `Line` call last answered for a depot, whether it is being
+/// read, and why the last read said something.
+private struct LineRead {
+    var line: DepotLine? = nil
+    var reading: Bool = false
     var error: String? = nil
 }
 
@@ -1013,11 +1145,13 @@ func flowBeads(_ board: Flows) -> Set<String> {
 }
 
 /// Whether the board still holds what a pushed route shows: the flow of
-/// a line, the bead of a card, open or landed.
+/// a line, the bead of a card, open or landed, or the depot of a line.
 private func holds(_ board: Flows, _ route: LinesRoute) -> Bool {
     switch route {
     case .line(let line):
         return flowNamed(board, depot: line.depot, flow: line.flow) != nil
+    case .depot(let depot):
+        return board.depots.contains { $0.name == depot.depot }
     case .bead(let bead):
         return board.unassigned.contains { $0.bead == bead.bead }
             || board.depots.contains { depot in
@@ -1277,3 +1411,100 @@ private let lineInputs: Set<String> = [
     "depot_updated",
     "depot_removed",
 ]
+
+/// Who serves a stage, in the desktop's words: `agents` for a herdr
+/// group, `script` for an exec one, `people` for a manual one, `peer`
+/// for another yard's, `end` where entering the stage closes the bead,
+/// and `nobody` where no route serves it. The representative route's
+/// first group decides, as on the desktop's map.
+func lineWho(_ stage: DepotLineStage) -> String {
+    if stage.terminal { return "end" }
+    switch stage.route?.chain.first?.runner ?? "" {
+    case "herdr": return "agents"
+    case "exec": return "script"
+    case "manual": return "people"
+    case "peer": return "peer"
+    default: return "nobody"
+    }
+}
+
+/// A stage's served line, as the desktop's detail says it.
+func lineServed(_ stage: DepotLineStage) -> String {
+    let who = lineWho(stage)
+    if let first = stage.route?.chain.first?.name {
+        return "served by \(first) (\(who))"
+    }
+    if stage.terminal { return "entering it closes the bead" }
+    return "served by nobody (\(who))"
+}
+
+/// A flow's name, with its type where it governs one: `task ·
+/// default` beside an untyped `default`.
+func lineFlowHeading(_ flow: DepotLineFlow) -> String {
+    flow.type.isEmpty ? flow.name : "\(flow.type) · \(flow.name)"
+}
+
+/// A flow's head line: its heading with its source beside it, a
+/// directory flow with its directory named.
+func lineFlowWords(_ flow: DepotLineFlow) -> String {
+    let name = lineFlowHeading(flow)
+    if flow.directory.isEmpty { return "\(name) (\(flow.source))" }
+    return "\(name) (\(flow.source) \(flow.directory))"
+}
+
+/// A prompt's head line: its group where it is one, then its path with
+/// where the lookup found the text beside it.
+func linePromptHead(_ prompt: DepotLinePrompt, group: String? = nil) -> String {
+    let path = linePathWords(prompt.path)
+    let owner = group.map { "\($0) · " } ?? ""
+    if prompt.source.isEmpty { return "Prompt · \(owner)\(path)" }
+    return "Prompt · \(owner)\(path) (\(prompt.source))"
+}
+
+/// A prompt's path as its row says it: a digest in a file name (the 64
+/// hex digits of a prompt the yard wrote, as
+/// `roles/<name>.<digest>.md`) is said by its first twelve, so that the
+/// row keeps its Read in view.
+func linePathWords(_ path: String) -> String {
+    path.split(separator: ".", omittingEmptySubsequences: false).map { part in
+        if part.count == 64, part.allSatisfy({ $0.isHexDigit }) {
+            return "\(part.prefix(12))…"
+        }
+        return String(part)
+    }.joined(separator: ".")
+}
+
+/// What the detail says after `Prompt · <group> · ` of a group the
+/// read answers no prompt for, as the desktop's detail has it.
+func lineNoPromptWords(_ group: DepotLineGroup) -> String {
+    switch group.runner {
+    case "exec": return "none, since a script serves this stage"
+    case "manual": return "none, since people serve this stage"
+    case "peer": return "none here, since another yard serves this stage"
+    case "herdr": return "none, since the group's config names no prompt"
+    default: return "none"
+    }
+}
+
+/// Why a prompt's text is not shown, nil where it is: its error, with
+/// the paths the lookup tried beside it. Shown in the text's place, as
+/// the desktop's row has it.
+func linePromptError(_ prompt: DepotLinePrompt) -> String? {
+    if !prompt.text.isEmpty || prompt.error.isEmpty { return nil }
+    if prompt.tried.isEmpty { return prompt.error }
+    return "\(prompt.error) (tried \(prompt.tried.joined(separator: ", ")))"
+}
+
+/// The keys a Read opens a text behind: the flow by its place in the
+/// read, since names repeat across types.
+func detailFileKey(depot: String, flow: Int, stage: String) -> String {
+    "file:\(depot):\(flow):\(stage)"
+}
+
+func detailPromptKey(depot: String, flow: Int, stage: String, group: String) -> String {
+    "prompt:\(depot):\(flow):\(stage):\(group)"
+}
+
+func detailCrewKey(depot: String, name: String) -> String {
+    "crew:\(depot):\(name)"
+}

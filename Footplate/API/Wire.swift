@@ -677,6 +677,170 @@ struct FlowBead: Equatable, Sendable {
     var enteredStageAt: String = ""
 }
 
+/// One depot's line, whole, as `Line` answers it: its flows with
+/// their stages, who serves each stage, the stage files and the
+/// prompts (after Android's `Line`, field for field).
+struct DepotLine: Equatable, Sendable {
+    var depot: String
+    /// `git` or `dir`, as the depot is.
+    var kind: String = ""
+    var flows: [DepotLineFlow] = []
+    /// The crew members' prompts, which no stage carries.
+    var crew: [DepotLineCrew] = []
+}
+
+/// One flow of a depot's line: the depot's own (an empty type) or a
+/// bead type's, with where it comes from.
+struct DepotLineFlow: Equatable, Sendable {
+    var name: String
+    /// The bead type it governs, `""` for the depot's own.
+    var type: String = ""
+    /// `repo@<commit>`, `repo (directory)`, `pack <name>` or `store`.
+    var source: String = ""
+    /// The directory a dir depot's directory flow was read from; empty
+    /// on any other flow.
+    var directory: String = ""
+    var stages: [DepotLineStage] = []
+    /// The flow's stranded beads, as `flow show` prints them.
+    var warnings: [String] = []
+}
+
+/// One stage of a line flow: where a bead in it may move, who serves
+/// it, and its stage file where it has one.
+struct DepotLineStage: Equatable, Sendable {
+    var stage: String
+    /// The stages a bead here may move to, in the flow's order.
+    var next: [String] = []
+    /// How work here can end, as the flow offers it.
+    var outcomes: [DepotLineOutcome] = []
+    /// Entering the stage closes the bead.
+    var terminal: Bool = false
+    /// The stage's representative route, whole; nil where no route
+    /// serves the stage, which `warnings` then says.
+    var route: DepotLineRoute? = nil
+    /// Every other effective route serving the stage.
+    var otherRoutes: [DepotLineOtherRoute] = []
+    /// The open beads in the stage that this flow governs.
+    var open: Int = 0
+    /// Why beads in the stage wait: no route serves it.
+    var warnings: [String] = []
+    var stageFile: DepotLineStageFile? = nil
+}
+
+/// One way work in a stage can end, and the stage it leads to.
+struct DepotLineOutcome: Equatable, Sendable {
+    var name: String
+    var to: String
+    /// How many rounds back to `to` this outcome allows; nil where
+    /// there is no limit.
+    var max: Int64? = nil
+    /// Where the outcome sends the bead once `max` rounds are used;
+    /// empty where there is no limit.
+    var then: String = ""
+}
+
+/// A stage's representative route, whole: the route a probe bead of
+/// the depot, of the flow's type at the default priority with no
+/// labels reading as the operator's, would take.
+struct DepotLineRoute: Equatable, Sendable {
+    var id: String
+    /// `this depot's own` or `yard-wide`, as the yard words it.
+    var scope: String = ""
+    var filters: DepotLineFilters = DepotLineFilters()
+    /// The route's groups in order, each with its quota condition.
+    var chain: [DepotLineGroup] = []
+    /// The first group's seat limit, `0` pausing the group; nil where
+    /// the first group is not in the yard's groups.
+    var limit: Int64? = nil
+}
+
+/// One further effective route serving a stage, behind the
+/// representative: its id, scope, filters and first group.
+struct DepotLineOtherRoute: Equatable, Sendable {
+    var id: String
+    var scope: String = ""
+    var filters: DepotLineFilters = DepotLineFilters()
+    /// The chain's first group.
+    var group: String = ""
+}
+
+/// The filters a route sets, each shown as unset where it is unset:
+/// an empty type takes any type, empty labels no label, an empty
+/// priority any priority and an empty originator the operator's beads
+/// alone.
+struct DepotLineFilters: Equatable, Sendable {
+    var type: String = ""
+    var labels: [String] = []
+    /// `"P0-P1"`, `"P0"`, `""` for any.
+    var priority: String = ""
+    var originator: String = ""
+}
+
+/// One group of a route's chain, with what a session of it runs: its
+/// runner, and for a herdr group its kind and model, for an exec group
+/// its cmd whole, for a manual group its members, for a peer group its
+/// yard.
+struct DepotLineGroup: Equatable, Sendable {
+    var name: String
+    /// The group's quota condition in the chain, `""` always holds.
+    var condition: String = ""
+    /// `herdr`, `exec`, `manual` or `peer`.
+    var runner: String = ""
+    /// A herdr group's kind; empty on any other runner.
+    var kind: String = ""
+    /// A herdr group's model; empty on any other runner.
+    var model: String = ""
+    /// An exec group's command, whole; empty on any other runner.
+    var cmd: String = ""
+    /// A manual group's members; none means anyone.
+    var members: [String] = []
+    /// A peer group's linked yard; empty on any other runner.
+    var yard: String = ""
+    /// The group's prompt where its config names one and the group
+    /// starts agents; nil otherwise.
+    var prompt: DepotLinePrompt? = nil
+}
+
+/// A stage's file where it has one: its path as `flow show` names
+/// it, and its text whole.
+struct DepotLineStageFile: Equatable, Sendable {
+    var path: String
+    var text: String = ""
+}
+
+/// One prompt as the Line read answers it: the path the config
+/// names, where the lookup found the text, the text whole, and
+/// whether a card can carry it. One that cannot be read carries
+/// `tried` and `error` instead of `text`.
+struct DepotLinePrompt: Equatable, Sendable {
+    /// As the config names it.
+    var path: String
+    /// Where the lookup found the text: `depot`, `home`,
+    /// `pack <name>` or `file`. Empty where not found.
+    var source: String = ""
+    /// Where the text was found: relative to the depot's root for a
+    /// file of the depot, else absolute. Empty where none was.
+    var found: String = ""
+    /// The base commit a depot's file was read at.
+    var commit: String = ""
+    var text: String = ""
+    /// The digest a yard-written prompt file is named by, in hex.
+    var digest: String = ""
+    /// A card can carry the prompt whole; `why` says why not where
+    /// it cannot.
+    var carriable: Bool = false
+    var why: String = ""
+    var tried: [String] = []
+    var error: String = ""
+}
+
+/// One crew member of the line, with its prompt where its config
+/// names one; a member with none carries its name alone.
+struct DepotLineCrew: Equatable, Sendable {
+    var name: String
+    var prompt: DepotLinePrompt? = nil
+}
+
 /// One event of the stream. `data` depends on the kind, and a client
 /// passes over a kind or a field it does not know.
 struct Event: Equatable, Sendable {
@@ -1236,6 +1400,151 @@ extension FlowBead: Codable {
         kind = box.string(.kind)
         model = box.string(.model)
         enteredStageAt = box.string(.enteredStageAt)
+    }
+}
+
+extension DepotLine: Codable {
+    enum CodingKeys: String, CodingKey { case depot, kind, flows, crew }
+    init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        depot = box.string(.depot)
+        kind = box.string(.kind)
+        flows = box.list(.flows, of: DepotLineFlow.self)
+        crew = box.list(.crew, of: DepotLineCrew.self)
+    }
+}
+
+extension DepotLineFlow: Codable {
+    enum CodingKeys: String, CodingKey { case name, type, source, directory, stages, warnings }
+    init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        name = box.string(.name)
+        type = box.string(.type)
+        source = box.string(.source)
+        directory = box.string(.directory)
+        stages = box.list(.stages, of: DepotLineStage.self)
+        warnings = box.list(.warnings, of: String.self)
+    }
+}
+
+extension DepotLineStage: Codable {
+    enum CodingKeys: String, CodingKey {
+        case stage, next, outcomes, terminal, route, open, warnings
+        case otherRoutes = "other_routes"
+        case stageFile = "stage_file"
+    }
+    init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        stage = box.string(.stage)
+        next = box.list(.next, of: String.self)
+        outcomes = box.list(.outcomes, of: DepotLineOutcome.self)
+        terminal = box.bool(.terminal)
+        route = box.optional(.route, of: DepotLineRoute.self)
+        otherRoutes = box.list(.otherRoutes, of: DepotLineOtherRoute.self)
+        open = Int(box.int64(.open))
+        warnings = box.list(.warnings, of: String.self)
+        stageFile = box.optional(.stageFile, of: DepotLineStageFile.self)
+    }
+}
+
+extension DepotLineOutcome: Codable {
+    enum CodingKeys: String, CodingKey { case name, to, max, then }
+    init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        name = box.string(.name)
+        to = box.string(.to)
+        max = box.optional(.max, of: Int64.self)
+        then = box.string(.then)
+    }
+}
+
+extension DepotLineRoute: Codable {
+    enum CodingKeys: String, CodingKey { case id, scope, filters, chain, limit }
+    init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        id = box.string(.id)
+        scope = box.string(.scope)
+        filters = box.optional(.filters, of: DepotLineFilters.self) ?? DepotLineFilters()
+        chain = box.list(.chain, of: DepotLineGroup.self)
+        limit = box.optional(.limit, of: Int64.self)
+    }
+}
+
+extension DepotLineOtherRoute: Codable {
+    enum CodingKeys: String, CodingKey { case id, scope, filters, group }
+    init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        id = box.string(.id)
+        scope = box.string(.scope)
+        filters = box.optional(.filters, of: DepotLineFilters.self) ?? DepotLineFilters()
+        group = box.string(.group)
+    }
+}
+
+extension DepotLineFilters: Codable {
+    enum CodingKeys: String, CodingKey { case type, labels, priority, originator }
+    init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        type = box.string(.type)
+        labels = box.list(.labels, of: String.self)
+        priority = box.string(.priority)
+        originator = box.string(.originator)
+    }
+}
+
+extension DepotLineGroup: Codable {
+    enum CodingKeys: String, CodingKey {
+        case name, runner, kind, model, cmd, members, yard, prompt
+        case condition = "when"
+    }
+    init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        name = box.string(.name)
+        condition = box.string(.condition)
+        runner = box.string(.runner)
+        kind = box.string(.kind)
+        model = box.string(.model)
+        cmd = box.string(.cmd)
+        members = box.list(.members, of: String.self)
+        yard = box.string(.yard)
+        prompt = box.optional(.prompt, of: DepotLinePrompt.self)
+    }
+}
+
+extension DepotLineStageFile: Codable {
+    enum CodingKeys: String, CodingKey { case path, text }
+    init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        path = box.string(.path)
+        text = box.string(.text)
+    }
+}
+
+extension DepotLinePrompt: Codable {
+    enum CodingKeys: String, CodingKey {
+        case path, source, found, commit, text, digest, carriable, why, tried, error
+    }
+    init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        path = box.string(.path)
+        source = box.string(.source)
+        found = box.string(.found)
+        commit = box.string(.commit)
+        text = box.string(.text)
+        digest = box.string(.digest)
+        carriable = box.bool(.carriable)
+        why = box.string(.why)
+        tried = box.list(.tried, of: String.self)
+        error = box.string(.error)
+    }
+}
+
+extension DepotLineCrew: Codable {
+    enum CodingKeys: String, CodingKey { case name, prompt }
+    init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        name = box.string(.name)
+        prompt = box.optional(.prompt, of: DepotLinePrompt.self)
     }
 }
 
