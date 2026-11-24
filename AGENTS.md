@@ -20,9 +20,12 @@ never by the gate), and `NotifyService` (the notification service
 extension that fills a closed phone's wakes in, over the shared
 core in `Push/` and its neighbours listed in the project). `FootplateTests/Tokens/` vendors the design tokens
 for the theme test. The iPad layout is a readable single column; its
-simulator run is by hand. A builder who must kill a simulator process
-scopes the match to their own run's UDID or container, never a bare
-name match: the gate simulator is shared.
+simulator run is by hand. `.yardr/test` first runs the hermetic
+`scripts/test-*.py`, named-suite runs too: `scripts/fake-edge` parses
+`FootplateTests/FakeYard/Canned.swift`'s answer table line by line, and
+`scripts/test-fake-edge.py` fails a reshaping it cannot read. A builder who
+must kill a simulator process scopes the match to their own run's UDID or
+container, never a bare name match: the gate simulator is shared.
 
 Under `Footplate/`:
 

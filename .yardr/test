@@ -1,10 +1,12 @@
 #!/bin/sh
-# The iPhone simulator gate; UI/instrumentation and iPad runs are by hand.
+# The iPhone simulator gate; UI/instrumentation and iPad runs are by hand. The
+# repository's script tests (scripts/test-*.py) run ahead of it, on every run.
 # A suite name (sh .yardr/test PushRegisterTests) runs that FootplateTests suite
-# alone, under the same lock: an xcodebuild typed by hand on the simulator takes
-# no lock and can kill a gate run's test host. A named run that executes no
-# tests fails, and a skipped test is not an executed one: xcodebuild ends a name
-# that matches nothing, or a suite that skips every test, in TEST SUCCEEDED.
+# alone on the simulator, under the same lock: an xcodebuild typed by hand on
+# the simulator takes no lock and can kill a gate run's test host. A named run
+# that executes no tests fails, and a skipped test is not an executed one:
+# xcodebuild ends a name that matches nothing, or a suite that skips every
+# test, in TEST SUCCEEDED.
 # A missing destination must fail rather than silently testing another phone.
 set -e
 # A second name would be dropped without a word, and the pass would hide it.
@@ -19,6 +21,23 @@ for icon in Footplate/UI/Resources/Assets.xcassets/AppIcon.appiconset/*.png; do
     echo "alpha channel in $icon" >&2
     exit 1
   fi
+done
+# The script tests hold the stand-ins to the Swift they read: scripts/fake-edge
+# parses FootplateTests/FakeYard/Canned.swift line by line, and a reshaped
+# answer table once made it refuse to start with this gate green
+# (footplate-ios-e0ka). They are hermetic and take seconds, so they run on every
+# run, a named suite's included: a broken tree must fail loud here, not pass for
+# the one suite it names. They need no simulator, so they run before the lock: a
+# failing one neither waits behind a simulator run nor holds it up. The first to
+# fail ends the run, named, with its own status. Unlike the icons above there is
+# no [ -f ] guard: a glob that matches nothing hands python3 the pattern itself,
+# which fails, as no script tests at all is no pass.
+for script in scripts/test-*.py; do
+  python3 "$script" || {
+    rc=$?
+    echo "gate: SCRIPT TEST FAILED (exit $rc): $script" >&2
+    exit "$rc"
+  }
 done
 # Every run installs and launches the same app on the one simulator, so two at
 # once (two worktrees, or a worktree and a landing) kill each other's test host

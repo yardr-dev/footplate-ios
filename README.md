@@ -133,7 +133,8 @@ Run the depot gate from the worktree:
 sh .yardr/test
 ```
 
-It builds the app and runs `FootplateTests` on iPhone 17 Pro simulator
+It first runs the script tests (below), then builds the app and runs
+`FootplateTests` on iPhone 17 Pro simulator
 `7EC91353-EDF5-4E93-B644-46A44BA6CFCB`. A missing simulator fails the gate.
 xcodebuild passes environment to the test process only with the
 `TEST_RUNNER_` prefix, so the screenshot suites take their output
@@ -143,11 +144,15 @@ directory that way:
 TEST_RUNNER_LINE_SHOTS_DIR=$(mktemp -d) sh .yardr/test LineScreenshotTests
 ```
 
-Run `python3 scripts/test-testflight.py` to exercise the TestFlight snapshot
-and cleanup with a throwaway repository and a fake `xcodebuild`; it does not
-sign or upload a build. Run `python3 scripts/test-gate.py` to exercise the
-gate's failure diagnosis (a mute failure prints the result bundle's summary
-and path) with fake `xcodebuild` and `xcrun`; it touches no simulator.
+Every gate run, a named suite's too, first runs the script tests,
+`scripts/test-*.py`, none of which touches a simulator or signs anything; the
+gate stops at the first that fails and names it. `scripts/test-testflight.py`
+exercises the TestFlight snapshot and cleanup with a throwaway repository and
+a fake `xcodebuild`; it does not sign or upload a build.
+`scripts/test-gate.py` exercises the gate's failure diagnosis (a mute failure
+prints the result bundle's summary and path) and this script step, with fake
+`xcodebuild` and `xcrun`. `scripts/test-fake-edge.py` is the stand-in edge's,
+below. For a focused run, run one alone: `python3 scripts/test-gate.py`.
 
 The theme test compares the catalogue's dark and light appearances and the
 phone type roles with vendored yardr-design tokens, and checks the bundled
@@ -170,12 +175,15 @@ on `PATH` (`brew install go`); without it the stand-in refuses to run.
 It prints its URL, for the build's `EDGE_URL`, and every request to
 standard error:
 
-Run `python3 scripts/test-fake-edge.py` to check that values in its JSON
-responses and bead pages stay data, that the asks queue is answered whole
-(`UserAsks`) and open-only (`UserOpenAsks`) as `Canned.swift` names them,
-and that PAKE bodies and the channel route to the yard half. Run
-`go test ./fakeedge/` from `ChannelBinding/` to check the yard half pairs a
-typed code and serves a sealed call.
+The gate runs `scripts/test-fake-edge.py` (`python3 scripts/test-fake-edge.py`
+runs it alone), so a change to `Canned.swift` that the stand-in cannot read
+fails the gate. It checks that values in its JSON responses and bead pages
+stay data, that the asks queue is answered whole (`UserAsks`) and open-only
+(`UserOpenAsks`) as `Canned.swift` names them, and that PAKE bodies and the
+channel route to the yard half. The gate does not run the yard half's own
+test, which needs Go on the runner: run `go test ./fakeedge/` from
+`ChannelBinding/` by hand to check the yard half pairs a typed code and serves
+a sealed call.
 
 ```sh
 edge_dir=$(mktemp -d)
