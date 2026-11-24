@@ -171,9 +171,11 @@ It prints its URL, for the build's `EDGE_URL`, and every request to
 standard error:
 
 Run `python3 scripts/test-fake-edge.py` to check that values in its JSON
-responses and bead pages stay data, and that PAKE bodies and the channel
-route to the yard half. Run `go test ./fakeedge/` from `ChannelBinding/`
-to check the yard half pairs a typed code and serves a sealed call.
+responses and bead pages stay data, that the asks queue is answered whole
+(`UserAsks`) and open-only (`UserOpenAsks`) as `Canned.swift` names them,
+and that PAKE bodies and the channel route to the yard half. Run
+`go test ./fakeedge/` from `ChannelBinding/` to check the yard half pairs a
+typed code and serves a sealed call.
 
 ```sh
 edge_dir=$(mktemp -d)

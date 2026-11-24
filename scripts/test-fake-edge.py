@@ -5,6 +5,7 @@ from importlib.machinery import SourceFileLoader
 import json
 import struct
 import sys
+import tempfile
 import unittest
 import zlib
 from pathlib import Path
@@ -48,6 +49,34 @@ class FakeEdgeResponseTests(unittest.TestCase):
         files = [[f["hash"] for f in note.get("files", [])] for note in result["notes"]]
         self.assertEqual([len(note) for note in files], [0, 1, 2])
         self.assertEqual({h for note in files for h in note}, set(fake_edge.BLOBS))
+
+    def test_the_asks_queue_is_answered_whole_and_open_only(self):
+        whole = json.loads(fake_edge.REPLIES["UserAsks"])["result"]
+        self.assertEqual([ask["bead"] for ask in whole["open"]], ["yd-links", "yd-map", "yd-tidy"])
+        self.assertEqual([ask["bead"] for ask in whole["decided"]], ["yd-greet"])
+        # The same open rows and no `decided` key at all, not an empty one: an
+        # unread history and an empty one are not the same to the app.
+        self.assertEqual(json.loads(fake_edge.REPLIES["UserOpenAsks"]), {"result": {"open": whole["open"]}})
+
+    def test_a_board_that_cannot_answer_the_queue_both_ways_is_refused(self):
+        text = fake_edge.CANNED.read_text()
+        for old, new, name in [
+            # the open-only reply is dropped
+            ('"UserOpenAsks": openOnly(userAsks)', "", "UserOpenAsks"),
+            # it names a queue the file does not spell
+            ("openOnly(userAsks)", "openOnly(queue)", "UserOpenAsks"),
+            # the queue is no longer spelled where the table names it
+            ("static let userAsks = ", "static let queue = ", "UserAsks"),
+        ]:
+            with self.subTest(old=old):
+                self.assertIn(old, text)
+                with tempfile.TemporaryDirectory() as directory:
+                    edited = Path(directory) / "Canned.swift"
+                    edited.write_text(text.replace(old, new))
+                    with patch.object(fake_edge, "CANNED", edited):
+                        with self.assertRaises(SystemExit) as refused:
+                            fake_edge.canned_board()
+                self.assertIn(f"answers no {name};", str(refused.exception.code))
 
     def test_a_pake_body_and_the_channel_go_to_the_yard_half(self):
         route = fake_edge.route

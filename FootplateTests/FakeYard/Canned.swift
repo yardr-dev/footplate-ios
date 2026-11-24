@@ -39,7 +39,11 @@ enum Canned {
 
     /// What `UserOpenAsks` answers of that queue: the same open rows, and
     /// no `decided` key, as the yard words it. Derived, so the two cannot
-    /// drift: the open cards of the two reads are one set.
+    /// drift: the open cards of the two reads are one set. The by-hand
+    /// stand-in, `scripts/fake-edge`, serves this table as it stands: it
+    /// reads `"UserAsks": userAsks` and `"UserOpenAsks": openOnly(userAsks)`
+    /// in those words and derives the answer by this same rule
+    /// (`open_only`), so a change here is made there too.
     static func openOnly(_ reply: String) -> String {
         var whole = try! JSONSerialization.jsonObject(with: Data(reply.utf8)) as! [String: Any]
         var result = whole["result"] as! [String: Any]

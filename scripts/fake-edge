@@ -81,6 +81,17 @@ def route(path, raw):
 # last one) or `"name": "..."` for the empty answers.
 REPLY = re.compile(r'^\s*"([^"]+)":\s*#"(.*)"#\s*,?\s*$')
 PLAIN_REPLY = re.compile(r'^\s*"([^"]+)":\s*"([{}]*)"\s*,?\s*$')
+# The asks queue is one literal that two replies name: `static let
+# userAsks = #"..."#`, answered whole by `"UserAsks": userAsks` and
+# without its decided rows by `"UserOpenAsks": openOnly(userAsks)`. Only
+# the names a board must answer are read so; the other references
+# (`"yd-shots": shots`) stay unserved.
+SHARED_LITERAL = re.compile(r'^\s*static let (\w+)\s*=\s*#"(.*)"#\s*$')
+SHARED_REPLY = re.compile(r'^\s*"([^"]+)":\s*(\w+)\s*,?\s*$')
+OPEN_ONLY_REPLY = re.compile(r'^\s*"([^"]+)":\s*openOnly\((\w+)\)\s*,?\s*$')
+# What a board must answer: without one of these the stand-in refuses to
+# run, rather than serve half a board.
+REQUIRED = ("Head", "GetUser", "UserInbox", "UserAsks", "UserOpenAsks", "Bead", "Flows")
 # The Flows answer is computed in Swift: a prefix, the twelve backlog
 # drafts joined, and a suffix. The drafts are rebuilt here; the two
 # halves are read from the source.
@@ -161,16 +172,36 @@ def bead_page(bead, yard):
     )
 
 
+def open_only(queue):
+    """The queue without its decided rows, as Canned.openOnly writes it:
+    the same open rows, keys sorted, no spaces."""
+    answer = json.loads(queue)
+    answer["result"].pop("decided", None)
+    return json.dumps(answer, sort_keys=True, separators=(",", ":"))
+
+
 def canned_board():
     try:
         text = CANNED.read_text()
     except OSError as error:
         sys.exit(f"scripts/fake-edge: cannot read {CANNED}: {error}")
     replies = {}
+    literals = {}
     for line in text.splitlines():
         match = REPLY.match(line) or PLAIN_REPLY.match(line)
         if match:
             replies[match.group(1)] = match.group(2)
+        match = SHARED_LITERAL.match(line)
+        if match:
+            literals[match.group(1)] = match.group(2)
+    # A second pass: the table names a literal before the file spells it.
+    for line in text.splitlines():
+        match = SHARED_REPLY.match(line)
+        if match and match.group(1) in REQUIRED and match.group(2) in literals:
+            replies[match.group(1)] = literals[match.group(2)]
+        match = OPEN_ONLY_REPLY.match(line)
+        if match and match.group(1) in REQUIRED and match.group(2) in literals:
+            replies[match.group(1)] = open_only(literals[match.group(2)])
     flows = None
     for line in text.splitlines():
         stripped = line.strip()
@@ -185,7 +216,7 @@ def canned_board():
                 flows = halves[0] + drafts + halves[1]
     if flows is not None:
         replies["Flows"] = flows
-    for name in ("Head", "GetUser", "UserInbox", "UserAsks", "Bead", "Flows"):
+    for name in REQUIRED:
         if name not in replies:
             sys.exit(f"scripts/fake-edge: {CANNED} answers no {name}; refusing to serve half a board")
     return replies
