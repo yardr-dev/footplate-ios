@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise .yardr/test with fake xcodebuild and xcrun: its failure diagnosis,
-and the script tests it runs ahead of xcodebuild."""
+the script tests it runs ahead of xcodebuild, and its refusal of a bare
+<X>_SHOTS_DIR."""
 
 import os
 import shutil
@@ -137,7 +138,9 @@ class GateDiagnosisTests(unittest.TestCase):
         self.script_log = self.root / "script-tests"
 
     def run_gate(self, *args, **extra_env):
-        env = os.environ.copy()
+        # The caller's own screenshot directories stay out: a bare one is
+        # refused, and a test that sets one says so.
+        env = {key: value for key, value in os.environ.items() if not key.endswith("_SHOTS_DIR")}
         env.update(
             {
                 "PATH": str(self.bin) + os.pathsep + env["PATH"],
@@ -253,6 +256,54 @@ class GateDiagnosisTests(unittest.TestCase):
         self.assertIn("SCRIPT TEST FAILED", result.stderr)
         self.assertIn("scripts/test-*.py", result.stderr)
         self.assertFalse(self.argv_log.exists(), "xcodebuild should not run")
+
+    def test_a_bare_shots_dir_stops_the_gate_before_anything_runs(self):
+        # xcodebuild drops a variable that lacks the TEST_RUNNER_ prefix, so a
+        # bare <X>_SHOTS_DIR would pass the run with its PNGs nowhere. The gate
+        # refuses it first, ahead of the script tests, the lock and xcodebuild,
+        # and names the form that arrives. The last row is the one run that goes
+        # on, with everything that is no bare name set at once: the prefixed
+        # form, a bare name beside its prefixed twin, a name that only ends like
+        # one and a value that only reads like one. A refusal there names which.
+        crew = {"CREW_SHOTS_DIR": "/tmp/x"}
+        for args, env, refused in [
+            (("CrewScreenshotTests",), crew, ["CREW_SHOTS_DIR"]),
+            ((), crew, ["CREW_SHOTS_DIR"]),
+            (("CrewScreenshotTests",), {**crew, "LINE_SHOTS_DIR": "/tmp/y"}, ["CREW_SHOTS_DIR", "LINE_SHOTS_DIR"]),
+            (("CrewScreenshotTests",), {**crew, "TEST_RUNNER_LINE_SHOTS_DIR": "/tmp/y"}, ["CREW_SHOTS_DIR"]),
+            (("CrewScreenshotTests",), {"CREW_SHOTS_DIR": ""}, ["CREW_SHOTS_DIR"]),
+            (
+                ("CrewScreenshotTests",),
+                {
+                    "TEST_RUNNER_CREW_SHOTS_DIR": "/tmp/x",
+                    "LINE_SHOTS_DIR": "/tmp/y",
+                    "TEST_RUNNER_LINE_SHOTS_DIR": "/tmp/z",
+                    "DECISION_SHOTS_DIRS": "/tmp/w",
+                    "NOTE": "one line\nPAIR_SHOTS_DIR=/tmp/v",
+                },
+                [],
+            ),
+        ]:
+            with self.subTest(args=args, env=env):
+                self.script_log.unlink(missing_ok=True)
+                self.argv_log.unlink(missing_ok=True)
+
+                result = self.run_gate(*args, TEST_GATE_MODE="pass", **env)
+
+                if not refused:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(self.script_tests_run(), SCRIPT_TESTS)
+                    self.assertTrue(self.argv_log.exists(), "xcodebuild should run")
+                    continue
+                self.assertEqual(result.returncode, 1, result.stderr)
+                # One line per refused name, in no set order, each leading with
+                # the name and naming the prefixed form.
+                named = sorted(line.split()[0] for line in result.stderr.splitlines())
+                self.assertEqual(named, sorted(refused), result.stderr)
+                for name in refused:
+                    self.assertIn(f"TEST_RUNNER_{name}", result.stderr)
+                self.assertEqual(self.script_tests_run(), [], "no script test should run")
+                self.assertFalse(self.argv_log.exists(), "xcodebuild should not run")
 
 
 if __name__ == "__main__":

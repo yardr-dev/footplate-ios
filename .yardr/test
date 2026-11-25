@@ -8,12 +8,37 @@
 # xcodebuild ends a name that matches nothing, or a suite that skips every
 # test, in TEST SUCCEEDED.
 # A missing destination must fail rather than silently testing another phone.
+# A screenshot suite takes its directory as TEST_RUNNER_<X>_SHOTS_DIR; a bare
+# <X>_SHOTS_DIR is refused before anything runs, as xcodebuild would drop it.
 set -e
 # A second name would be dropped without a word, and the pass would hide it.
 if [ "$#" -gt 1 ]; then
   echo "usage: sh .yardr/test [Suite]: one suite at a time" >&2
   exit 1
 fi
+# xcodebuild hands the test host only the variables that carry a TEST_RUNNER_
+# prefix, and strips it, so a screenshot directory set bare (CREW_SHOTS_DIR) is
+# dropped without a word: the run passes and the PNGs are nowhere. A bare name
+# fails here instead, naming the form that arrives, and is not renamed for the
+# caller: the variable xcodebuild takes stays the one that is typed. A bare
+# name whose TEST_RUNNER_ twin is set too passes, as the twin is what arrives.
+# awk reads the names from ENVIRON, as a value holding a newline could pass for
+# a line of env's output; the names it prints are capitals, digits and
+# underscores, so the loop splits them safely. This sits right after the usage
+# check, ahead of the icons and the script tests, so a refusal waits for none
+# of them and never reaches the simulator.
+bare=$(awk '
+  BEGIN {
+    for (var in ENVIRON)
+      if (var ~ /^[A-Z0-9_]+_SHOTS_DIR$/ && var !~ /^TEST_RUNNER_/ &&
+          !(("TEST_RUNNER_" var) in ENVIRON))
+        print var
+  }
+')
+for var in $bare; do
+  echo "$var is set, and xcodebuild drops it before the test host: set TEST_RUNNER_$var (the suite reads it as $var)" >&2
+done
+[ -z "$bare" ] || exit 1
 # App Store Connect refuses a large icon with an alpha channel, so every PNG
 # in the app icon set must be opaque.
 for icon in Footplate/UI/Resources/Assets.xcassets/AppIcon.appiconset/*.png; do

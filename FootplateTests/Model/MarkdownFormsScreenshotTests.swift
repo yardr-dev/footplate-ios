@@ -8,7 +8,7 @@ import XCTest
 // and a wide table scrolling sideways whole. Hand-run for the bead note;
 // the gate runs it too, and it only asserts that each screen renders
 // non-empty at phone size, with the one sideways scroll a table takes.
-// PNGs land in `FORMS_SHOTS_DIR`, or the temporary directory's
+// PNGs land in `TEST_RUNNER_FORMS_SHOTS_DIR`, or the temporary directory's
 // `forms-shots` where that names none.
 @MainActor
 final class MarkdownFormsScreenshotTests: XCTestCase {
