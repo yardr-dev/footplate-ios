@@ -62,6 +62,91 @@ func dictationFailure(domain: String, code: Int, stopping: Bool, available: Bool
     return available ? .stopped(domain: domain, code: code) : .unavailable
 }
 
+/// What one recording has heard, told by the stretches the recognizer divides
+/// it into (footplate-ios-wg9q). On the iOS 26.3 simulator, a non-final result
+/// with speech metadata marked a closed stretch; subsequent results, including
+/// the final, then carried only the new stretch. A pause near two seconds did
+/// not close every time, so the recording is the stretches put together when
+/// the recognizer closes them, with a guard for a reset that has no sign.
+struct Transcript: Equatable, Sendable {
+    /// The stretches that are over, in the order they were said, with one
+    /// space between.
+    var settled = ""
+    /// The stretch that stands: the text of its last result, which the next
+    /// result of the stretch revises.
+    var partial = ""
+
+    /// Everything heard, whole.
+    var text: String { joined(settled, partial) }
+
+    fileprivate mutating func settle() {
+        settled = joined(settled, partial)
+        partial = ""
+    }
+}
+
+/// `transcript` with the next result's `text` taken in. A result revises the
+/// stretch that stands and replaces its partial. `closes` says the recognizer
+/// ended the stretch with it (a result that is not final and carries the
+/// speech's metadata, or a final): its text is then settled, and the next
+/// result begins a stretch behind it.
+///
+/// Where the recognizer begins a stretch with no such sign, the result is not
+/// a revision (`startsAfresh`) and the partial is settled before it is taken.
+/// Words with nothing in them revise nothing: the partial stands, and is
+/// settled if the result closes the stretch, as a final of silence after words
+/// were shown must leave them. Stretches are trimmed, so that one space joins
+/// them and an empty one adds nothing.
+func fold(_ transcript: Transcript, text: String, closes: Bool) -> Transcript {
+    var next = transcript
+    let said = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !said.isEmpty {
+        if startsAfresh(said, after: transcript.partial) { next.settle() }
+        next.partial = said
+    }
+    if closes { next.settle() }
+    return next
+}
+
+/// Whether `text` begins a stretch afresh instead of revising `partial`, for
+/// a recognizer that went back to the start at a pause and sent no sign. Both
+/// must hold. It is much shorter, under half the characters: the recognizer
+/// revises the last words of a partial, not most of it, and the first result
+/// of a new stretch is a word or two. And it starts with another word, so a
+/// partial cut back to its own first words is still a revision. A partial
+/// under `resetFloor` is never settled here. A start missed costs the words
+/// before it, as before the fold; one found by mistake would put a stretch
+/// into the letter twice, so the guard errs toward missing. A script written
+/// without spaces has the whole text for its first word, so for it the length
+/// alone decides.
+private func startsAfresh(_ text: String, after partial: String) -> Bool {
+    guard partial.count >= resetFloor, text.count * 2 < partial.count else { return false }
+    return leadingWord(text) != leadingWord(partial)
+}
+
+/// The first word of `text`, lowercased and without its punctuation, so that
+/// "Hello," and "hello" are the same word. Empty where no word has a letter
+/// or a digit.
+private func leadingWord(_ text: String) -> String {
+    for token in text.split(whereSeparator: \.isWhitespace) {
+        let word = token.filter { $0.isLetter || $0.isNumber }.lowercased()
+        if !word.isEmpty { return word }
+    }
+    return ""
+}
+
+/// `head` and `tail` with one space between, where neither is empty.
+private func joined(_ head: String, _ tail: String) -> String {
+    if head.isEmpty { return tail }
+    if tail.isEmpty { return head }
+    return head + " " + tail
+}
+
+/// The shortest partial `startsAfresh` can settle. Under it a partial is a
+/// word or two, which the recognizer may still rewrite whole ("forty two" to
+/// "42"), and settling that would double it.
+private let resetFloor = 12
+
 /// The locales that hear on the device now among `current`'s language: the
 /// framework's supported ones of that language that do, with `current`
 /// itself where it does (it may hear under the framework's remap, as en_CH
@@ -173,7 +258,8 @@ private func askSpeech() async -> SFSpeechRecognizerAuthorizationStatus {
 /// What reaches a run from the recognizer, the microphone and the audio
 /// session, in one stream so that it is handled in the order it happened.
 private enum Heard: Sendable {
-    case words(String, final: Bool)
+    /// `closes`: the recognizer closed a stretch with this result, at a pause.
+    case words(String, closes: Bool, final: Bool)
     case sound(Float)
     case failure(domain: String, code: Int)
     case interrupted
@@ -181,9 +267,12 @@ private enum Heard: Sendable {
 
 /// One recording. The microphone feeds the request; the recognizer's
 /// results come back through `heard`, and are told to the model as
-/// `DictationEvent`s. The run ends at its first final, failure or
-/// interruption, at `cancel()`, and the microphone is shut and the audio
-/// session given back before its stream finishes.
+/// `DictationEvent`s. The words are told whole, as `DictationEvent.words`
+/// says, though the recognizer's own text is only the stretch since its last
+/// pause: the run puts the stretches together (`Transcript`). The run ends
+/// at its first final, failure or interruption, at `cancel()`, and the
+/// microphone is shut and the audio session given back before its stream
+/// finishes.
 @MainActor
 final class SpeechRun: DictationRun {
     let events: AsyncStream<DictationEvent>
@@ -200,6 +289,7 @@ final class SpeechRun: DictationRun {
     private var over = false
     private var sessionHeld = false
     private var window = LevelWindow()
+    private var transcript = Transcript()
 
     init(recognizer: SFSpeechRecognizer, request: SFSpeechAudioBufferRecognitionRequest) {
         self.recognizer = recognizer
@@ -256,7 +346,16 @@ final class SpeechRun: DictationRun {
     ) -> @Sendable (SFSpeechRecognitionResult?, Error?) -> Void {
         { result, error in
             if let result {
-                heardIn.yield(.words(result.bestTranscription.formattedString, final: result.isFinal))
+                // The sign of a stretch closed at a pause: a result that is
+                // not final and carries the speech's metadata. On an iOS 26.3
+                // simulator hearing en-US on the device it came once for each
+                // closed stretch, with that stretch's words, ahead of the
+                // first result of the next, and no other partial carried it
+                // (footplate-ios-wg9q).
+                let closes = !result.isFinal && result.speechRecognitionMetadata != nil
+                heardIn.yield(.words(
+                    result.bestTranscription.formattedString, closes: closes, final: result.isFinal
+                ))
             }
             if result?.isFinal != true, let error = error as NSError? {
                 heardIn.yield(.failure(domain: error.domain, code: error.code))
@@ -273,8 +372,16 @@ final class SpeechRun: DictationRun {
                 self.window = window
                 out.yield(.level(level))
             }
-        case .words(let text, let final):
-            out.yield(.words(text, final: final))
+        case .words(let text, let closes, let final):
+            // A final settles its stretch too: it is the last, and goes
+            // through the same fold as the rest.
+            transcript = fold(transcript, text: text, closes: closes || final)
+            // A partial with no words is not told: the words that stand,
+            // told again, would start the model's quiet timer over, which an
+            // empty result did not.
+            if final || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                out.yield(.words(transcript.text, final: final))
+            }
             if final { end() }
         case .failure(let domain, let code):
             if let failure = dictationFailure(

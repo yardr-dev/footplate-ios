@@ -98,7 +98,9 @@ Under `Footplate/`:
   recognizer over it (`SpeechDictation.swift`: `SFSpeechRecognizer` for the
   system's current locale, every request made by `dictationRequest()` with
   `requiresOnDeviceRecognition` set, and an `AVAudioEngine` microphone that
-  is open only while a recording stands). Its two usage strings,
+  is open only while a recording stands; the on-device recognizer can return
+  only the stretch since a pause, so `Transcript` and `fold` keep the whole
+  recording together across results). Its two usage strings,
   `NSMicrophoneUsageDescription` and `NSSpeechRecognitionUsageDescription`,
   are in `Info.plist`, and a missing one crashes the app at its prompt.
   `FootplateTests/Speech/` holds the fake recognizer and the plain pieces'

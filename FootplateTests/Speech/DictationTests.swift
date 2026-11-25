@@ -6,11 +6,13 @@ import XCTest
 // Dictation's plain pieces (footplate-ios-tedd, after Android's
 // VoiceTest.kt): which gate the phone's standing gives the composer, the
 // words said at each state, the one request every recognition is made with,
-// the words the draft takes, the bars' levels, and the phone's recognizer
-// read per call for the locale of that call. The recording's state machine
-// is in ConversationModelTests, over `FakeDictation`; what the recognizer
-// does with a real microphone is checked by hand on an iPhone
-// (footplate-ios-txgy), a simulator's being the Mac's.
+// the words the draft takes, the stretches the recognizer closes at a pause
+// folded into one recording (footplate-ios-wg9q), the bars' levels, and the
+// phone's recognizer read per call for the locale of that call. The
+// recording's state machine is in ConversationModelTests, over
+// `FakeDictation`; what the recognizer does with a real microphone is
+// checked by hand on an iPhone (footplate-ios-txgy), a simulator's being the
+// Mac's.
 @MainActor
 final class DictationTests: XCTestCase {
     private func standing(_ onDevice: Bool, _ speech: Consent, _ microphone: Consent, _ language: String? = nil) -> DictationStanding {
@@ -203,6 +205,191 @@ final class DictationTests: XCTestCase {
         for row in rows {
             XCTAssertEqual(dictated(row.base, row.words), row.said, "\(row)")
         }
+    }
+
+    /// What the on-device recognizer gave for one sentence, a pause of 3.5
+    /// seconds and a second sentence, fed to a recognition at the pace it was
+    /// spoken (an iOS 26.3 simulator, en-US, footplate-ios-wg9q): each result
+    /// says the stretch it belongs to, and the one that closed the first
+    /// stretch, not final and with the speech's metadata, said its words again
+    /// ahead of the second stretch's first. The partials after the pause carry
+    /// the words after it alone.
+    private let beforeThePause = [
+        "Please", "Please land", "Please land the", "Please land the change",
+        "Please land the change tonight", "Please land the change tonight after",
+        "Please land the change tonight after the", "Please land the change tonight after the review",
+    ]
+    private let afterThePause = [
+        "And", "And tell", "And tell me", "And tell me when", "And tell me when it",
+        "And tell me when it is", "And tell me when it is done",
+    ]
+
+    /// One result of the recognizer as `SpeechRun` reads it.
+    private enum Said {
+        case partial(String)
+        /// Not final, and with the speech's metadata: the stretch closed.
+        case sign(String)
+        case final(String)
+    }
+
+    /// The recording whole after each result, as the model is told it: a
+    /// final settles its stretch as the sign does.
+    private func told(_ results: [Said]) -> [String] {
+        var transcript = Transcript()
+        return results.map { said in
+            switch said {
+            case .partial(let text): transcript = fold(transcript, text: text, closes: false)
+            case .sign(let text), .final(let text): transcript = fold(transcript, text: text, closes: true)
+            }
+            return transcript.text
+        }
+    }
+
+    /// Within one stretch each result is the stretch whole and replaces the
+    /// one before, as the recognizer revises what it heard: the recording is
+    /// the last result, however it revises its words, and the final is the
+    /// same text again.
+    func testOneStretchRevisedByItsPartialsIsTheRecordingWhole() {
+        let results = [
+            "Please", "Please land", "Please land the changes", "Please land the change tonight",
+            "Please land the change tonight after the stores", "Please land the change tonight after the store",
+            "Please, land the change tonight after the review.",
+        ]
+        var said = results.map(Said.partial)
+        XCTAssertEqual(told(said), results)
+        said.append(.final(results[6]))
+        XCTAssertEqual(told(said), results + [results[6]])
+        // The recognizer's own spaces and lines are not words.
+        XCTAssertEqual(told([.partial(" Please land "), .partial("Please land it\n")]), ["Please land", "Please land it"])
+    }
+
+    /// The recording of the sentence, the pause and the second sentence:
+    /// both stretches stand, in the order said, with one space between, from
+    /// the first word of the second to the final; the words of the first are
+    /// never lost to the second's partials.
+    func testTwoStretchesTheRecognizerClosedAtAPauseAreBothHeardInOrder() {
+        let first = beforeThePause.last!
+        let second = afterThePause.last!
+        var results = beforeThePause.map(Said.partial)
+        results.append(.sign(first))
+        results += afterThePause.map(Said.partial)
+        results.append(.final(second))
+        let whole = beforeThePause + [first] + afterThePause.map { "\(first) \($0)" } + ["\(first) \(second)"]
+        XCTAssertEqual(told(results), whole)
+        XCTAssertEqual(whole.count, 17)
+        XCTAssertEqual(whole.last, "Please land the change tonight after the review And tell me when it is done")
+        // A third stretch goes behind the two, a one-word stretch among them.
+        XCTAssertEqual(
+            told([.partial("Thanks"), .sign("Thanks"), .partial("Right"), .sign("Right"), .partial("Done"), .final("Done")]),
+            ["Thanks", "Thanks", "Thanks Right", "Thanks Right", "Thanks Right Done", "Thanks Right Done"]
+        )
+        // The sign may say its stretch revised: it replaces the last partial and is what stands.
+        XCTAssertEqual(
+            told([.partial("Land it tonite"), .sign("Land it tonight."), .partial("Then"), .final("Then tell me.")]),
+            ["Land it tonite", "Land it tonight.", "Land it tonight. Then", "Land it tonight. Then tell me."]
+        )
+    }
+
+    /// A recognizer that begins a stretch with no sign, going back to the
+    /// start at a pause, has the last partial settled before the new words,
+    /// so the earlier ones stay; and a partial that only revises its last
+    /// words is never doubled. The new text is another stretch where it
+    /// starts with another word and is under half the characters of a
+    /// partial of 12 or more; where it starts alike, is as long, or the
+    /// partial is a word or two, it is the same stretch revised.
+    func testAStretchBegunAfreshWithNoSignIsSettledBehindTheLastPartial() {
+        let first = beforeThePause.last!
+        var results = beforeThePause.map(Said.partial)
+        results += afterThePause.map(Said.partial)
+        results.append(.final("And tell me when it is done."))
+        XCTAssertEqual(
+            told(results),
+            beforeThePause + afterThePause.map { "\(first) \($0)" } + ["\(first) And tell me when it is done."]
+        )
+        let rows: [(partial: String, text: String, afresh: Bool)] = [
+            // Another word, and much shorter: a stretch begun anew.
+            ("Please land the change tonight", "And", true),
+            ("Please land the change tonight", "Then tell me", true),
+            ("Please land the change tonight", "So tell me now", true),
+            ("Okay, thanks.", "So", true),
+            ("今日は天気がとてもいいですね", "それで", true),
+            // The first words stay: a partial cut back, cased or punctuated
+            // otherwise, or the last word shortened, is the stretch revised.
+            ("Please land the change tonight", "Please", false),
+            ("Please land the change tonight", "please, land", false),
+            ("Please land the change tonight after the stores", "Please land the change tonight after the store", false),
+            ("I want to eat the cake tonight", "I", false),
+            ("今日は天気がとてもいいですね", "今日は天気がとてもいいですね。", false),
+            // Another word, but not much shorter: half is not under half.
+            ("Please land the change tonight", "So then tell me", false),
+            ("wreck a nice beach", "recognize speech", false),
+            ("Please land the change tonight", "Then land the change", false),
+            // A partial of a word or two may be rewritten whole.
+            ("forty two", "42", false),
+            ("Thank you.", "So", false),
+            ("Okay", "OK", false),
+        ]
+        for row in rows {
+            let next = fold(Transcript(partial: row.partial), text: row.text, closes: false)
+            if row.afresh {
+                XCTAssertEqual(next, Transcript(settled: row.partial, partial: row.text), "\(row)")
+            } else {
+                XCTAssertEqual(next, Transcript(partial: row.text), "\(row)")
+            }
+        }
+        // Nothing stands before the first words, so there is nothing to settle.
+        XCTAssertEqual(fold(Transcript(), text: "And", closes: false), Transcript(partial: "And"))
+    }
+
+    /// The final goes through the same fold. After a pause it is the last
+    /// stretch's words alone, and goes behind the stretches before it; where
+    /// nothing was said after the pause it is empty (a stop in the pause),
+    /// and the words that stand are left as they are.
+    func testAFinalAfterAPauseGoesBehindTheStretchesBeforeIt() {
+        let first = beforeThePause.last!
+        XCTAssertEqual(
+            told([.partial(first), .sign(first), .partial("And tell me"), .final("And tell me when it is done")]),
+            [first, first, "\(first) And tell me", "\(first) And tell me when it is done"]
+        )
+        // The recognizer's final of a stop in the pause (and of a second pause).
+        XCTAssertEqual(told([.partial(first), .sign(first), .final("")]), [first, first, first])
+        XCTAssertEqual(
+            told([.partial(first), .sign(first), .partial("And tell"), .sign("And tell me"), .final("")]),
+            [first, first, "\(first) And tell", "\(first) And tell me", "\(first) And tell me"]
+        )
+        // A final of silence leaves what was shown, with no pause as with one.
+        XCTAssertEqual(told([.partial("Please land"), .final("")]), ["Please land", "Please land"])
+        XCTAssertEqual(told([.final("")]), [""])
+        // A final that revises its stretch replaces its partial.
+        XCTAssertEqual(told([.partial("Please land the change"), .final("Please land the change.")]), ["Please land the change", "Please land the change."])
+        // With no result before it, it is the recording.
+        XCTAssertEqual(told([.final("Yes")]), ["Yes"])
+    }
+
+    /// Words with nothing in them add nothing: not a space, not a stretch,
+    /// and they take nothing away. Between two stretches they leave the first
+    /// as it stands for the second to go behind; within one they revise
+    /// nothing, and do not settle the partial, which the next result of the
+    /// stretch must still replace and never double.
+    func testAnEmptyResultBetweenStretchesAddsNothing() {
+        let first = beforeThePause.last!
+        XCTAssertEqual(
+            told([.partial(first), .sign(first), .partial(""), .partial("  "), .partial("And"), .final("And tell me")]),
+            [first, first, first, first, "\(first) And", "\(first) And tell me"]
+        )
+        // Within a stretch: the partial stands, and the next result replaces it.
+        XCTAssertEqual(
+            told([.partial("Please land the change"), .partial(""), .partial("Please land the change tonight")]),
+            ["Please land the change", "Please land the change", "Please land the change tonight"]
+        )
+        // A sign with no words (a stretch that was only noise) closes the
+        // partial that stood, and nothing is added.
+        XCTAssertEqual(
+            told([.partial("Please land"), .sign(""), .partial("And")]),
+            ["Please land", "Please land", "Please land And"]
+        )
+        // Before anything was said.
+        XCTAssertEqual(told([.partial(""), .partial("Please")]), ["", "Please"])
     }
 
     /// The strip moves with a quiet voice: speech far under full scale still
